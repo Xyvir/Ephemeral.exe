@@ -148,6 +148,11 @@ def quit_app(icon, item):
 
 if __name__ == '__main__':
     image = create_icon_image()
-    menu = (item('Quit', quit_app),)
+    # Updated menu to include manual trigger
+    # default=True binds this action to the Left-Click event on the tray icon
+    menu = (
+        item('Run Clipboard', lambda icon, item: on_hotkey(icon), default=True),
+        item('Quit', quit_app)
+    )
     icon = pystray.Icon("Ephemeral", image, "Ephemeral", menu)
     icon.run(setup)
