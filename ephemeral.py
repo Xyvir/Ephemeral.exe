@@ -49,7 +49,8 @@ def get_clipboard():
     return pyperclip.paste()
 
 def parse_codeblock(content):
-    pattern = r"```(\w+)?\n(.*?)```"
+    # Relaxed regex: \s* allows for trailing spaces after language name before newline
+    pattern = r"```(\w+)?\s*\n(.*?)```"
     match = re.search(pattern, content, re.DOTALL)
     if match:
         lang = match.group(1).lower() if match.group(1) else 'auto'
@@ -81,7 +82,10 @@ def run_logic(icon):
     content = get_clipboard()
     lang, code = parse_codeblock(content)
 
-    if not code: return
+    if not code:
+        # ADDED: Feedback when parsing fails
+        icon.notify("No valid triple-backtick codeblock found in clipboard.", title="Ephemeral Error")
+        return
 
     # Resolve configuration or alias
     config = None
@@ -94,7 +98,10 @@ def run_logic(icon):
         else:
             config = val
     
-    if not config: return
+    if not config:
+        # ADDED: Feedback when language is unsupported
+        icon.notify(f"Language '{lang}' is not supported.", title="Ephemeral Error")
+        return
 
     # --- 1. IMMEDIATE USER FEEDBACK ---
     icon.notify(f"Spinning up container for {lang}...", title="Ephemeral Status")
