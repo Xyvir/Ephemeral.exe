@@ -7,6 +7,8 @@ import threading
 import keyboard
 import sys
 import re
+import os
+import tempfile
 
 # --- Configuration ---
 HOTKEY = 'ctrl+alt+x'
@@ -20,15 +22,13 @@ LANG_MAP = {
     'ruby':   {'image': 'ruby:alpine',      'cmd': ['ruby']},
     
     # --- Science & Engineering ---
-    # Anaconda includes numpy, pandas, scipy, matplotlib, etc.
     'science': {'image': 'continuumio/anaconda3', 'cmd': ['python', '-']},
-    # GNU Octave for Matlab-like engineering calculations
     'octave':  {'image': 'gnuoctave/octave:latest', 'cmd': ['octave', '--no-gui', '--quiet', '--eval', '-']},
     
     # Aliases
     'py': 'python', 'js': 'node', 'sh': 'bash',
-    'numpy': 'science', 'pandas': 'science', # Route specific libs to the science container
-    'matlab': 'octave' # Open-source alternative
+    'numpy': 'science', 'pandas': 'science',
+    'matlab': 'octave'
 }
 
 def create_icon_image():
@@ -50,6 +50,27 @@ def parse_codeblock(content):
         return lang, match.group(2)
     return None, None
 
+def show_error_window(error_text):
+    """
+    Writes the error to a temp file and opens a persistent cmd window to view it.
+    This satisfies the 'persist on error' requirement.
+    """
+    try:
+        # Write error to a temp file so cmd can read it cleanly
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as tmp:
+            tmp.write("--- EPHEMERAL EXECUTION ERROR ---\n\n")
+            tmp.write(error_text)
+            tmp_path = tmp.name
+            
+        # Launch a visible CMD window that stays open (/K) and displays the file
+        # 'start' is a shell command, so shell=True is needed here
+        subprocess.Popen(
+            f'start cmd /K "type "{tmp_path}" && echo. && echo. && echo [Ephemeral Debug] Window persisted due to error. Close to dismiss."', 
+            shell=True
+        )
+    except Exception as e:
+        print(f"Failed to show error window: {e}")
+
 def run_logic(icon):
     content = get_clipboard()
     lang, code = parse_codeblock(content)
@@ -69,18 +90,20 @@ def run_logic(icon):
     
     if not config: return
 
+    # --- 1. IMMEDIATE USER FEEDBACK ---
+    icon.notify(f"Spinning up container for {lang}...", title="Ephemeral Status")
+
     try:
-        # --- THE CLEAN SLATE STRATEGY ---
         podman_cmd = [
             'podman', 'run', 
-            '--rm',              # Auto-delete container (discard changes)
-            '-i',                # Keep stdin open for the code pipe
-            '--network', 'none', # Sandbox (Security)
+            '--rm',              # Auto-delete
+            '-i',                # Interactive
+            '--network', 'none', # Sandbox
             '--memory', '128m',
             config['image']
         ] + config['cmd']
 
-        # Windows Magic: Suppress the ugly cmd.exe window
+        # Suppress the main execution window (keep it clean)
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
@@ -95,22 +118,28 @@ def run_logic(icon):
         
         stdout, stderr = process.communicate(input=code)
         
-        # Combine output
-        result = f"{stdout}\nError:\n{stderr}" if stderr else stdout
-        
-        # Return to Clipboard
-        pyperclip.copy(f"Result ({lang}):\n---\n{result}")
-        icon.notify(f"Executed {lang}", title="Ephemeral")
+        if stderr:
+            # --- 2. PERSIST ON ERROR ---
+            # If there is an error, show the debug window and notify
+            show_error_window(stderr)
+            icon.notify(f"Execution failed for {lang}. See debug window.", title="Ephemeral Error")
+            # Optionally still copy stdout if any? Usually on error we just want the debug info.
+        else:
+            # --- 3. AUTO-CLOSE ON SUCCESS ---
+            # Update clipboard silently and notify completion
+            result = stdout
+            pyperclip.copy(f"Result ({lang}):\n---\n{result}")
+            icon.notify(f"Success! Result copied to clipboard.", title="Ephemeral")
 
     except Exception as e:
-        icon.notify(f"Error: {str(e)}", title="Ephemeral Failed")
+        show_error_window(str(e))
+        icon.notify("Critical failure. See debug window.", title="Ephemeral Failed")
 
 def on_hotkey(icon):
     threading.Thread(target=run_logic, args=(icon,)).start()
 
 def setup(icon):
     icon.visible = True
-    # Pass icon to the hotkey handler
     keyboard.add_hotkey(HOTKEY, lambda: on_hotkey(icon))
 
 def quit_app(icon, item):
