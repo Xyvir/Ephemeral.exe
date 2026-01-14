@@ -37,18 +37,36 @@ LANG_MAP = {
     'fortran': {'image': 'gcc:latest', 'cmd': ['sh', '-c', 'gfortran -x f95 - -o /tmp/run && /tmp/run']},
     'rust':    {'image': 'rust:alpine', 'cmd': ['sh', '-c', 'rustc - -o /tmp/run && /tmp/run']},
     'go':      {'image': 'golang:alpine', 'cmd': ['sh', '-c', 'cat > /tmp/main.go && go run /tmp/main.go']},
+    
+    # --- Expansion Pack (Systems) ---
+    'zig':     {'image': 'ziglang/zig:latest', 'cmd': ['sh', '-c', 'cat > /tmp/main.zig && zig run /tmp/main.zig']},
+    'v':       {'image': 'thevlang/v', 'cmd': ['sh', '-c', 'cat > /tmp/main.v && v run /tmp/main.v']},
+    'java':    {'image': 'openjdk:latest', 'cmd': ['sh', '-c', 'cat > /tmp/Main.java && java /tmp/Main.java']},
 
     # --- Golfing & Modern Compiled ---
     'crystal': {'image': 'crystallang/crystal:latest', 'cmd': ['sh', '-c', 'cat > /tmp/run.cr && crystal run /tmp/run.cr']},
     'nim':     {'image': 'nimlang/nim:alpine', 'cmd': ['sh', '-c', 'cat > /tmp/run.nim && nim c -r --verbosity:0 --hints:off /tmp/run.nim']},
 
-    # --- Lisp Family ---
+    # --- WebAssembly ---
+    'webasm':  {'image': 'wasmer/wasmer', 'entrypoint': '/bin/sh', 'cmd': ['-c', 'cat > /tmp/run.wat && wasmer run /tmp/run.wat']},
+
+    # --- Lisp & Functional ---
     'lisp':    {'image': 'clfoundation/sbcl:slim', 'cmd': ['sh', '-c', 'cat > /tmp/run.lisp && sbcl --script /tmp/run.lisp']},
     'clojure': {'image': 'clojure:temurin-17-alpine', 'cmd': ['sh', '-c', 'cat > /tmp/run.clj && clojure -M /tmp/run.clj']},
+    'elixir':  {'image': 'elixir:alpine', 'cmd': ['sh', '-c', 'cat > /tmp/run.exs && elixir /tmp/run.exs']},
+    'ocaml':   {'image': 'ocaml/opam', 'cmd': ['sh', '-c', 'cat > /tmp/run.ml && ocaml /tmp/run.ml']},
+
+    # --- Logic ---
+    'prolog':  {'image': 'swipl:latest', 'cmd': ['swipl', '-q', '-f', '/dev/stdin', '-t', 'halt']},
 
     # --- Stack & Concatenative ---
-    # UPDATED: Switched to silkeh/gforth and explicitly override entrypoint to use shell
     'forth':   {'image': 'silkeh/gforth', 'entrypoint': '/bin/sh', 'cmd': ['-c', 'cat > /tmp/run.fs && gforth /tmp/run.fs -e bye']},
+    'brainfuck': {'image': 'esolang/brainfuck-esotope', 'cmd': ['brainfuck', '/dev/stdin']},
+
+    # --- Retro ---
+    'basic':   {'image': 'jamesbrink/bwbasic', 'entrypoint': '/bin/sh', 'cmd': ['-c', 'cat > /tmp/run.bas && echo "quit" >> /tmp/run.bas && bwbasic /tmp/run.bas']},
+    'cobol':   {'image': 'bmoorman/gnucobol', 'entrypoint': '/bin/sh', 'cmd': ['-c', 'cat > /tmp/main.cob && cobc -x -free -o /tmp/run /tmp/main.cob && /tmp/run']},
+    'pascal':  {'image': 'freepascal/fpc', 'cmd': ['sh', '-c', 'cat > /tmp/run.pas && fpc /tmp/run.pas > /dev/null && /tmp/run']},
 
     # --- Hardware Description (HDL) ---
     'verilog': {'image': 'hdlc/iverilog', 'cmd': ['sh', '-c', 'cat > /tmp/run.v && iverilog /tmp/run.v -o /tmp/out && vvp /tmp/out']},
@@ -71,9 +89,16 @@ LANG_MAP = {
     'golang': 'go', 'cc': 'c', 'c++': 'cpp',
     'f90': 'fortran', 'f95': 'fortran',
     'sbcl': 'lisp', 'cl': 'lisp', 'common-lisp': 'lisp',
-    'clj': 'clojure',
-    'gforth': 'forth',
-    'cr': 'crystal', 'nimrod': 'nim'
+    'clj': 'clojure', 'ex': 'elixir', 'exs': 'elixir',
+    'ml': 'ocaml',
+    'swipl': 'prolog', 'pl': 'prolog',
+    'gforth': 'forth', 'bf': 'brainfuck',
+    'qbasic': 'basic', 'gwbasic': 'basic',
+    'cob': 'cobol', 'gnucobol': 'cobol',
+    'pas': 'pascal', 'freepascal': 'pascal',
+    'cr': 'crystal', 'nimrod': 'nim',
+    'wasm': 'webasm', 'wat': 'webasm',
+    'vlang': 'v'
 }
 
 def create_icon_image():
