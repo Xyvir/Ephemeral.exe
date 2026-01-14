@@ -10,7 +10,6 @@ import re
 import os
 import tempfile
 import time
-import ctypes # For native Windows Message Box
 import shlex  # For parsing quoted strings in headers
 
 # --- Configuration ---
@@ -40,6 +39,7 @@ LANG_MAP = {
     'go':      {'image': 'golang:alpine', 'cmd': ['sh', '-c', 'cat > /tmp/main.go && go run /tmp/main.go']},
     
     # --- Expansion Pack (Systems) ---
+    # Java: Switched to eclipse-temurin as official openjdk repo is deprecated.
     'java':    {'image': 'eclipse-temurin:21-jdk-alpine', 'cmd': ['sh', '-c', 'cat > /tmp/Main.java && java /tmp/Main.java']},
 
     # --- Golfing & Modern Compiled ---
@@ -318,13 +318,10 @@ def show_post_mortem_error(error_text):
 # --- Cleanup ---
 
 def purge_cache(icon, item):
-    result = ctypes.windll.user32.MessageBoxW(0, 
-        "This will remove ALL unused Podman images to free up disk space.\n\nAre you sure you want to proceed?", 
-        "Clear Image Cache", 
-        4 | 0x30) 
-
-    if result != 6: return
-
+    """
+    Clears all unused podman images (dangling and unreferenced) to free space.
+    No confirmation dialog.
+    """
     icon.notify("Pruning unused images... this may take a moment.", title="Ephemeral Maintenance")
     startupinfo = subprocess.STARTUPINFO()
     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
