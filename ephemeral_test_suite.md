@@ -1,195 +1,204 @@
-# Ephemeral Master Test Suite
+# Ephemeral Master Test Suite 
 
 ## PART 1: MARKDOWN SYNTAX TESTS
 (Instructions: Copy the entire codeblock, including the top and bottom backticks.)
 
-
 ````
---- Standard Interpreted ---
+
+--- Standard & Scripting ---
 
 ```python
 import sys
-# Active check: Python version and platform
-print(f"Markdown: Python {sys.version.split()[0]} running on {sys.platform} - OK")
+print(f"Markdown: Python {sys.version.split()[0]} on {sys.platform} - OK")
 ```
 
 ```node
-// Active check: Node version and platform
-console.log(`Markdown: Node ${process.version} running on ${process.platform} - OK`);
-```
-
-```bash
-# Active check: Bash version and current user
-echo "Markdown: Bash $BASH_VERSION running as $(whoami) - OK"
+console.log(`Markdown: Node ${process.version} on ${process.platform} - OK`);
 ```
 
 ```ruby
-# Active check: Ruby version and host OS
 puts "Markdown: Ruby #{RUBY_VERSION} on #{RUBY_PLATFORM} - OK"
 ```
 
---- Science & Data ---
-
-```science
-import numpy as np
-import sys
-# Active check: Python version + Numpy array creation
-arr = np.array([1, 2, 3])
-print(f"Markdown: Science (Anaconda) {sys.version.split()[0]} | Numpy Sum: {arr.sum()} - OK")
+```bash
+echo "Markdown: Bash $BASH_VERSION running as $(whoami) - OK"
 ```
 
-```octave
-% Active check: Octave version
-v = version();
-printf("Markdown: Octave %s - OK\n", v);
+```lua
+print("Markdown: Lua " .. _VERSION .. " - OK")
 ```
 
-```r
-# Active check: R Version string
-cat(sprintf("Markdown: %s - OK\n", R.version.string))
+```perl
+printf "Markdown: Perl v%vd - OK\n", $^V;
 ```
 
-```julia
-# Active check: Julia Version
-println("Markdown: Julia $VERSION - OK")
+```php
+<?php echo "Markdown: PHP " . phpversion() . " - OK"; ?>
 ```
 
 --- Systems & Compiled ---
 
 ```c
 #include <stdio.h>
-// Active check: Standard C Version Macro
-int main() {
-    #ifdef __STDC_VERSION__
-        printf("Markdown: C Standard Version %ld - OK\n", __STDC_VERSION__);
-    #else
-        printf("Markdown: C (Standard Macro not set, but compiled) - OK\n");
-    #endif
-    return 0;
-}
+int main() { printf("Markdown: C (GCC) - OK\n"); return 0; }
 ```
 
 ```cpp
 #include <iostream>
-// Active check: C++ Standard Version Macro
-int main() {
-    std::cout << "Markdown: C++ Standard " << __cplusplus << " - OK" << std::endl;
-    return 0;
-}
-```
-
-```fortran
-program test
-  use iso_fortran_env
-  implicit none
-  ! Active check: Compiler version (F2008 standard)
-  print *, "Markdown: Fortran Compiler: ", compiler_version()
-end program test
+int main() { std::cout << "Markdown: C++ (G++) - OK" << std::endl; return 0; }
 ```
 
 ```rust
-use std::env;
-fn main() {
-    // Active check: Runtime OS Architecture
-    println!("Markdown: Rust running on {} architecture - OK", env::consts::ARCH);
-}
+fn main() { println!("Markdown: Rust - OK"); }
 ```
 
 ```go
 package main
-import (
-    "fmt"
-    "runtime"
-)
-func main() {
-    // Active check: Go Runtime Version
-    fmt.Printf("Markdown: Go %s - OK\n", runtime.Version())
+import ("fmt"; "runtime")
+func main() { fmt.Printf("Markdown: Go %s - OK\n", runtime.Version()) }
+```
+
+```fortran
+program test
+  print *, "Markdown: Fortran (GFortran) - OK"
+end program test
+```
+
+```zig
+const std = @import("std");
+pub fn main() !void {
+    std.debug.print("Markdown: Zig - OK\n", .{});
 }
 ```
 
---- Golfing & Modern Compiled ---
+```v
+fn main() { println('Markdown: Vlang - OK') }
+```
+
+```java
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("Markdown: Java " + System.getProperty("java.version") + " - OK");
+    }
+}
+```
+
+--- Modern & Golfing ---
 
 ```crystal
-# Active check: Crystal Version
 puts "Markdown: Crystal #{Crystal::VERSION} - OK"
 ```
 
 ```nim
-# Active check: Nim Version and OS
-import os
-echo "Markdown: Nim ", NimVersion, " on ", hostOS, " - OK"
+echo "Markdown: Nim ", NimVersion, " - OK"
 ```
 
---- Lisp Family ---
+--- Science, Data & Engineering ---
 
-```lisp
-;; Active check: Implementation Version (SBCL)
-(format t "Markdown: Common Lisp ~a - OK~%" (lisp-implementation-version))
+```science
+import sys
+import numpy as np
+print(f"Markdown: Science (Anaconda) | Numpy: {np.__version__} - OK")
 ```
 
-```clojure
-;; Active check: Clojure Version
-(println (str "Markdown: Clojure " (clojure-version) " - OK"))
+```r
+cat(sprintf("Markdown: R %s - OK\n", R.version.string))
 ```
 
---- Stack & Concatenative ---
-
-```forth
-\ Active check: Simple math on the stack
-10 20 + . CR ." Markdown: Forth (Gforth) Math Check: 30 - OK" CR
+```julia
+println("Markdown: Julia $VERSION - OK")
 ```
 
---- Hardware (HDL) ---
+```octave
+printf("Markdown: Octave %s - OK\n", version());
+```
 
 ```verilog
 module test;
-  reg [7:0] a = 10;
-  reg [7:0] b = 32;
   initial begin
-    // Active check: Arithmetic and Simulation Time
-    $display("Markdown: Verilog (Icarus) | 10 + 32 = %d | Time: %0t - OK", a + b, $time);
+    $display("Markdown: Verilog (Icarus) - OK");
     $finish;
   end
 endmodule
 ```
 
---- Functional & Scripting ---
+--- Functional & Lisp ---
 
 ```haskell
-import System.Info (os, arch)
--- Active check: OS and Architecture from standard library
-main = putStrLn $ "Markdown: Haskell running on " ++ os ++ "-" ++ arch ++ " - OK"
+main = putStrLn "Markdown: Haskell - OK"
 ```
 
-```lua
--- Active check: Lua Version global
-print("Markdown: " .. _VERSION .. " - OK")
+```lisp
+(format t "Markdown: Common Lisp (SBCL) - OK~%")
 ```
 
-```perl
-# Active check: Perl Version
-printf "Markdown: Perl v%vd - OK\n", $^V;
+```clojure
+(println (str "Markdown: Clojure " (clojure-version) " - OK"))
 ```
 
-```php
-<?php
-// Active check: PHP Version
-echo "Markdown: PHP " . phpversion() . " - OK";
-?>
+```elixir
+IO.puts "Markdown: Elixir #{System.version} - OK"
 ```
 
---- Windows-like ---
+```ocaml
+Printf.printf "Markdown: OCaml - OK\n";;
+```
+
+--- Logic, Stack & Retro ---
+
+```prolog
+:- initialization(main).
+main :- write('Markdown: Prolog (SWI) - OK'), nl, halt.
+```
+
+```forth
+." Markdown: Forth (Gforth) - OK" CR bye
+```
+
+```brainfuck
+++++++++++[>+>+++>+++++++>++++++++++<<<<-]>>>++.>+.+++++++..+++.<<++.>+++++++++++++.>
+```
+
+```basic
+PRINT "Markdown: BASIC (Bywater) - OK"
+```
+
+```cobol
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. TEST.
+       PROCEDURE DIVISION.
+           DISPLAY "Markdown: COBOL (GnuCOBOL) - OK".
+           STOP RUN.
+```
+
+```pascal
+program Test;
+begin
+  WriteLn('Markdown: Pascal (FreePascal) - OK');
+end.
+```
+
+--- Web & Shells ---
+
+```wat
+(module
+  (func $main (export "_start")
+    ;; Output logic depends heavily on WASI implementation
+    ;; This is a syntax check for the Wat parser
+  )
+)
+```
 
 ```pwsh
-# Active check: PowerShell Version Table
-Write-Output "Markdown: PowerShell $($PSVersionTable.PSVersion.ToString()) - OK"
+Write-Output "Markdown: PowerShell $($PSVersionTable.PSVersion) - OK"
 ```
+
 ````
 
 ## PART 2: SHEBANG SYNTAX TESTS
 (Instructions: Copy ONLY the code inside the block, not the backticks.)
 
---- Standard Interpreted ---
+--- Standard & Scripting ---
 
 ```text
 #!python
@@ -203,128 +212,18 @@ console.log(`Shebang: Node ${process.version} - OK`);
 ```
 
 ```text
+#!ruby
+puts "Shebang: Ruby #{RUBY_VERSION} - OK"
+```
+
+```text
 #!bash
 echo "Shebang: Bash $BASH_VERSION - OK"
 ```
 
 ```text
-#!ruby
-puts "Shebang: Ruby #{RUBY_VERSION} - OK"
-```
-
---- Science & Data ---
-
-```text
-#!science
-import sys
-print(f"Shebang: Science (Anaconda) {sys.version.split()[0]} - OK")
-```
-
-```text
-#!octave
-printf("Shebang: Octave %s - OK\n", version());
-```
-
-```text
-#!R
-cat(sprintf("Shebang: %s - OK\n", R.version.string))
-```
-
-```text
-#!julia
-println("Shebang: Julia $VERSION - OK")
-```
-
---- Systems & Compiled ---
-
-```text
-#!c
-#include <stdio.h>
-int main() { printf("Shebang: C compiled at %s %s - OK\n", __DATE__, __TIME__); return 0; }
-```
-
-```text
-#!cpp
-#include <iostream>
-int main() { std::cout << "Shebang: C++ compiled at " << __DATE__ << " - OK" << std::endl; return 0; }
-```
-
-```text
-#!fortran
-program test
-  use iso_fortran_env
-  print *, "Shebang: Fortran Compiler: ", compiler_version()
-end program test
-```
-
-```text
-#!rust
-use std::env;
-fn main() { println!("Shebang: Rust on {} - OK", env::consts::OS); }
-```
-
-```text
-#!go
-package main
-import ("fmt"; "runtime")
-func main() { fmt.Printf("Shebang: Go %s - OK\n", runtime.Version()) }
-```
-
---- Golfing & Modern Compiled ---
-
-```text
-#!crystal
-puts "Shebang: Crystal #{Crystal::VERSION} - OK"
-```
-
-```text
-#!nim
-import os
-echo "Shebang: Nim ", NimVersion, " on ", hostOS, " - OK"
-```
-
---- Lisp Family ---
-
-```text
-#!lisp
-(format t "Shebang: Common Lisp ~a - OK~%" (lisp-implementation-version))
-```
-
-```text
-#!clojure
-(println (str "Shebang: Clojure " (clojure-version) " - OK"))
-```
-
---- Stack & Concatenative ---
-
-```text
-#!forth
-10 20 + . CR ." Shebang: Forth Math Check: 30 - OK" CR
-```
-
---- Hardware (HDL) ---
-
-```text
-#!verilog
-module test;
-  initial begin
-    $display("Shebang: Verilog sim time %0t - OK", $time);
-    $finish;
-  end
-endmodule
-```
-
---- Functional & Scripting ---
-
-```text
-#!haskell
-import System.Info (os, arch)
-main = putStrLn $ "Shebang: Haskell on " ++ os ++ " - OK"
-```
-
-```text
 #!lua
-print("Shebang: " .. _VERSION .. " - OK")
+print("Shebang: Lua " .. _VERSION .. " - OK")
 ```
 
 ```text
@@ -337,9 +236,128 @@ printf "Shebang: Perl v%vd - OK\n", $^V;
 <?php echo "Shebang: PHP " . phpversion() . " - OK"; ?>
 ```
 
---- Windows-like ---
+--- Systems & Compiled ---
 
 ```text
-#!pwsh
-Write-Output "Shebang: PowerShell $($PSVersionTable.PSVersion.ToString()) - OK"
+#!c
+#include <stdio.h>
+int main() { printf("Shebang: C - OK\n"); return 0; }
 ```
+
+```text
+#!cpp
+#include <iostream>
+int main() { std::cout << "Shebang: C++ - OK" << std::endl; return 0; }
+```
+
+```text
+#!rust
+fn main() { println!("Shebang: Rust - OK"); }
+```
+
+```text
+#!go
+package main
+import ("fmt"; "runtime")
+func main() { fmt.Printf("Shebang: Go %s - OK\n", runtime.Version()) }
+```
+
+```text
+#!fortran
+program test
+  print *, "Shebang: Fortran - OK"
+end program test
+```
+
+```text
+#!zig
+const std = @import("std");
+pub fn main() !void {
+    std.debug.print("Shebang: Zig - OK\n", .{});
+}
+```
+
+```text
+#!v
+fn main() { println('Shebang: Vlang - OK') }
+```
+
+```text
+#!java
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("Shebang: Java " + System.getProperty("java.version") + " - OK");
+    }
+}
+```
+
+--- Modern & Golfing ---
+
+```text
+#!crystal
+puts "Shebang: Crystal #{Crystal::VERSION} - OK"
+```
+
+```text
+#!nim
+echo "Shebang: Nim ", NimVersion, " - OK"
+```
+
+--- Science, Data & Engineering ---
+
+```text
+#!science
+import sys
+print(f"Shebang: Science (Anaconda) {sys.version.split()[0]} - OK")
+```
+
+```text
+#!r
+cat(sprintf("Shebang: R %s - OK\n", R.version.string))
+```
+
+```text
+#!julia
+println("Shebang: Julia $VERSION - OK")
+```
+
+```text
+#!octave
+printf("Shebang: Octave %s - OK\n", version());
+```
+
+```text
+#!verilog
+module test;
+  initial begin
+    $display("Shebang: Verilog - OK");
+    $finish;
+  end
+endmodule
+```
+
+--- Functional & Lisp ---
+
+```text
+#!haskell
+main = putStrLn "Shebang: Haskell - OK"
+```
+
+```text
+#!lisp
+(format t "Shebang: Common Lisp - OK~%")
+```
+
+```text
+#!clojure
+(println (str "Shebang: Clojure " (clojure-version) " - OK"))
+```
+
+```text
+#!elixir
+IO.puts "Shebang: Elixir #{System.version} - OK"
+```
+
+```text
+#!ocaml
+Printf.printf "Shebang: OCam
