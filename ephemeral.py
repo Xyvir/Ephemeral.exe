@@ -39,12 +39,15 @@ LANG_MAP = {
     'go':      {'image': 'golang:alpine', 'cmd': ['sh', '-c', 'cat > /tmp/main.go && go run /tmp/main.go']},
     
     # --- Expansion Pack (Systems) ---
-    # Java: 'latest' tag is deprecated/removed. Using JDK 21 Slim.
-    'java':    {'image': 'openjdk:21-slim', 'cmd': ['sh', '-c', 'cat > /tmp/Main.java && java /tmp/Main.java']},
+    # Java: Switched to eclipse-temurin as official openjdk repo is deprecated.
+    'java':    {'image': 'eclipse-temurin:21-jdk-alpine', 'cmd': ['sh', '-c', 'cat > /tmp/Main.java && java /tmp/Main.java']},
 
     # --- Golfing & Modern Compiled ---
     'crystal': {'image': 'crystallang/crystal:latest', 'cmd': ['sh', '-c', 'cat > /tmp/run.cr && crystal run /tmp/run.cr']},
     'nim':     {'image': 'nimlang/nim:alpine', 'cmd': ['sh', '-c', 'cat > /tmp/run.nim && nim c -r --verbosity:0 --hints:off /tmp/run.nim']},
+
+    # --- WebAssembly ---
+    'webasm':  {'image': 'wasmer/wasmer', 'entrypoint': '/bin/sh', 'cmd': ['-c', 'cat > /tmp/run.wat && wasmer run /tmp/run.wat']},
 
     # --- Lisp & Functional ---
     'lisp':    {'image': 'clfoundation/sbcl:slim', 'cmd': ['sh', '-c', 'cat > /tmp/run.lisp && sbcl --script /tmp/run.lisp']},
@@ -79,7 +82,8 @@ LANG_MAP = {
     'clj': 'clojure', 'ex': 'elixir', 'exs': 'elixir',
     'ml': 'ocaml',
     'swipl': 'prolog', 'pl': 'prolog',
-    'cr': 'crystal', 'nimrod': 'nim'
+    'cr': 'crystal', 'nimrod': 'nim',
+    'wasm': 'webasm', 'wat': 'webasm'
 }
 
 def create_icon_image():
@@ -100,6 +104,19 @@ def strip_ansi_codes(text):
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     return ansi_escape.sub('', text)
 
+def strip_shebang(text):
+    """
+    Removes the first line if it is a shebang (starts with #!).
+    Crucial for languages like C/C++/Go where # is not a comment or has different semantics.
+    """
+    if not text: return text
+    if text.lstrip().startswith("#!"):
+        parts = text.split('\n', 1)
+        if len(parts) > 1:
+            return parts[1]
+        return ""
+    return text
+
 def parse_codeblock(content):
     """
     Attempts to detect language via Markdown or Shebang.
@@ -114,7 +131,8 @@ def parse_codeblock(content):
     match = re.search(pattern, content, re.DOTALL)
     if match:
         lang = match.group(1).lower() if match.group(1) else None
-        return lang, match.group(2)
+        # Ensure we strip shebangs even if they are inside markdown blocks
+        return lang, strip_shebang(match.group(2))
 
     # Strategy 2: Shebang
     first_line = content.strip().splitlines()[0]
@@ -122,7 +140,8 @@ def parse_codeblock(content):
         lower_line = first_line.lower()
         for key in LANG_MAP:
             if key in lower_line:
-                return key, content
+                # We used the shebang to identify the language, now we strip it for execution
+                return key, strip_shebang(content)
     
     return None, None
 
@@ -341,7 +360,8 @@ def run_logic(icon):
 
     if not lang:
         if content and content.strip():
-            code = content
+            # Apply shebang stripping here too if manual entry assumes shebang exists but failed detection
+            code = strip_shebang(content)
             user_input = prompt_user_for_language(LAST_DETECTED_LANG)
             if user_input:
                 lang = user_input.strip().lower()
