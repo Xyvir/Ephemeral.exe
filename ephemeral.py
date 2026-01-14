@@ -39,9 +39,12 @@ LANG_MAP = {
     'go':      {'image': 'golang:alpine', 'cmd': ['sh', '-c', 'cat > /tmp/main.go && go run /tmp/main.go']},
     
     # --- Expansion Pack (Systems) ---
-    'zig':     {'image': 'ziglang/zig:latest', 'cmd': ['sh', '-c', 'cat > /tmp/main.zig && zig run /tmp/main.zig']},
-    'v':       {'image': 'thevlang/v', 'cmd': ['sh', '-c', 'cat > /tmp/main.v && v run /tmp/main.v']},
-    'java':    {'image': 'openjdk:latest', 'cmd': ['sh', '-c', 'cat > /tmp/Main.java && java /tmp/Main.java']},
+    # Zig: Uses 'master' tag because 'latest' does not exist in official repo.
+    'zig':     {'image': 'ziglang/zig:master', 'cmd': ['sh', '-c', 'cat > /tmp/main.zig && zig run /tmp/main.zig']},
+    # V (Vlang): Uses 'latest-alpine' because 'latest' is often missing/protected.
+    'v':       {'image': 'thevlang/v:latest-alpine', 'cmd': ['sh', '-c', 'cat > /tmp/main.v && v run /tmp/main.v']},
+    # Java: 'latest' tag is deprecated/removed. Using JDK 21 Slim.
+    'java':    {'image': 'openjdk:21-slim', 'cmd': ['sh', '-c', 'cat > /tmp/Main.java && java /tmp/Main.java']},
 
     # --- Golfing & Modern Compiled ---
     'crystal': {'image': 'crystallang/crystal:latest', 'cmd': ['sh', '-c', 'cat > /tmp/run.cr && crystal run /tmp/run.cr']},
@@ -408,5 +411,4 @@ if __name__ == '__main__':
         item('Clear Image Cache', purge_cache),
         item('Quit', quit_app)
     )
-    icon = pystray.Icon("Ephemeral", image, "Ephemeral", menu)
-    icon.run(setup)
+    icon = pystray.Icon("Ephemeral", image
