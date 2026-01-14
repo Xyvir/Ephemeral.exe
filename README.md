@@ -129,4 +129,8 @@ pip install pyinstaller
 pyinstaller --noconsole --onefile --name "Ephemeral" --hidden-import=pystray ephemeral.py
 ```
 
-> If you would like additional default languages included beside the above, please open a PR so I can get them added.
+> If you would like additional default languages included beside the above, please open a PR so I can get them added.>
+
+# Todo:
+
+Currently text-only output is supported; though I can see a use case for adding a mechanism to retreive arbitrary file artifacts and that would be the next major addition.
