@@ -2,6 +2,8 @@
 
 **Ephemeral** is a lightweight, daemonless utility for Windows that instantly executes code snippets from your clipboard inside isolated, secure containers.
 
+![Ephemeral Demo](ephemeral.gif)
+
 ## The Problem
 Windows is a fantastic OS, but it lacks the native "polyglot" flexibility of Linux. 
 * Installing Python, Ruby, Node, Go, Rust, and Perl just to run a quick snippet is overkill.
