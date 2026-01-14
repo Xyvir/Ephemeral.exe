@@ -133,5 +133,7 @@ pyinstaller --noconsole --onefile --name "Ephemeral" --hidden-import=pystray eph
 
 # Todo:
 
-Currently text-only output is supported; though I can see a use case for adding a mechanism to retreive arbitrary file artifacts and that would be the next major addition.
-Add support for serializing multiple varied language codeblocks in the clipboard, running each in sequence and returning their ordered STOUD.
+Currently text-only output is supported; though I can see a use case for adding a mechanism to retreive arbitrary file artifacts and that would be the next major addition.  
+  
+Add support for serializing multiple varied language codeblocks in the clipboard, running each in sequence and returning their ordered STOUD.  
+
