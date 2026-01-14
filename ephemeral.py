@@ -46,9 +46,6 @@ LANG_MAP = {
     'crystal': {'image': 'crystallang/crystal:latest', 'cmd': ['sh', '-c', 'cat > /tmp/run.cr && crystal run /tmp/run.cr']},
     'nim':     {'image': 'nimlang/nim:alpine', 'cmd': ['sh', '-c', 'cat > /tmp/run.nim && nim c -r --verbosity:0 --hints:off /tmp/run.nim']},
 
-    # --- WebAssembly ---
-    'webasm':  {'image': 'wasmer/wasmer', 'entrypoint': '/bin/sh', 'cmd': ['-c', 'cat > /tmp/run.wat && wasmer run /tmp/run.wat']},
-
     # --- Lisp & Functional ---
     'lisp':    {'image': 'clfoundation/sbcl:slim', 'cmd': ['sh', '-c', 'cat > /tmp/run.lisp && sbcl --script /tmp/run.lisp']},
     'clojure': {'image': 'clojure:temurin-17-alpine', 'cmd': ['sh', '-c', 'cat > /tmp/run.clj && clojure -M /tmp/run.clj']},
@@ -82,8 +79,7 @@ LANG_MAP = {
     'clj': 'clojure', 'ex': 'elixir', 'exs': 'elixir',
     'ml': 'ocaml',
     'swipl': 'prolog', 'pl': 'prolog',
-    'cr': 'crystal', 'nimrod': 'nim',
-    'wasm': 'webasm', 'wat': 'webasm'
+    'cr': 'crystal', 'nimrod': 'nim'
 }
 
 def create_icon_image():
