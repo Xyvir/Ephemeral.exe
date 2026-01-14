@@ -38,21 +38,14 @@ LANG_MAP = {
     'julia':   {'image': 'julia:alpine',           'cmd': ['julia']},
 
     # --- Systems & Compiled (Compile-and-Run Chains) ---
-    # C: GCC compiler -> pipe source -> output to /tmp -> run
     'c':       {'image': 'gcc:latest', 'cmd': ['sh', '-c', 'gcc -x c - -o /tmp/run && /tmp/run']},
-    # C++: G++ compiler
     'cpp':     {'image': 'gcc:latest', 'cmd': ['sh', '-c', 'g++ -x c++ - -o /tmp/run && /tmp/run']},
-    # Fortran: GFortran
     'fortran': {'image': 'gcc:latest', 'cmd': ['sh', '-c', 'gfortran -x f95 - -o /tmp/run && /tmp/run']},
-    # Rust: RustC
     'rust':    {'image': 'rust:alpine', 'cmd': ['sh', '-c', 'rustc - -o /tmp/run && /tmp/run']},
-    # Go: Go Run (Native support for stdin)
     'go':      {'image': 'golang:alpine', 'cmd': ['go', 'run', '/dev/stdin']},
 
     # --- Hardware Description (HDL) ---
-    # Verilog: Icarus Verilog -> Compile to /tmp/out -> Run with vvp
     'verilog': {'image': 'hdlc/iverilog', 'cmd': ['sh', '-c', 'cat > /tmp/run.v && iverilog /tmp/run.v -o /tmp/out && vvp /tmp/out']},
-    # VHDL is excluded for now as it requires strict entity-filename matching which is hard for snippets.
 
     # --- Functional & Scripting ---
     'haskell': {'image': 'haskell:slim', 'cmd': ['runghc']},
@@ -88,7 +81,8 @@ def parse_codeblock(content):
         return None, None
 
     # Strategy 1: Markdown
-    pattern = r"```(\w+)?\s*\n(.*?)```"
+    # RELAXED REGEX: Capture [^\s]+ instead of \w+ to allow 'python:2.7' or 'node-14'
+    pattern = r"```([^\s\n]+)?\s*\n(.*?)```"
     match = re.search(pattern, content, re.DOTALL)
     if match:
         lang = match.group(1).lower() if match.group(1) else 'auto'
@@ -98,12 +92,13 @@ def parse_codeblock(content):
     first_line = content.strip().splitlines()[0]
     if first_line.startswith("#!"):
         lower_line = first_line.lower()
-        # Scan keys in LANG_MAP to match shebang (simple substring check)
+        # Simple containment check might miss versions, but works for general detection
+        # We can refine this if needed, but usually shebangs use system paths
         for key in LANG_MAP:
             if key in lower_line:
                 return key, content
     
-    # Strategy 3: Pygments (The "Smart" AI-lite detection)
+    # Strategy 3: Pygments
     if HAS_PYGMENTS:
         try:
             lexer = guess_lexer(content)
@@ -115,6 +110,68 @@ def parse_codeblock(content):
             pass
 
     return None, None
+
+def resolve_runtime_config(lang):
+    """
+    Resolves the language string (e.g., 'python:2.7', 'js') to a docker config.
+    Handles aliases and version overrides.
+    """
+    base_lang = lang
+    version = None
+
+    # 1. Parse Version Tag (python:2.7, python-2.7, node14)
+    # Match: (name) + optional ( separator + number/dots )
+    match = re.match(r"^([a-z]+)(?:[:\-](\d+(?:\.\d+)*))?$", lang)
+    if match:
+        base_lang = match.group(1)
+        version = match.group(2) # Might be None
+
+    # 2. Resolve Alias (py -> python)
+    if base_lang in LANG_MAP:
+        resolved = LANG_MAP[base_lang]
+        if isinstance(resolved, str):
+            # It's an alias string
+            base_lang = resolved
+            # Check for double alias
+            if base_lang in LANG_MAP and isinstance(LANG_MAP[base_lang], str):
+                 base_lang = LANG_MAP[base_lang]
+        elif isinstance(resolved, dict):
+            # It's a direct config, base_lang is correct
+            pass
+    
+    # 3. Get Base Config
+    config = None
+    if base_lang in LANG_MAP and isinstance(LANG_MAP[base_lang], dict):
+        # Copy to avoid mutating global state
+        config = LANG_MAP[base_lang].copy()
+    
+    # 4. Fallback or Apply Version
+    if config:
+        if version:
+            # We have a config (e.g. python) and a requested version (e.g. 2.7)
+            # The base image is likely 'python:3.10-slim'.
+            # We want to keep the repository 'python' but change the tag to '2.7'.
+            original_image = config['image']
+            
+            # Simple heuristic: Take everything before the first colon (or whole string if no colon)
+            repo = original_image.split(':')[0]
+            
+            # Reconstruct image string. 
+            # Note: User must know valid tags (e.g. '2.7' or '2.7-slim' if they typed python:2.7-slim)
+            # But here we only parsed the number. Let's try appending the version directly.
+            config['image'] = f"{repo}:{version}"
+            
+    else:
+        # Wildcard Fallback
+        # If user typed 'perl:5.34', base_lang is perl.
+        # If perl isn't in LANG_MAP, we construct generic.
+        image_tag = f"{lang}" if ':' in lang else f"{lang}:latest"
+        config = {
+            'image': image_tag,
+            'cmd': [base_lang, '-'] # Best guess: cmd matches language name
+        }
+
+    return config
 
 # --- Podman Lifecycle Management ---
 
@@ -189,37 +246,21 @@ def run_logic(icon):
         icon.notify("No recognized code found (Markdown, Shebang, or Pygments).", title="Ephemeral Error")
         return
 
-    config = None
-    is_fallback = False
-
-    # 1. Check Explicit Map
-    if lang in LANG_MAP:
-        val = LANG_MAP[lang]
-        if isinstance(val, str):
-            if val in LANG_MAP:
-                config = LANG_MAP[val]
-                # Double resolve for deeper aliases
-                if isinstance(config, str) and config in LANG_MAP:
-                    config = LANG_MAP[config]
-        else:
-            config = val
+    # Use the new robust resolver
+    config = resolve_runtime_config(lang)
     
-    # 2. Wildcard Fallback (Best Effort)
-    if not config:
-        icon.notify(f"Language '{lang}' unknown. Attempting generic fallback...", title="Ephemeral Warning")
-        config = {
-            'image': f'{lang}:latest',
-            'cmd': [lang, '-']
-        }
-        is_fallback = True
+    # Flag to determine visibility: 
+    # If it's a fallback or non-standard version, we treat it as potentially "uncached" logic
+    # just to be safe, or stick to the check_image_exists logic.
+    # We'll rely on check_image_exists, as it covers version variations too.
 
     icon.notify(f"Launching {lang}...", title="Ephemeral Status")
 
     image_name = config['image']
     is_cached = check_image_exists(image_name)
 
-    # Force visible run if not cached OR if we are guessing (fallback)
-    if not is_cached or is_fallback:
+    # Force visible run if not cached (so we see download)
+    if not is_cached:
         run_visible_console_logic(icon, config, code, lang)
     else:
         run_hidden_logic(icon, config, code, lang)
