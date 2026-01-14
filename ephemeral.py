@@ -138,7 +138,12 @@ def parse_codeblock(content):
     first_line = content.strip().splitlines()[0]
     if first_line.startswith("#!"):
         lower_line = first_line.lower()
-        for key in LANG_MAP:
+        
+        # Sort keys by length descending to prevent substring collisions
+        # e.g., 'c' matching inside '#!cpp' before 'cpp' is checked
+        sorted_keys = sorted(LANG_MAP.keys(), key=len, reverse=True)
+        
+        for key in sorted_keys:
             if key in lower_line:
                 # We used the shebang to identify the language, now we strip it for execution
                 return key, strip_shebang(content)
