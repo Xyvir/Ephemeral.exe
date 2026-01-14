@@ -11,6 +11,7 @@ import os
 import tempfile
 import time
 import ctypes # For native Windows Message Box
+import shlex  # For parsing quoted strings in headers
 
 # --- Configuration ---
 HOTKEY = 'ctrl+alt+x'
@@ -39,7 +40,6 @@ LANG_MAP = {
     'go':      {'image': 'golang:alpine', 'cmd': ['sh', '-c', 'cat > /tmp/main.go && go run /tmp/main.go']},
     
     # --- Expansion Pack (Systems) ---
-    # Java: Switched to eclipse-temurin as official openjdk repo is deprecated.
     'java':    {'image': 'eclipse-temurin:21-jdk-alpine', 'cmd': ['sh', '-c', 'cat > /tmp/Main.java && java /tmp/Main.java']},
 
     # --- Golfing & Modern Compiled ---
@@ -54,6 +54,9 @@ LANG_MAP = {
 
     # --- Logic ---
     'prolog':  {'image': 'swipl:latest', 'cmd': ['swipl', '-q', '-f', '/dev/stdin', '-t', 'halt']},
+
+    # --- Esoteric ---
+    'brainfuck': {'image': 'andregeddert/brainfuck', 'cmd': ['sh', '-c', 'cat > /tmp/run.bf && brainfuck /tmp/run.bf']},
 
     # --- Hardware Description (HDL) ---
     'verilog': {'image': 'hdlc/iverilog', 'cmd': ['sh', '-c', 'cat > /tmp/run.v && iverilog /tmp/run.v -o /tmp/out && vvp /tmp/out']},
@@ -79,7 +82,8 @@ LANG_MAP = {
     'clj': 'clojure', 'ex': 'elixir', 'exs': 'elixir',
     'ml': 'ocaml',
     'swipl': 'prolog', 'pl': 'prolog',
-    'cr': 'crystal', 'nimrod': 'nim'
+    'cr': 'crystal', 'nimrod': 'nim',
+    'bf': 'brainfuck'
 }
 
 def create_icon_image():
@@ -93,18 +97,10 @@ def get_clipboard():
     return pyperclip.paste()
 
 def strip_ansi_codes(text):
-    """
-    Removes ANSI escape sequences (colors, cursor movements) from text.
-    Essential for cleaning up PowerShell and colored output.
-    """
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     return ansi_escape.sub('', text)
 
 def strip_shebang(text):
-    """
-    Removes the first line if it is a shebang (starts with #!).
-    Crucial for languages like C/C++/Go where # is not a comment or has different semantics.
-    """
     if not text: return text
     if text.lstrip().startswith("#!"):
         parts = text.split('\n', 1)
@@ -114,34 +110,26 @@ def strip_shebang(text):
     return text
 
 def parse_codeblock(content):
-    """
-    Attempts to detect language via Markdown or Shebang.
-    Returns (lang, code).
-    If no detection, returns (None, None).
-    """
     if not content or not content.strip():
         return None, None
 
     # Strategy 1: Markdown
-    pattern = r"```([^\s\n]+)?\s*\n(.*?)```"
+    # Updated regex to capture the entire header line (everything after ``` until \n)
+    pattern = r"```(.*?)\n(.*?)```"
     match = re.search(pattern, content, re.DOTALL)
     if match:
-        lang = match.group(1).lower() if match.group(1) else None
+        header = match.group(1).strip() if match.group(1) else None
         # Ensure we strip shebangs even if they are inside markdown blocks
-        return lang, strip_shebang(match.group(2))
+        return header, strip_shebang(match.group(2))
 
     # Strategy 2: Shebang
     first_line = content.strip().splitlines()[0]
     if first_line.startswith("#!"):
         lower_line = first_line.lower()
-        
         # Sort keys by length descending to prevent substring collisions
-        # e.g., 'c' matching inside '#!cpp' before 'cpp' is checked
         sorted_keys = sorted(LANG_MAP.keys(), key=len, reverse=True)
-        
         for key in sorted_keys:
             if key in lower_line:
-                # We used the shebang to identify the language, now we strip it for execution
                 return key, strip_shebang(content)
     
     return None, None
@@ -181,14 +169,41 @@ def prompt_user_for_language(default_lang):
         if os.path.exists(path_bat): os.remove(path_bat)
     return detected_lang
 
-def resolve_runtime_config(lang):
-    base_lang = lang
+def resolve_runtime_config(header_line):
+    """
+    Resolves the header string to a docker config.
+    Handles aliases, version overrides, and explicit image/cmd overrides.
+    Header can be: 'python', 'python:3.8', 'custom image=alpine', 'node cmd="node -v"'
+    """
+    if not header_line: return None
+
+    # Parse tokens handling quoted strings (e.g. cmd="bash -c 'echo hi'")
+    try:
+        tokens = shlex.split(header_line)
+    except:
+        tokens = header_line.split() # Fallback
+    
+    if not tokens: return None
+
+    base_lang_input = tokens[0].lower()
+    overrides = {}
+    
+    # Extract key=value pairs
+    for token in tokens[1:]:
+        if '=' in token:
+            key, val = token.split('=', 1)
+            overrides[key.lower()] = val
+
+    # Resolve Base Language & Version
+    base_lang = base_lang_input
     version = None
-    match = re.match(r"^([a-z0-9\+\#]+)(?:[:\-](\d+(?:\.\d+)*))?$", lang)
+    # Regex allows +, # for c++, c#
+    match = re.match(r"^([a-z0-9\+\#]+)(?:[:\-](\d+(?:\.\d+)*))?$", base_lang_input)
     if match:
         base_lang = match.group(1)
         version = match.group(2) 
 
+    # Resolve Alias
     if base_lang in LANG_MAP:
         resolved = LANG_MAP[base_lang]
         if isinstance(resolved, str):
@@ -198,21 +213,46 @@ def resolve_runtime_config(lang):
         elif isinstance(resolved, dict):
             pass
     
+    # Get Config
     config = None
     if base_lang in LANG_MAP and isinstance(LANG_MAP[base_lang], dict):
         config = LANG_MAP[base_lang].copy()
     
-    if config:
-        if version:
-            repo = config['image'].split(':')[0]
+    # If no config found (unknown lang), check if 'image' override is provided
+    # If so, treat as "custom" run
+    if not config:
+        if 'image' in overrides:
+            config = {'image': '', 'cmd': []} # Will be filled by overrides
+        else:
+            # Wildcard Fallback (try lang:latest)
+            image_tag = f"{base_lang_input}" if ':' in base_lang_input else f"{base_lang_input}:latest"
+            config = {
+                'image': image_tag,
+                'cmd': [base_lang, '-'] # Best guess: cmd matches language name
+            }
+
+    # Apply Version Override (if not overridden by explicit image=)
+    if version and config and 'image' not in overrides:
+        # Keep repo, swap tag
+        original_image = config.get('image', '')
+        if ':' in original_image:
+            repo = original_image.split(':')[0]
             config['image'] = f"{repo}:{version}"
-    else:
-        # Wildcard Fallback
-        image_tag = f"{lang}" if ':' in lang else f"{lang}:latest"
-        config = {
-            'image': image_tag,
-            'cmd': [base_lang, '-'] 
-        }
+        else:
+            # If original had no tag, append version
+            config['image'] = f"{original_image}:{version}"
+
+    # Apply Explicit Overrides
+    if 'image' in overrides:
+        config['image'] = overrides['image']
+    
+    if 'cmd' in overrides:
+        # Parse command string into list
+        config['cmd'] = shlex.split(overrides['cmd'])
+        
+    if 'entrypoint' in overrides:
+        config['entrypoint'] = overrides['entrypoint']
+
     return config
 
 # --- Podman Lifecycle Management ---
@@ -338,8 +378,10 @@ def run_container_piped(icon, config, code, lang):
         
         if process.returncode == 0:
             result = stdout
-            pyperclip.copy(f"Result ({lang}):\n---\n```text\n{result.strip()}\n```")
-            icon.notify(f"{lang.capitalize()} execution results copied to clipboard.", title="Ephemeral")
+            # Use lang name for notification title if available, else 'Custom'
+            title_lang = lang.split()[0].capitalize() if lang else "Custom"
+            pyperclip.copy(f"Result ({title_lang}):\n---\n```text\n{result.strip()}\n```")
+            icon.notify(f"{title_lang} execution results copied to clipboard.", title="Ephemeral")
         else:
             full_error = f"Exit Code: {process.returncode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
             show_post_mortem_error(full_error)
@@ -365,7 +407,7 @@ def run_logic(icon):
             code = strip_shebang(content)
             user_input = prompt_user_for_language(LAST_DETECTED_LANG)
             if user_input:
-                lang = user_input.strip().lower()
+                lang = user_input.strip() # Don't lower() here to preserve case for cmd args if any
             else:
                 icon.notify("Execution cancelled.", title="Ephemeral")
                 return
@@ -373,9 +415,16 @@ def run_logic(icon):
              icon.notify("Clipboard is empty.", title="Ephemeral Error")
              return
 
-    LAST_DETECTED_LANG = lang
+    # Update memory with the base language part only (first token)
+    LAST_DETECTED_LANG = lang.split()[0]
+    
     config = resolve_runtime_config(lang)
-    icon.notify(f"Launching {lang}...", title="Ephemeral Status")
+    
+    if not config or not config.get('image'):
+        icon.notify("Configuration failed. Could not resolve image.", title="Ephemeral Error")
+        return
+
+    icon.notify(f"Launching {LAST_DETECTED_LANG}...", title="Ephemeral Status")
 
     image_name = config['image']
     is_cached = check_image_exists(image_name)
