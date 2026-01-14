@@ -18,6 +18,27 @@ Ephemeral acts as a "Sidecar Notebook" for your entire operating system. It leve
 4.  **Legacy Support:** Need to test a script in Python 2.7? Just type `python:2.7`. Ephemeral pulls the specific version for that run.
 5.  **Context Agnostic:** It works anywhere you can copy text.
 
+## Prerequisites
+
+Before running Ephemeral, you must ensure your Windows environment is ready to host Linux containers.
+
+1.  **Enable Virtualization (BIOS/UEFI):**
+    * Ensure **Virtualization Technology** (often labeled VT-x, AMD-V, or SVM) is enabled in your computer's BIOS/UEFI settings. This is strictly required for WSL2 to function.
+
+2.  **Enable WSL2:**
+    * Open PowerShell as Administrator and run: `wsl --install`
+    * Restart your computer if prompted.
+
+3.  **Install Podman for Windows:**
+    * Download the installer from the [Podman Website](https://podman.io/docs/installation#windows).
+    * Run the installer.
+    * Open a terminal and initialize the machine:
+        ```powershell
+        podman machine init
+        podman machine start
+        ```
+    * *Note: Ephemeral will attempt to auto-start the machine if it's stopped, but the initial `init` setup usually requires manual intervention.*
+
 ## Usage
 
 1.  **Highlight & Copy** any code block (or click the "Copy Code" button found on many documentation sites):
