@@ -9,6 +9,7 @@ import sys
 import re
 import os
 import tempfile
+import time
 
 # --- Configuration ---
 HOTKEY = 'ctrl+alt+x'
@@ -26,7 +27,6 @@ LANG_MAP = {
     'octave':  {'image': 'gnuoctave/octave:latest', 'cmd': ['octave', '--no-gui', '--quiet', '--eval', '-']},
 
     # --- Windows-like Shells (via Linux) ---
-    # Official PowerShell Core on Linux
     'pwsh':    {'image': 'mcr.microsoft.com/powershell', 'cmd': ['pwsh', '-Command', '-']},
     
     # Aliases
@@ -34,64 +34,113 @@ LANG_MAP = {
     'numpy': 'science', 'pandas': 'science',
     'matlab': 'octave',
     'powershell': 'pwsh', 'ps1': 'pwsh',
-    'cmd': 'pwsh', 'batch': 'pwsh' # Fallback to pwsh for basic Windows command compatibility
+    'cmd': 'pwsh', 'batch': 'pwsh' 
 }
 
 def create_icon_image():
-    # A distinct 'Clean Slate' Icon (White/Blue)
     image = Image.new('RGB', (64, 64), (30, 30, 30))
     dc = ImageDraw.Draw(image)
-    dc.rectangle((16, 16, 48, 48), fill=(255, 255, 255)) # White Paper
-    dc.rectangle((20, 20, 44, 28), fill=(0, 120, 215))   # Blue Header
+    dc.rectangle((16, 16, 48, 48), fill=(255, 255, 255)) 
+    dc.rectangle((20, 20, 44, 28), fill=(0, 120, 215))   
     return image
 
 def get_clipboard():
     return pyperclip.paste()
 
 def parse_codeblock(content):
-    # Relaxed regex: \s* allows for trailing spaces after language name before newline
+    if not content or not content.strip():
+        return None, None
+
+    # Strategy 1: Markdown
     pattern = r"```(\w+)?\s*\n(.*?)```"
     match = re.search(pattern, content, re.DOTALL)
     if match:
         lang = match.group(1).lower() if match.group(1) else 'auto'
         return lang, match.group(2)
+
+    # Strategy 2: Shebang
+    first_line = content.strip().splitlines()[0]
+    if first_line.startswith("#!"):
+        lower_line = first_line.lower()
+        if 'python' in lower_line: return 'python', content
+        if 'node' in lower_line:   return 'node', content
+        if 'ruby' in lower_line:   return 'ruby', content
+        if 'bash' in lower_line or 'sh' in lower_line: return 'bash', content
+        if 'pwsh' in lower_line or 'powershell' in lower_line: return 'pwsh', content
+        
     return None, None
 
-def show_error_window(error_text):
-    """
-    Writes the error to a temp file and opens a persistent cmd window to view it.
-    This satisfies the 'persist on error' requirement.
-    """
+# --- Podman Lifecycle Management ---
+
+def check_podman_alive():
+    """Returns True if 'podman info' succeeds (daemon is responding)."""
     try:
-        # Write error to a temp file so cmd can read it cleanly
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as tmp:
-            tmp.write("--- EPHEMERAL EXECUTION ERROR ---\n\n")
-            tmp.write(error_text)
-            tmp_path = tmp.name
-            
-        # Launch a visible CMD window that stays open (/K) and displays the file
-        # 'start' is a shell command, so shell=True is needed here
-        subprocess.Popen(
-            f'start cmd /K "type "{tmp_path}" && echo. && echo. && echo [Ephemeral Debug] Window persisted due to error. Close to dismiss."', 
-            shell=True
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        subprocess.check_call(
+            ['podman', 'info'], 
+            stdout=subprocess.DEVNULL, 
+            stderr=subprocess.DEVNULL, 
+            startupinfo=startupinfo
         )
+        return True
+    except:
+        return False
+
+def ensure_podman_running(icon):
+    """Checks status and runs 'machine start' or 'machine init' if needed."""
+    if check_podman_alive():
+        return # Already running
+
+    icon.notify("Podman is not running. Attempting to start...", title="Ephemeral Init")
+    
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    
+    try:
+        # Try starting
+        subprocess.check_call(
+            ['podman', 'machine', 'start'], 
+            startupinfo=startupinfo,
+            stdout=subprocess.DEVNULL, # Keep it clean
+            stderr=subprocess.DEVNULL 
+        )
+        icon.notify("Podman machine started successfully.", title="Ephemeral Init")
+    except subprocess.CalledProcessError:
+        # Start failed. Maybe it needs initialization?
+        icon.notify("Start failed. Initializing new machine...", title="Ephemeral Init")
+        try:
+            # Init (this downloads WSL distro, might take a while)
+            subprocess.check_call(['podman', 'machine', 'init'], startupinfo=startupinfo)
+            # Try starting again
+            subprocess.check_call(['podman', 'machine', 'start'], startupinfo=startupinfo)
+            icon.notify("Podman machine initialized and started.", title="Ephemeral Init")
+        except Exception as e:
+            icon.notify(f"Could not start Podman: {e}", title="Ephemeral Fatal Error")
+
+def stop_podman_machine(icon):
+    """Stops the podman machine to save resources."""
+    icon.notify("Stopping Podman machine...", title="Ephemeral Shutdown")
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    try:
+        subprocess.run(['podman', 'machine', 'stop'], startupinfo=startupinfo)
     except Exception as e:
-        print(f"Failed to show error window: {e}")
+        print(f"Error stopping podman: {e}")
+
+# --- Execution Logic ---
 
 def run_logic(icon):
     content = get_clipboard()
     lang, code = parse_codeblock(content)
 
     if not code:
-        # ADDED: Feedback when parsing fails
-        icon.notify("No valid triple-backtick codeblock found in clipboard.", title="Ephemeral Error")
+        icon.notify("No valid codeblock or shebang found.", title="Ephemeral Error")
         return
 
-    # Resolve configuration or alias
     config = None
     if lang in LANG_MAP:
         val = LANG_MAP[lang]
-        # Recursively resolve string aliases (e.g. 'py' -> 'python' -> config dict)
         if isinstance(val, str):
             if val in LANG_MAP:
                 config = LANG_MAP[val]
@@ -99,91 +148,76 @@ def run_logic(icon):
             config = val
     
     if not config:
-        # ADDED: Feedback when language is unsupported
         icon.notify(f"Language '{lang}' is not supported.", title="Ephemeral Error")
         return
 
-    # --- 1. IMMEDIATE USER FEEDBACK ---
-    icon.notify(f"Spinning up container for {lang}...", title="Ephemeral Status")
+    icon.notify(f"Launching {lang}...", title="Ephemeral Status")
+
+    # Files for IPC
+    fd_code, path_code = tempfile.mkstemp(suffix='.src')
+    fd_out, path_out = tempfile.mkstemp(suffix='.res')
+    os.close(fd_code)
+    os.close(fd_out)
 
     try:
-        podman_cmd = [
+        # 1. Write Clipboard to Temp File
+        with open(path_code, 'w', encoding='utf-8') as f:
+            f.write(code)
+
+        # 2. Construct the Native Command
+        podman_base = [
             'podman', 'run', 
-            '--rm',              # Auto-delete
-            '-i',                # Interactive
-            '--network', 'none', # Sandbox
+            '--rm', '-i', 
+            '--network', 'none', 
             '--memory', '128m',
             config['image']
         ] + config['cmd']
-
-        # Suppress the main execution window (keep it clean)
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-
-        process = subprocess.Popen(
-            podman_cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            startupinfo=startupinfo
-        )
         
-        stdout, stderr = process.communicate(input=code)
-        
-        # Check exit code to distinguish between "warnings/logs" and "failures"
-        if process.returncode != 0:
-            # --- 2. PERSIST ON ACTUAL ERROR ---
-            # If there is an error, show the debug window and notify
-            # Combine stdout/stderr because sometimes errors print to stdout too
-            full_error = f"Exit Code: {process.returncode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
-            show_error_window(full_error)
-            icon.notify(f"Execution failed for {lang}. See debug window.", title="Ephemeral Error")
-        else:
-            # --- 3. AUTO-CLOSE ON SUCCESS ---
+        podman_str = " ".join(f'"{arg}"' if " " in arg else arg for arg in podman_base)
+        cmd_line = f'cmd /C "(type "{path_code}" | {podman_str} > "{path_out}") || pause"'
+
+        # 3. Launch Visible Console
+        process = subprocess.Popen(cmd_line, creationflags=subprocess.CREATE_NEW_CONSOLE)
+        process.wait()
+
+        # 4. Read Result
+        if os.path.exists(path_out):
+            with open(path_out, 'r', encoding='utf-8', errors='replace') as f:
+                result = f.read()
             
-            # Clean up Podman's pull logs from stderr so they don't clutter the clipboard
-            cleaned_stderr = ""
-            if stderr:
-                # Filter out lines that look like Podman image pull progress
-                ignore_keywords = [
-                    "Resolving ", "Trying to pull", "Getting image source", 
-                    "Copying blob", "Copying config", "Writing manifest", 
-                    "Storing signatures"
-                ]
-                cleaned_stderr = "\n".join([
-                    line for line in stderr.splitlines() 
-                    if not any(keyword in line for keyword in ignore_keywords)
-                ])
-
-            result = stdout
-            # Only append stderr if it contains actual content (warnings, user errors)
-            if cleaned_stderr:
-                result += f"\n--- stderr ---\n{cleaned_stderr}"
-                
-            # Update clipboard silently and notify completion
-            pyperclip.copy(f"Result ({lang}):\n---\n{result}")
-            icon.notify(f"Success! Result copied to clipboard.", title="Ephemeral")
+            if result.strip():
+                pyperclip.copy(f"Result ({lang}):\n---\n{result}")
+                icon.notify("Success", title="Ephemeral")
 
     except Exception as e:
-        show_error_window(str(e))
-        icon.notify("Critical failure. See debug window.", title="Ephemeral Failed")
+        icon.notify(f"System Error: {str(e)}", title="Ephemeral Failed")
+    
+    finally:
+        if os.path.exists(path_code): os.remove(path_code)
+        if os.path.exists(path_out): os.remove(path_out)
 
 def on_hotkey(icon):
     threading.Thread(target=run_logic, args=(icon,)).start()
 
 def setup(icon):
     icon.visible = True
+    
+    # Run initialization in a background thread so UI doesn't freeze
+    def init_sequence():
+        ensure_podman_running(icon)
+        
+    threading.Thread(target=init_sequence).start()
+    
     keyboard.add_hotkey(HOTKEY, lambda: on_hotkey(icon))
 
 def quit_app(icon, item):
+    # Run stop logic on the main thread (blocking exit is fine here)
+    stop_podman_machine(icon)
     icon.stop()
     sys.exit()
 
 if __name__ == '__main__':
     image = create_icon_image()
-    # Updated menu to include manual trigger
-    # default=True binds this action to the Left-Click event on the tray icon
     menu = (
         item('Run Clipboard', lambda icon, item: on_hotkey(icon), default=True),
         item('Quit', quit_app)
