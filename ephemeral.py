@@ -36,9 +36,20 @@ LANG_MAP = {
     'cpp':     {'image': 'gcc:latest', 'cmd': ['sh', '-c', 'g++ -x c++ - -o /tmp/run && /tmp/run']},
     'fortran': {'image': 'gcc:latest', 'cmd': ['sh', '-c', 'gfortran -x f95 - -o /tmp/run && /tmp/run']},
     'rust':    {'image': 'rust:alpine', 'cmd': ['sh', '-c', 'rustc - -o /tmp/run && /tmp/run']},
-    
-    # FIXED: Go requires a .go file extension to run properly. We pipe to a temp file first.
     'go':      {'image': 'golang:alpine', 'cmd': ['sh', '-c', 'cat > /tmp/main.go && go run /tmp/main.go']},
+
+    # --- Golfing & Modern Compiled ---
+    # Crystal: Ruby-like syntax but compiles to C-speed native code. Great for golf.
+    'crystal': {'image': 'crystallang/crystal:alpine', 'cmd': ['sh', '-c', 'cat > /tmp/run.cr && crystal run /tmp/run.cr']},
+    # Nim: Python-like syntax, C-like speed.
+    'nim':     {'image': 'nimlang/nim:alpine', 'cmd': ['sh', '-c', 'cat > /tmp/run.nim && nim c -r --verbosity:0 --hints:off /tmp/run.nim']},
+
+    # --- Lisp Family ---
+    'lisp':    {'image': 'frolvlad/alpine-sbcl', 'cmd': ['sh', '-c', 'cat > /tmp/run.lisp && sbcl --script /tmp/run.lisp']},
+    'clojure': {'image': 'clojure:temurin-17-alpine', 'cmd': ['sh', '-c', 'cat > /tmp/run.clj && clojure -M /tmp/run.clj']},
+
+    # --- Stack & Concatenative ---
+    'forth':   {'image': 'bebound/gforth', 'cmd': ['sh', '-c', 'cat > /tmp/run.fs && gforth /tmp/run.fs -e bye']},
 
     # --- Hardware Description (HDL) ---
     'verilog': {'image': 'hdlc/iverilog', 'cmd': ['sh', '-c', 'cat > /tmp/run.v && iverilog /tmp/run.v -o /tmp/out && vvp /tmp/out']},
@@ -59,7 +70,11 @@ LANG_MAP = {
     'powershell': 'pwsh', 'ps1': 'pwsh', 'cmd': 'pwsh', 'batch': 'pwsh',
     'R': 'r',
     'golang': 'go', 'cc': 'c', 'c++': 'cpp',
-    'f90': 'fortran', 'f95': 'fortran'
+    'f90': 'fortran', 'f95': 'fortran',
+    'sbcl': 'lisp', 'cl': 'lisp', 'common-lisp': 'lisp',
+    'clj': 'clojure',
+    'gforth': 'forth',
+    'cr': 'crystal', 'nimrod': 'nim'
 }
 
 def create_icon_image():
