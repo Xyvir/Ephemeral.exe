@@ -10,6 +10,7 @@ import re
 import os
 import tempfile
 import time
+import ctypes # For native Windows Message Box
 import shlex  # For parsing quoted strings in headers
 
 # --- Configuration ---
@@ -56,7 +57,12 @@ LANG_MAP = {
     'prolog':  {'image': 'swipl:latest', 'cmd': ['swipl', '-q', '-f', '/dev/stdin', '-t', 'halt']},
 
     # --- Esoteric ---
-    'brainfuck': {'image': 'andregeddert/brainfuck', 'cmd': ['sh', '-c', 'cat > /tmp/run.bf && brainfuck /tmp/run.bf']},
+    # Brainfuck: Switched to esolang/brainfuck-esotope (part of esolang-box)
+    'brainfuck': {'image': 'esolang/brainfuck-esotope', 'cmd': ['sh', '-c', 'cat > /tmp/code && script /tmp/code']},
+
+    # --- Retro / BASIC ---
+    # FreeBASIC (via PrimeImages): Compiles .bas to binary. Syntax compatible with QBASIC.
+    'freebasic': {'image': 'primeimages/freebasic', 'cmd': ['bash', '-c', 'cat > /tmp/run.bas && fbc /tmp/run.bas && /tmp/run']},
 
     # --- Hardware Description (HDL) ---
     'verilog': {'image': 'hdlc/iverilog', 'cmd': ['sh', '-c', 'cat > /tmp/run.v && iverilog /tmp/run.v -o /tmp/out && vvp /tmp/out']},
@@ -83,8 +89,21 @@ LANG_MAP = {
     'ml': 'ocaml',
     'swipl': 'prolog', 'pl': 'prolog',
     'cr': 'crystal', 'nimrod': 'nim',
-    'bf': 'brainfuck'
+    'bf': 'brainfuck', 'spl': 'shakespeare', '><>': 'fish',
+    'basic': 'freebasic', 'qbasic': 'freebasic', 'fbc': 'freebasic'
 }
+
+# Add all esolang languages dynamically to the map to ensure we cover the list
+# Common esolangs from esolang-box that work well with the 'script' command
+ESOLANGS = [
+    '05ab1e', 'jelly', 'golfscript', 'befunge', 'whitespace', 'lolcode', 
+    'shakespeare', 'malbolge', 'piet', 'matl', 'fish', 'hexagony', 'cjam', 
+    'intercal', 'unlambda', 'arnoldc', 'emojicode'
+]
+for lang in ESOLANGS:
+    if lang not in LANG_MAP:
+        LANG_MAP[lang] = {'image': f'esolang/{lang}', 'cmd': ['sh', '-c', 'cat > /tmp/code && script /tmp/code']}
+
 
 def create_icon_image():
     image = Image.new('RGB', (64, 64), (30, 30, 30))
@@ -97,10 +116,16 @@ def get_clipboard():
     return pyperclip.paste()
 
 def strip_ansi_codes(text):
+    """
+    Removes ANSI escape sequences (colors, cursor movements) from text.
+    """
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     return ansi_escape.sub('', text)
 
 def strip_shebang(text):
+    """
+    Removes the first line if it is a shebang (starts with #!).
+    """
     if not text: return text
     if text.lstrip().startswith("#!"):
         parts = text.split('\n', 1)
@@ -114,19 +139,16 @@ def parse_codeblock(content):
         return None, None
 
     # Strategy 1: Markdown
-    # Updated regex to capture the entire header line (everything after ``` until \n)
     pattern = r"```(.*?)\n(.*?)```"
     match = re.search(pattern, content, re.DOTALL)
     if match:
         header = match.group(1).strip() if match.group(1) else None
-        # Ensure we strip shebangs even if they are inside markdown blocks
         return header, strip_shebang(match.group(2))
 
     # Strategy 2: Shebang
     first_line = content.strip().splitlines()[0]
     if first_line.startswith("#!"):
         lower_line = first_line.lower()
-        # Sort keys by length descending to prevent substring collisions
         sorted_keys = sorted(LANG_MAP.keys(), key=len, reverse=True)
         for key in sorted_keys:
             if key in lower_line:
@@ -134,14 +156,23 @@ def parse_codeblock(content):
     
     return None, None
 
-def prompt_user_for_language(default_lang):
+def prompt_user_for_language(default_lang, code_preview=""):
     fd_out, path_out = tempfile.mkstemp(suffix='.txt')
     os.close(fd_out)
     fd_bat, path_bat = tempfile.mkstemp(suffix='.bat')
     os.close(fd_bat)
+    fd_ctx, path_ctx = tempfile.mkstemp(suffix='.ctx')
+    os.close(fd_ctx)
     
     detected_lang = None
     try:
+        # Prepare context preview file (Last 5 lines)
+        if code_preview:
+            lines = code_preview.strip().splitlines()
+            last_lines = lines[-5:] if len(lines) > 5 else lines
+            with open(path_ctx, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(last_lines))
+
         with open(path_bat, 'w') as f:
             f.write('@echo off\n')
             f.write('title Ephemeral: No language specified\n')
@@ -150,6 +181,15 @@ def prompt_user_for_language(default_lang):
             f.write('echo  --------------------------------------------------\n')
             f.write('echo   No language detected in clipboard.\n')
             f.write('echo  --------------------------------------------------\n')
+            
+            if code_preview:
+                f.write('echo   Context (Last 5 lines of clipboard):\n')
+                f.write('echo   ------------------------------------\n')
+                # Use type to print the content file safely
+                f.write(f'type "{path_ctx}"\n')
+                f.write('echo.\n')
+                f.write('echo   ------------------------------------\n')
+            
             f.write('echo.\n')
             f.write(f'set /p "lang= Enter Language [Default: {default_lang}]: "\n')
             f.write(f'if "%lang%"=="" set lang={default_lang}\n')
@@ -167,43 +207,34 @@ def prompt_user_for_language(default_lang):
     finally:
         if os.path.exists(path_out): os.remove(path_out)
         if os.path.exists(path_bat): os.remove(path_bat)
+        if os.path.exists(path_ctx): os.remove(path_ctx)
     return detected_lang
 
 def resolve_runtime_config(header_line):
-    """
-    Resolves the header string to a docker config.
-    Handles aliases, version overrides, and explicit image/cmd overrides.
-    Header can be: 'python', 'python:3.8', 'custom image=alpine', 'node cmd="node -v"'
-    """
     if not header_line: return None
 
-    # Parse tokens handling quoted strings (e.g. cmd="bash -c 'echo hi'")
     try:
         tokens = shlex.split(header_line)
     except:
-        tokens = header_line.split() # Fallback
+        tokens = header_line.split() 
     
     if not tokens: return None
 
     base_lang_input = tokens[0].lower()
     overrides = {}
     
-    # Extract key=value pairs
     for token in tokens[1:]:
         if '=' in token:
             key, val = token.split('=', 1)
             overrides[key.lower()] = val
 
-    # Resolve Base Language & Version
     base_lang = base_lang_input
     version = None
-    # Regex allows +, # for c++, c#
     match = re.match(r"^([a-z0-9\+\#]+)(?:[:\-](\d+(?:\.\d+)*))?$", base_lang_input)
     if match:
         base_lang = match.group(1)
         version = match.group(2) 
 
-    # Resolve Alias
     if base_lang in LANG_MAP:
         resolved = LANG_MAP[base_lang]
         if isinstance(resolved, str):
@@ -213,41 +244,32 @@ def resolve_runtime_config(header_line):
         elif isinstance(resolved, dict):
             pass
     
-    # Get Config
     config = None
     if base_lang in LANG_MAP and isinstance(LANG_MAP[base_lang], dict):
         config = LANG_MAP[base_lang].copy()
     
-    # If no config found (unknown lang), check if 'image' override is provided
-    # If so, treat as "custom" run
     if not config:
         if 'image' in overrides:
-            config = {'image': '', 'cmd': []} # Will be filled by overrides
+            config = {'image': '', 'cmd': []}
         else:
-            # Wildcard Fallback (try lang:latest)
             image_tag = f"{base_lang_input}" if ':' in base_lang_input else f"{base_lang_input}:latest"
             config = {
                 'image': image_tag,
-                'cmd': [base_lang, '-'] # Best guess: cmd matches language name
+                'cmd': [base_lang, '-']
             }
 
-    # Apply Version Override (if not overridden by explicit image=)
     if version and config and 'image' not in overrides:
-        # Keep repo, swap tag
         original_image = config.get('image', '')
         if ':' in original_image:
             repo = original_image.split(':')[0]
             config['image'] = f"{repo}:{version}"
         else:
-            # If original had no tag, append version
             config['image'] = f"{original_image}:{version}"
 
-    # Apply Explicit Overrides
     if 'image' in overrides:
         config['image'] = overrides['image']
     
     if 'cmd' in overrides:
-        # Parse command string into list
         config['cmd'] = shlex.split(overrides['cmd'])
         
     if 'entrypoint' in overrides:
@@ -318,10 +340,6 @@ def show_post_mortem_error(error_text):
 # --- Cleanup ---
 
 def purge_cache(icon, item):
-    """
-    Clears all unused podman images (dangling and unreferenced) to free space.
-    No confirmation dialog.
-    """
     icon.notify("Pruning unused images... this may take a moment.", title="Ephemeral Maintenance")
     startupinfo = subprocess.STARTUPINFO()
     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -351,12 +369,11 @@ def run_container_piped(icon, config, code, lang):
             code += '\n'
         code_bytes = code.replace('\r\n', '\n').encode('utf-8')
 
-        # UPDATED: Memory limit bumped to 512m to prevent compiler OOM (Exit 137)
+        # Memory limit 512m
         podman_cmd = [
             'podman', 'run', '--rm', '-i', '--network', 'none', '--memory', '512m'
         ]
         
-        # Add entrypoint override if specified (Needed for images like silkeh/gforth)
         if 'entrypoint' in config:
             podman_cmd.extend(['--entrypoint', config['entrypoint']])
             
@@ -369,13 +386,11 @@ def run_container_piped(icon, config, code, lang):
         )
         
         stdout_bytes, stderr_bytes = process.communicate(input=code_bytes)
-        # Decode manually and STRIP ANSI
         stdout = strip_ansi_codes(stdout_bytes.decode('utf-8', errors='replace'))
         stderr = strip_ansi_codes(stderr_bytes.decode('utf-8', errors='replace'))
         
         if process.returncode == 0:
             result = stdout
-            # Use lang name for notification title if available, else 'Custom'
             title_lang = lang.split()[0].capitalize() if lang else "Custom"
             pyperclip.copy(f"Result ({title_lang}):\n---\n```text\n{result.strip()}\n```")
             icon.notify(f"{title_lang} execution results copied to clipboard.", title="Ephemeral")
@@ -391,7 +406,6 @@ def run_logic(icon):
     global LAST_DETECTED_LANG
     content = get_clipboard()
     
-    # --- SAFETY CHECK: Prevent Recursion ---
     if re.search(r"^Result \(.*\):[\r\n]+---[\r\n]+", content.strip(), re.MULTILINE):
         icon.notify("Clipboard contains previous results. Execution halted.", title="Ephemeral Safety")
         return
@@ -400,11 +414,13 @@ def run_logic(icon):
 
     if not lang:
         if content and content.strip():
-            # Apply shebang stripping here too if manual entry assumes shebang exists but failed detection
             code = strip_shebang(content)
-            user_input = prompt_user_for_language(LAST_DETECTED_LANG)
+            code = re.sub(r"```+\s*$", "", code.rstrip())
+            
+            user_input = prompt_user_for_language(LAST_DETECTED_LANG, code)
+            
             if user_input:
-                lang = user_input.strip() # Don't lower() here to preserve case for cmd args if any
+                lang = user_input.strip() 
             else:
                 icon.notify("Execution cancelled.", title="Ephemeral")
                 return
@@ -412,7 +428,6 @@ def run_logic(icon):
              icon.notify("Clipboard is empty.", title="Ephemeral Error")
              return
 
-    # Update memory with the base language part only (first token)
     LAST_DETECTED_LANG = lang.split()[0]
     
     config = resolve_runtime_config(lang)
