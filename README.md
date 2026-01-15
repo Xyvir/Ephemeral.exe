@@ -109,16 +109,19 @@ Ephemeral downloads container images as needed. Over time, these can take up dis
 
 05ab1e, Bash, Brainfuck, C, C++, CJam, Clojure, Common Lisp, Crystal, Elixir, Fortran, FreeBASIC, 
 Go, GolfScript, Haskell, Java, Julia, Lolcode, Lua, Nim, Node.js, OCaml, Octave, Perl, PHP, Piet, 
-PowerShell, Prolog, Python, R, Ruby, Rust, Science Python, Unlambda, Verilog.
+PowerShell, Prolog, Python, R, Ruby, Rust, Science Python, Verilog.
 ## Declarative Image Mode
 You are not limited to the built-in languages. You can run *any* Docker/Podman image by defining the `image` and `cmd` parameters directly in the markdown header.
 
-**Example: Running FreeBASIC via a custom declarative header:**
+**Example: Running COBOL via a custom declarative header:**
 
 ````text
-```my_custom_test image=primeimages/freebasic cmd="bash -c 'cat > /tmp/run.bas && fbc /tmp/run.bas && /tmp/run'"
-Print "This code is running inside a declarative container definition!"
-Print "Ephemeral downloaded the image and ran the build chain automatically."
+```cobol image=esolang/cobol cmd="sh -c 'cat > /tmp/run.cob && cobc -x -free -o /tmp/run /tmp/run.cob && /tmp/run'"
+IDENTIFICATION DIVISION.
+PROGRAM-ID. DECLARATIVE-TEST.
+PROCEDURE DIVISION.
+    DISPLAY "Markdown: COBOL (Declarative) | Math Check: " 45 " - OK".
+    STOP RUN.
 ```
 ````
 
@@ -126,6 +129,7 @@ Print "Ephemeral downloaded the image and ran the build chain automatically."
 
 
 ## Todo
+* Add Cobol support from esolang-box
 * **File Artifacts:** Add mechanism to retrieve arbitrary files (images, binaries) generated inside the container.
 * **Multi-Block Execution:** Support for running multiple sequential codeblocks found in a single clipboard copy.
 * **Seed Files:** Support for injecting data files (json, csv, etc.) into the container context before execution.
