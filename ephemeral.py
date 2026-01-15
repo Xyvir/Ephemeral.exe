@@ -10,12 +10,15 @@ import re
 import os
 import tempfile
 import time
-import shlex  # For parsing quoted strings in headers
+import shlex
+import ctypes
+import glob
+from io import BytesIO
 
 # --- Configuration ---
 HOTKEY = 'ctrl+alt+x'
 APP_NAME = "Ephemeral"
-LAST_DETECTED_LANG = "python" # Default starting language, updates dynamically
+LAST_DETECTED_LANG = "python" # Default starting language
 
 # Map languages to the 'Clean Slate' Image on Docker Hub
 LANG_MAP = {
@@ -39,7 +42,6 @@ LANG_MAP = {
     'go':      {'image': 'golang:alpine', 'cmd': ['sh', '-c', 'cat > /tmp/main.go && go run /tmp/main.go']},
     
     # --- Expansion Pack (Systems) ---
-    # Java: Switched to eclipse-temurin as official openjdk repo is deprecated.
     'java':    {'image': 'eclipse-temurin:21-jdk-alpine', 'cmd': ['sh', '-c', 'cat > /tmp/Main.java && java /tmp/Main.java']},
 
     # --- Golfing & Modern Compiled ---
@@ -56,12 +58,7 @@ LANG_MAP = {
     'prolog':  {'image': 'swipl:latest', 'cmd': ['swipl', '-q', '-f', '/dev/stdin', '-t', 'halt']},
 
     # --- Esoteric ---
-    # Brainfuck: Switched to esolang/brainfuck-esotope (part of esolang-box)
     'brainfuck': {'image': 'esolang/brainfuck-esotope', 'cmd': ['sh', '-c', 'cat > /tmp/code && script /tmp/code']},
-
-    # --- Retro / BASIC ---
-    # FreeBASIC (via PrimeImages): Compiles .bas to binary. Syntax compatible with QBASIC.
-    'freebasic': {'image': 'primeimages/freebasic', 'cmd': ['bash', '-c', 'cat > /tmp/run.bas && fbc /tmp/run.bas && /tmp/run']},
 
     # --- Hardware Description (HDL) ---
     'verilog': {'image': 'hdlc/iverilog', 'cmd': ['sh', '-c', 'cat > /tmp/run.v && iverilog /tmp/run.v -o /tmp/out && vvp /tmp/out']},
@@ -74,10 +71,6 @@ LANG_MAP = {
 
     # --- Windows-like Shells ---
     'pwsh':    {'image': 'mcr.microsoft.com/powershell', 'cmd': ['pwsh', '-NoProfile', '-NonInteractive', '-Command', '-']},
-
-    # --- Explicit Esolang Overrides (Custom behavior) ---
-    # Whitespace: Translates S/T/L to Space/Tab/Newline before execution so we can use visible code
-    'whitespace': {'image': 'esolang/whitespace', 'cmd': ['sh', '-c', 'tr "STL" " \t\n" > /tmp/code && script /tmp/code']},
     
     # --- Aliases ---
     'py': 'python', 'js': 'node', 'sh': 'bash',
@@ -92,19 +85,18 @@ LANG_MAP = {
     'ml': 'ocaml',
     'swipl': 'prolog', 'pl': 'prolog',
     'cr': 'crystal', 'nimrod': 'nim',
-    'bf': 'brainfuck', 
-    'basic': 'freebasic', 'qbasic': 'freebasic', 'fbc': 'freebasic'
+    'bf': 'brainfuck', 'spl': 'shakespeare', '><>': 'fish'
 }
 
-# Add all esolang languages dynamically to the map to ensure we cover the list
-# Common esolangs from esolang-box that work well with the 'script' command
+# Add esolangs dynamically
 ESOLANGS = [
-    '05ab1e',  'golfscript',  'lolcode',  'piet',   'cjam', 'intercal'
+    '05ab1e', 'jelly', 'golfscript', 'befunge', 'whitespace', 'lolcode', 
+    'shakespeare', 'malbolge', 'piet', 'matl', 'fish', 'hexagony', 'cjam', 
+    'intercal', 'unlambda', 'arnoldc', 'emojicode'
 ]
 for lang in ESOLANGS:
     if lang not in LANG_MAP:
         LANG_MAP[lang] = {'image': f'esolang/{lang}', 'cmd': ['sh', '-c', 'cat > /tmp/code && script /tmp/code']}
-
 
 def create_icon_image():
     image = Image.new('RGB', (64, 64), (30, 30, 30))
@@ -117,16 +109,10 @@ def get_clipboard():
     return pyperclip.paste()
 
 def strip_ansi_codes(text):
-    """
-    Removes ANSI escape sequences (colors, cursor movements) from text.
-    """
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     return ansi_escape.sub('', text)
 
 def strip_shebang(text):
-    """
-    Removes the first line if it is a shebang (starts with #!).
-    """
     if not text: return text
     if text.lstrip().startswith("#!"):
         parts = text.split('\n', 1)
@@ -138,15 +124,11 @@ def strip_shebang(text):
 def parse_codeblock(content):
     if not content or not content.strip():
         return None, None
-
-    # Strategy 1: Markdown
     pattern = r"```(.*?)\n(.*?)```"
     match = re.search(pattern, content, re.DOTALL)
     if match:
         header = match.group(1).strip() if match.group(1) else None
         return header, strip_shebang(match.group(2))
-
-    # Strategy 2: Shebang
     first_line = content.strip().splitlines()[0]
     if first_line.startswith("#!"):
         lower_line = first_line.lower()
@@ -154,7 +136,6 @@ def parse_codeblock(content):
         for key in sorted_keys:
             if key in lower_line:
                 return key, strip_shebang(content)
-    
     return None, None
 
 def prompt_user_for_language(default_lang, code_preview=""):
@@ -164,16 +145,13 @@ def prompt_user_for_language(default_lang, code_preview=""):
     os.close(fd_bat)
     fd_ctx, path_ctx = tempfile.mkstemp(suffix='.ctx')
     os.close(fd_ctx)
-    
     detected_lang = None
     try:
-        # Prepare context preview file (Last 5 lines)
         if code_preview:
             lines = code_preview.strip().splitlines()
             last_lines = lines[-5:] if len(lines) > 5 else lines
             with open(path_ctx, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(last_lines))
-
         with open(path_bat, 'w') as f:
             f.write('@echo off\n')
             f.write('title Ephemeral: No language specified\n')
@@ -182,22 +160,17 @@ def prompt_user_for_language(default_lang, code_preview=""):
             f.write('echo  --------------------------------------------------\n')
             f.write('echo   No language detected in clipboard.\n')
             f.write('echo  --------------------------------------------------\n')
-            
             if code_preview:
                 f.write('echo   Context (Last 5 lines of clipboard):\n')
                 f.write('echo   ------------------------------------\n')
-                # Use type to print the content file safely
                 f.write(f'type "{path_ctx}"\n')
                 f.write('echo.\n')
                 f.write('echo   ------------------------------------\n')
-            
             f.write('echo.\n')
             f.write(f'set /p "lang= Enter Language [Default: {default_lang}]: "\n')
             f.write(f'if "%lang%"=="" set lang={default_lang}\n')
             f.write(f'echo %lang%> "{path_out}"\n')
-        
         subprocess.run(path_bat, creationflags=subprocess.CREATE_NEW_CONSOLE)
-        
         if os.path.exists(path_out):
             with open(path_out, 'r') as f:
                 val = f.read().strip()
@@ -213,29 +186,21 @@ def prompt_user_for_language(default_lang, code_preview=""):
 
 def resolve_runtime_config(header_line):
     if not header_line: return None
-
-    try:
-        tokens = shlex.split(header_line)
-    except:
-        tokens = header_line.split() 
-    
+    try: tokens = shlex.split(header_line)
+    except: tokens = header_line.split() 
     if not tokens: return None
-
     base_lang_input = tokens[0].lower()
     overrides = {}
-    
     for token in tokens[1:]:
         if '=' in token:
             key, val = token.split('=', 1)
             overrides[key.lower()] = val
-
     base_lang = base_lang_input
     version = None
     match = re.match(r"^([a-z0-9\+\#]+)(?:[:\-](\d+(?:\.\d+)*))?$", base_lang_input)
     if match:
         base_lang = match.group(1)
         version = match.group(2) 
-
     if base_lang in LANG_MAP:
         resolved = LANG_MAP[base_lang]
         if isinstance(resolved, str):
@@ -244,50 +209,76 @@ def resolve_runtime_config(header_line):
                  base_lang = LANG_MAP[base_lang]
         elif isinstance(resolved, dict):
             pass
-    
     config = None
     if base_lang in LANG_MAP and isinstance(LANG_MAP[base_lang], dict):
         config = LANG_MAP[base_lang].copy()
-    
     if not config:
-        if 'image' in overrides:
-            config = {'image': '', 'cmd': []}
+        if 'image' in overrides: config = {'image': '', 'cmd': []}
         else:
             image_tag = f"{base_lang_input}" if ':' in base_lang_input else f"{base_lang_input}:latest"
-            config = {
-                'image': image_tag,
-                'cmd': [base_lang, '-']
-            }
-
+            config = {'image': image_tag, 'cmd': [base_lang, '-']}
     if version and config and 'image' not in overrides:
         original_image = config.get('image', '')
-        if ':' in original_image:
-            repo = original_image.split(':')[0]
-            config['image'] = f"{repo}:{version}"
-        else:
-            config['image'] = f"{original_image}:{version}"
-
-    if 'image' in overrides:
-        config['image'] = overrides['image']
-    
-    if 'cmd' in overrides:
-        config['cmd'] = shlex.split(overrides['cmd'])
-        
-    if 'entrypoint' in overrides:
-        config['entrypoint'] = overrides['entrypoint']
-
+        if ':' in original_image: repo = original_image.split(':')[0]; config['image'] = f"{repo}:{version}"
+        else: config['image'] = f"{original_image}:{version}"
+    if 'image' in overrides: config['image'] = overrides['image']
+    if 'cmd' in overrides: config['cmd'] = shlex.split(overrides['cmd'])
+    if 'entrypoint' in overrides: config['entrypoint'] = overrides['entrypoint']
     return config
 
-# --- Podman Lifecycle Management ---
+# --- Clipboard Images (Windows) ---
+def copy_image_to_clipboard(image_path):
+    """
+    Copies a PNG/JPG file to the Windows Clipboard as a Bitmap (DIB).
+    Requires no extra dependencies beyond Pillow + ctypes.
+    """
+    try:
+        # Open image and convert to RGB
+        img = Image.open(image_path)
+        output = BytesIO()
+        img.convert("RGB").save(output, "BMP")
+        data = output.getvalue()[14:] # Strip 14-byte BMP header to get DIB
+        output.close()
 
+        # Windows API
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        
+        OpenClipboard = user32.OpenClipboard
+        EmptyClipboard = user32.EmptyClipboard
+        SetClipboardData = user32.SetClipboardData
+        CloseClipboard = user32.CloseClipboard
+        
+        GlobalAlloc = kernel32.GlobalAlloc
+        GlobalLock = kernel32.GlobalLock
+        GlobalUnlock = kernel32.GlobalUnlock
+        
+        GMEM_MOVEABLE = 0x0002
+        CF_DIB = 8
+
+        OpenClipboard(0)
+        EmptyClipboard()
+        
+        hCd = GlobalAlloc(GMEM_MOVEABLE, len(data))
+        pchData = GlobalLock(hCd)
+        ctypes.memmove(pchData, data, len(data))
+        GlobalUnlock(hCd)
+        
+        SetClipboardData(CF_DIB, hCd)
+        CloseClipboard()
+        return True
+    except Exception as e:
+        print(f"Image copy failed: {e}")
+        return False
+
+# --- Podman Lifecycle ---
 def check_podman_alive():
     try:
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         subprocess.check_call(['podman', 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo)
         return True
-    except:
-        return False
+    except: return False
 
 def check_image_exists(image_name):
     try:
@@ -295,8 +286,7 @@ def check_image_exists(image_name):
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         subprocess.check_call(['podman', 'image', 'exists', image_name], startupinfo=startupinfo)
         return True
-    except:
-        return False
+    except: return False
 
 def ensure_podman_running(icon):
     if check_podman_alive(): return
@@ -324,64 +314,43 @@ def stop_podman_machine(icon):
     except Exception as e:
         print(f"Error stopping podman: {e}")
 
-# --- Helper for Post-Mortem Debugging ---
 def show_post_mortem_error(error_text):
     try:
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as tmp:
             tmp.write("--- EPHEMERAL EXECUTION ERROR ---\n\n")
             tmp.write(error_text)
             tmp_path = tmp.name
-        subprocess.Popen(
-            f'start cmd /K "type "{tmp_path}" && echo. && echo. && echo [Ephemeral Debug] Window persisted due to error. Close to dismiss."', 
-            shell=True
-        )
-    except Exception as e:
-        print(f"Failed to show error window: {e}")
-
-# --- Cleanup ---
+        subprocess.Popen(f'start cmd /K "type "{tmp_path}" && echo. && echo. && echo [Ephemeral Debug] Window persisted due to error. Close to dismiss."', shell=True)
+    except Exception as e: print(f"Failed to show error window: {e}")
 
 def purge_cache(icon, item):
-    """
-    Clears all unused podman images (dangling and unreferenced) to free space.
-    No confirmation dialog.
-    """
     icon.notify("Pruning unused images... this may take a moment.", title="Ephemeral Maintenance")
     startupinfo = subprocess.STARTUPINFO()
     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    
     try:
         subprocess.run(['podman', 'image', 'prune', '--all', '--force'], startupinfo=startupinfo, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         icon.notify("Image cache cleared successfully.", title="Ephemeral")
-    except Exception as e:
-        icon.notify(f"Error clearing cache: {e}", title="Ephemeral Error")
-
-# --- Execution Logic ---
+    except Exception as e: icon.notify(f"Error clearing cache: {e}", title="Ephemeral Error")
 
 def perform_visible_pull(image_name):
-    cmd_line = (
-        f'cmd /C "echo [Ephemeral] Image {image_name} not found. Downloading... '
-        f'&& podman pull {image_name} || pause"'
-    )
+    cmd_line = f'cmd /C "echo [Ephemeral] Image {image_name} not found. Downloading... && podman pull {image_name} || pause"'
     process = subprocess.Popen(cmd_line, creationflags=subprocess.CREATE_NEW_CONSOLE)
     return process.wait()
 
 def run_container_piped(icon, config, code, lang):
+    output_dir = tempfile.mkdtemp() # Create host temp dir for images
     try:
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         
-        if not code.endswith('\n'):
-            code += '\n'
+        if not code.endswith('\n'): code += '\n'
         code_bytes = code.replace('\r\n', '\n').encode('utf-8')
 
-        # Memory limit 512m
-        podman_cmd = [
-            'podman', 'run', '--rm', '-i', '--network', 'none', '--memory', '512m'
-        ]
+        podman_cmd = ['podman', 'run', '--rm', '-i', '--network', 'none', '--memory', '512m']
+        # MOUNT: Map host temp dir to /output in container
+        podman_cmd.extend(['-v', f'{output_dir}:/output'])
         
-        if 'entrypoint' in config:
-            podman_cmd.extend(['--entrypoint', config['entrypoint']])
-            
+        if 'entrypoint' in config: podman_cmd.extend(['--entrypoint', config['entrypoint']])
         podman_cmd.append(config['image'])
         podman_cmd.extend(config['cmd'])
 
@@ -395,10 +364,21 @@ def run_container_piped(icon, config, code, lang):
         stderr = strip_ansi_codes(stderr_bytes.decode('utf-8', errors='replace'))
         
         if process.returncode == 0:
-            result = stdout
-            title_lang = lang.split()[0].capitalize() if lang else "Custom"
-            pyperclip.copy(f"---\nResult ({title_lang}):\n```text\n{result.strip()}\n```")
-            icon.notify(f"{title_lang} execution results copied to clipboard.", title="Ephemeral")
+            # CHECK FOR IMAGES
+            images = glob.glob(os.path.join(output_dir, '*'))
+            image_found = False
+            for img_path in images:
+                if img_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
+                    if copy_image_to_clipboard(img_path):
+                        icon.notify("Image generated and copied to clipboard!", title="Ephemeral")
+                        image_found = True
+                        break
+            
+            if not image_found:
+                result = stdout
+                title_lang = lang.split()[0].capitalize() if lang else "Custom"
+                pyperclip.copy(f"Result ({title_lang}):\n---\n```text\n{result.strip()}\n```")
+                icon.notify(f"{title_lang} execution results copied to clipboard.", title="Ephemeral")
         else:
             full_error = f"Exit Code: {process.returncode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
             show_post_mortem_error(full_error)
@@ -406,52 +386,46 @@ def run_container_piped(icon, config, code, lang):
     except Exception as e:
         show_post_mortem_error(f"System Exception:\n{str(e)}")
         icon.notify("Critical System Error", title="Ephemeral Failed")
+    finally:
+        # Cleanup output dir files
+        try:
+            for f in os.listdir(output_dir):
+                os.remove(os.path.join(output_dir, f))
+            os.rmdir(output_dir)
+        except: pass
 
 def run_logic(icon):
     global LAST_DETECTED_LANG
     content = get_clipboard()
-    
     if re.search(r"^Result \(.*\):[\r\n]+---[\r\n]+", content.strip(), re.MULTILINE):
         icon.notify("Clipboard contains previous results. Execution halted.", title="Ephemeral Safety")
         return
-
     lang, code = parse_codeblock(content)
-
     if not lang:
         if content and content.strip():
             code = strip_shebang(content)
             code = re.sub(r"```+\s*$", "", code.rstrip())
-            
             user_input = prompt_user_for_language(LAST_DETECTED_LANG, code)
-            
-            if user_input:
-                lang = user_input.strip() 
+            if user_input: lang = user_input.strip() 
             else:
                 icon.notify("Execution cancelled.", title="Ephemeral")
                 return
         else:
              icon.notify("Clipboard is empty.", title="Ephemeral Error")
              return
-
     LAST_DETECTED_LANG = lang.split()[0]
-    
     config = resolve_runtime_config(lang)
-    
     if not config or not config.get('image'):
         icon.notify("Configuration failed. Could not resolve image.", title="Ephemeral Error")
         return
-
     icon.notify(f"Launching {LAST_DETECTED_LANG}...", title="Ephemeral Status")
-
     image_name = config['image']
     is_cached = check_image_exists(image_name)
-
     if not is_cached:
         exit_code = perform_visible_pull(image_name)
         if exit_code != 0:
             icon.notify("Image download failed.", title="Ephemeral Error")
             return
-
     run_container_piped(icon, config, code, lang)
 
 def on_hotkey(icon):
@@ -459,8 +433,7 @@ def on_hotkey(icon):
 
 def setup(icon):
     icon.visible = True
-    def init_sequence():
-        ensure_podman_running(icon)
+    def init_sequence(): ensure_podman_running(icon)
     threading.Thread(target=init_sequence).start()
     keyboard.add_hotkey(HOTKEY, lambda: on_hotkey(icon))
 
