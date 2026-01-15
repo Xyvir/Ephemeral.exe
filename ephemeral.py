@@ -84,14 +84,13 @@ LANG_MAP = {
     'ml': 'ocaml',
     'swipl': 'prolog', 'pl': 'prolog',
     'cr': 'crystal', 'nimrod': 'nim',
-    'bf': 'brainfuck', 'spl': 'shakespeare', '><>': 'fish'
+    'bf': 'brainfuck', 'spl': 'shakespeare', '><>': 'fish',
+    'cob': 'cobol', 'gnucobol': 'cobol'
 }
 
-# Add esolangs dynamically
+# Add esolangs dynamically (Including COBOL now)
 ESOLANGS = [
-    '05ab1e', 'jelly', 'golfscript', 'befunge', 'whitespace', 'lolcode', 
-    'shakespeare', 'malbolge', 'piet', 'matl', 'fish', 'hexagony', 'cjam', 
-    'intercal', 'unlambda', 'arnoldc', 'emojicode'
+    '05ab1e', 'golfscript', 'lolcode', 'piet', 'cjam', 'cobol'
 ]
 for lang in ESOLANGS:
     if lang not in LANG_MAP:
