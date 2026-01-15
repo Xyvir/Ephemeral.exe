@@ -85,14 +85,12 @@ LANG_MAP = {
     'ml': 'ocaml',
     'swipl': 'prolog', 'pl': 'prolog',
     'cr': 'crystal', 'nimrod': 'nim',
-    'bf': 'brainfuck', 'spl': 'shakespeare', '><>': 'fish'
+    'bf': 'brainfuck'
 }
 
 # Add esolangs dynamically
 ESOLANGS = [
-    '05ab1e', 'jelly', 'golfscript', 'befunge', 'whitespace', 'lolcode', 
-    'shakespeare', 'malbolge', 'piet', 'matl', 'fish', 'hexagony', 'cjam', 
-    'intercal', 'unlambda', 'arnoldc', 'emojicode'
+'05ab1e',  'golfscript',  'lolcode',  'piet',   'cjam', 'intercal'
 ]
 for lang in ESOLANGS:
     if lang not in LANG_MAP:
