@@ -92,16 +92,14 @@ LANG_MAP = {
     'ml': 'ocaml',
     'swipl': 'prolog', 'pl': 'prolog',
     'cr': 'crystal', 'nimrod': 'nim',
-    'bf': 'brainfuck', 'spl': 'shakespeare', '><>': 'fish',
+    'bf': 'brainfuck', 
     'basic': 'freebasic', 'qbasic': 'freebasic', 'fbc': 'freebasic'
 }
 
 # Add all esolang languages dynamically to the map to ensure we cover the list
 # Common esolangs from esolang-box that work well with the 'script' command
 ESOLANGS = [
-    '05ab1e', 'jelly', 'golfscript', 'befunge', 'lolcode', 
-    'shakespeare', 'malbolge', 'piet', 'matl', 'fish', 'hexagony', 'cjam', 
-    'intercal', 'unlambda', 'arnoldc', 'emojicode'
+    '05ab1e',  'golfscript',  'lolcode',  'piet',   'cjam', 'intercal'
 ]
 for lang in ESOLANGS:
     if lang not in LANG_MAP:
