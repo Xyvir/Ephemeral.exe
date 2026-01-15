@@ -10,7 +10,6 @@ import re
 import os
 import tempfile
 import time
-import ctypes # For native Windows Message Box
 import shlex  # For parsing quoted strings in headers
 
 # --- Configuration ---
@@ -340,6 +339,10 @@ def show_post_mortem_error(error_text):
 # --- Cleanup ---
 
 def purge_cache(icon, item):
+    """
+    Clears all unused podman images (dangling and unreferenced) to free space.
+    No confirmation dialog.
+    """
     icon.notify("Pruning unused images... this may take a moment.", title="Ephemeral Maintenance")
     startupinfo = subprocess.STARTUPINFO()
     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
