@@ -74,6 +74,10 @@ LANG_MAP = {
 
     # --- Windows-like Shells ---
     'pwsh':    {'image': 'mcr.microsoft.com/powershell', 'cmd': ['pwsh', '-NoProfile', '-NonInteractive', '-Command', '-']},
+
+    # --- Explicit Esolang Overrides (Custom behavior) ---
+    # Whitespace: Translates S/T/L to Space/Tab/Newline before execution so we can use visible code
+    'whitespace': {'image': 'esolang/whitespace', 'cmd': ['sh', '-c', 'tr "STL" " \t\n" > /tmp/code && script /tmp/code']},
     
     # --- Aliases ---
     'py': 'python', 'js': 'node', 'sh': 'bash',
@@ -95,7 +99,7 @@ LANG_MAP = {
 # Add all esolang languages dynamically to the map to ensure we cover the list
 # Common esolangs from esolang-box that work well with the 'script' command
 ESOLANGS = [
-    '05ab1e', 'jelly', 'golfscript', 'befunge', 'whitespace', 'lolcode', 
+    '05ab1e', 'jelly', 'golfscript', 'befunge', 'lolcode', 
     'shakespeare', 'malbolge', 'piet', 'matl', 'fish', 'hexagony', 'cjam', 
     'intercal', 'unlambda', 'arnoldc', 'emojicode'
 ]
