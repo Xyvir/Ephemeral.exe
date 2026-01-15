@@ -107,10 +107,9 @@ Ephemeral downloads container images as needed. Over time, these can take up dis
 
 ## Supported Languages
 
-05ab1e, ArnoldC, Bash, Befunge, Brainfuck, C, C++, CJam, Clojure, Common Lisp, Crystal, Elixir, Emojicode, Fish (><>), Fortran, FreeBASIC, 
-Go, GolfScript, Haskell, Hexagony, Intercal, Java, Jelly, Julia, Lolcode, Lua, Malbolge, MATL, Nim, Node.js, OCaml, Octave, Perl, PHP, Piet, 
-PowerShell, Prolog, Python, R, Ruby, Rust, Science Python, Shakespeare, Unlambda, Verilog, Whitespace.
-
+05ab1e, Bash, Brainfuck, C, C++, CJam, Clojure, Common Lisp, Crystal, Elixir, Fortran, FreeBASIC, 
+Go, GolfScript, Haskell, Java, Julia, Lolcode, Lua, Nim, Node.js, OCaml, Octave, Perl, PHP, Piet, 
+PowerShell, Prolog, Python, R, Ruby, Rust, Science Python, Unlambda, Verilog.
 ## Declarative Image Mode
 You are not limited to the built-in languages. You can run *any* Docker/Podman image by defining the `image` and `cmd` parameters directly in the markdown header.
 
