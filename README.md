@@ -1,6 +1,6 @@
-# Ephemeral
+# Ephemeral.exe
 
-**Ephemeral** is a lightweight, daemonless utility for Windows that instantly executes code snippets from your clipboard inside isolated, secure containers.
+**Ephemeral.exe** is a lightweight, daemonless utility for Windows that instantly executes code snippets from your clipboard inside isolated, secure containers.
 
 ![Ephemeral Demo](ephemeral.gif)
 
