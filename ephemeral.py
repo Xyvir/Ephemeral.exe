@@ -154,18 +154,26 @@ def strip_shebang(text):
 def parse_codeblock(content):
     if not content or not content.strip():
         return None, None
+        
+    # Scenario 1: Markdown Block (```python unsafe ...)
     pattern = r"```(.*?)\n(.*?)```"
     match = re.search(pattern, content, re.DOTALL)
     if match:
         header = match.group(1).strip() if match.group(1) else None
         return header, strip_shebang(match.group(2))
+        
+    # Scenario 2: Shebang Line (#! python unsafe)
     first_line = content.strip().splitlines()[0]
     if first_line.startswith("#!"):
         lower_line = first_line.lower()
         sorted_keys = sorted(LANG_MAP.keys(), key=len, reverse=True)
         for key in sorted_keys:
             if key in lower_line:
-                return key, strip_shebang(content)
+                # FIX: Return the WHOLE header line (minus #!), not just the 'key'.
+                # This ensures flags like 'unsafe' are passed to the config resolver.
+                full_header = first_line.lstrip("#!").strip()
+                return full_header, strip_shebang(content)
+                
     return None, None
 
 def prompt_user_for_language(default_lang, code_preview=""):
@@ -394,15 +402,14 @@ def run_container_piped(icon, config, code, lang):
         # Base Command
         podman_cmd = ['podman', 'run', '--rm', '-i', '--memory', '2g']
         
-        # --- UPDATED NETWORK LOGIC ---
-        # "NUCLEAR OPTION"
-        # If 'unsafe' is used, we pass NOTHING regarding network.
-        # This relies 100% on default Podman settings, matching the terminal test.
+        # --- NETWORK LOGIC ---
+        # If 'unsafe' is used, we trust Podman's default networking (no flags).
+        # This matches the successful terminal test.
         if config.get('allow_network', False):
             pass 
         else:
             podman_cmd.extend(['--network', 'none'])
-        # -----------------------------
+        # ---------------------
 
         podman_cmd.extend(['-v', f'{output_dir}:/output'])
         
