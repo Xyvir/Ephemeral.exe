@@ -3,7 +3,7 @@ name: Build Windows Executable
 on:
   push:
     branches: [ "main" ]
-  workflow_dispatch: # Enables manual trigger button in GitHub Actions
+  workflow_dispatch:
 
 jobs:
   build:
@@ -22,11 +22,39 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pyinstaller
+        # Pillow is likely in requirements.txt, but we explicitly need it for the next step.
+        pip install Pillow 
+
+    - name: Generate Icon
+      shell: python
+      run: |
+        from PIL import Image, ImageDraw
+        import os
+
+        def create_icon_image(size):
+            # Create a scaled version of the Ephemeral logo
+            image = Image.new('RGB', (size, size), (30, 30, 30))
+            dc = ImageDraw.Draw(image)
+            scale = size / 64
+            
+            # White generic document
+            dc.rectangle((16 * scale, 16 * scale, 48 * scale, 48 * scale), fill=(255, 255, 255))
+            # Blue header bar
+            dc.rectangle((20 * scale, 20 * scale, 44 * scale, 28 * scale), fill=(0, 120, 215))
+            return image
+
+        # Generate multiple sizes for a proper Windows .ico
+        sizes = [16, 32, 48, 64, 128, 256]
+        images = [create_icon_image(s) for s in sizes]
+
+        # Save the file to the current working directory
+        images[0].save('ephemeral.ico', format='ICO', sizes=[(img.width, img.height) for img in images])
+        print("Icon generated successfully: ephemeral.ico")
 
     - name: Build EXE with PyInstaller
       run: |
-        # Using 'ephemeral.py' as the source file
-        pyinstaller --noconsole --onefile --name "Ephemeral" ephemeral.py
+        # Added --icon flag to the build command
+        pyinstaller --noconsole --onefile --name "Ephemeral" --icon="ephemeral.ico" ephemeral.py
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
