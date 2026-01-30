@@ -10,9 +10,9 @@ import re
 import os
 import tempfile
 import time
-import shlex  # For parsing quoted strings in headers
+import shlex
 import ctypes
-import shutil # For moving files and zipping
+import shutil
 
 # --- Configuration ---
 HOTKEY = 'ctrl+alt+x'
@@ -169,8 +169,7 @@ def parse_codeblock(content):
         sorted_keys = sorted(LANG_MAP.keys(), key=len, reverse=True)
         for key in sorted_keys:
             if key in lower_line:
-                # FIX: Return the WHOLE header line (minus #!), not just the 'key'.
-                # This ensures flags like 'unsafe' are passed to the config resolver.
+                # Return full header to capture flags
                 full_header = first_line.lstrip("#!").strip()
                 return full_header, strip_shebang(content)
                 
@@ -228,7 +227,7 @@ def resolve_runtime_config(header_line):
     except: tokens = header_line.split() 
     if not tokens: return None
 
-    # 1. Detect Network Flags and isolate the language
+    # 1. Detect Network Flags
     network_enabled = False
     cleaned_tokens = []
     
@@ -240,7 +239,7 @@ def resolve_runtime_config(header_line):
             
     if not cleaned_tokens: return None
     
-    # 2. Parse Language and Overrides
+    # 2. Parse Language
     base_lang_input = cleaned_tokens[0].lower()
     overrides = {}
     
@@ -287,11 +286,10 @@ def resolve_runtime_config(header_line):
     if 'cmd' in overrides: config['cmd'] = shlex.split(overrides['cmd'])
     if 'entrypoint' in overrides: config['entrypoint'] = overrides['entrypoint']
     
-    # 3. Inject Network Setting into Config
     config['allow_network'] = network_enabled
     return config
 
-# --- Clipboard Images (Windows) ---
+# --- Clipboard Images ---
 def copy_image_to_clipboard(image_path):
     try:
         from io import BytesIO
@@ -391,7 +389,7 @@ def perform_visible_pull(image_name):
     return process.wait()
 
 def run_container_piped(icon, config, code, lang):
-    output_dir = tempfile.mkdtemp() # Create host temp dir for images
+    output_dir = tempfile.mkdtemp()
     try:
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -403,7 +401,6 @@ def run_container_piped(icon, config, code, lang):
         podman_cmd = ['podman', 'run', '--rm', '-i', '--memory', '2g']
         
         # --- NETWORK LOGIC ---
-        # If 'unsafe' is used, we trust Podman's default networking (no flags).
         if config.get('allow_network', False):
             pass 
         else:
@@ -426,7 +423,6 @@ def run_container_piped(icon, config, code, lang):
         stderr = strip_ansi_codes(stderr_bytes.decode('utf-8', errors='replace'))
         
         if process.returncode == 0:
-            # CHECK FOR ARTIFACTS
             files = [f for f in os.listdir(output_dir) if os.path.isfile(os.path.join(output_dir, f))]
             downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
             safe_lang = re.sub(r'[^a-zA-Z0-9]', '_', lang) if lang else "custom"
@@ -447,7 +443,6 @@ def run_container_piped(icon, config, code, lang):
                     else:
                         icon.notify("Failed to copy image. Check debug.", title="Ephemeral Error")
                 else:
-                    # Single non-image -> Move to Downloads
                     target_name = f"Ephemeral_{safe_lang}_{filename}"
                     target_path = os.path.join(downloads_dir, target_name)
                     
@@ -461,11 +456,9 @@ def run_container_piped(icon, config, code, lang):
                     icon.notify(f"File saved to Downloads:\n{os.path.basename(target_path)}", title="Ephemeral")
 
             else:
-                # Multiple files -> Zip to Downloads
                 timestamp = int(time.time())
                 zip_base_name = f"Ephemeral_{safe_lang}_Artifacts_{timestamp}"
                 zip_base_path = os.path.join(downloads_dir, zip_base_name)
-                
                 final_zip = shutil.make_archive(zip_base_path, 'zip', output_dir)
                 icon.notify(f"Artifacts zipped to Downloads:\n{os.path.basename(final_zip)}", title="Ephemeral")
         else:
@@ -519,33 +512,58 @@ def run_logic(icon):
 def on_hotkey(icon):
     threading.Thread(target=run_logic, args=(icon,)).start()
 
-def setup(icon):
+# --- Main Entry Points ---
+def setup_tray_mode(icon):
+    """Standard Mode: Persistent Tray Icon"""
     icon.visible = True
-    
     def init_sequence():
-        # 1. Start/Check Podman
         ensure_podman_running(icon)
-        
-        # 2. File Association Handler (.eph)
-        # If argument passed (e.g. double-click), load content to clipboard and run
-        if len(sys.argv) > 1:
-            file_path = sys.argv[1]
-            if os.path.exists(file_path):
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                    
-                    pyperclip.copy(content)
-                    time.sleep(0.5) # Allow sync
-                    
-                    icon.notify(f"Loading {os.path.basename(file_path)}...", title="Ephemeral")
-                    run_logic(icon)
-                    
-                except Exception as e:
-                    icon.notify(f"Failed to load file: {e}", title="Ephemeral Error")
-
     threading.Thread(target=init_sequence).start()
     keyboard.add_hotkey(HOTKEY, lambda: on_hotkey(icon))
+
+def setup_oneshot_mode(icon, file_path):
+    """One-Shot Mode: Run file, respect Podman state, then exit."""
+    icon.visible = True
+    
+    def auto_run_sequence():
+        # 1. Check Initial State
+        was_podman_running = check_podman_alive()
+        
+        # 2. Ensure Running (Start if needed)
+        if not was_podman_running:
+            ensure_podman_running(icon)
+        
+        # 3. Load File & Run
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            pyperclip.copy(content)
+            time.sleep(0.5) 
+            
+            icon.notify(f"Loading {os.path.basename(file_path)}...", title="Ephemeral One-Shot")
+            
+            # This calls the container logic. Ideally this call blocks until done.
+            # In our current code, run_logic spawns subprocess.communicate(), 
+            # so it is effectively blocking for this thread.
+            run_logic(icon)
+            
+        except Exception as e:
+            icon.notify(f"One-Shot Failed: {e}", title="Ephemeral Error")
+            # Give user time to see error before quit
+            time.sleep(5)
+            
+        finally:
+            # 4. Respect Initial State
+            if not was_podman_running:
+                icon.notify("Cleaning up...", title="Ephemeral Shutdown")
+                stop_podman_machine(icon)
+            
+            # 5. Quit Application
+            icon.stop()
+            sys.exit()
+
+    threading.Thread(target=auto_run_sequence).start()
 
 def quit_app(icon, item):
     stop_podman_machine(icon)
@@ -560,4 +578,12 @@ if __name__ == '__main__':
         item('Quit', quit_app)
     )
     icon = pystray.Icon("Ephemeral", image, "Ephemeral", menu)
-    icon.run(setup)
+
+    # DETECT MODE
+    if len(sys.argv) > 1 and os.path.exists(sys.argv[1]):
+        # One-Shot Mode
+        file_target = sys.argv[1]
+        icon.run(lambda icon: setup_oneshot_mode(icon, file_target))
+    else:
+        # Standard Tray Mode
+        icon.run(setup_tray_mode)
