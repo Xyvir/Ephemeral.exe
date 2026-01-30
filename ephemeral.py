@@ -38,13 +38,10 @@ LANG_MAP = {
     },
 
     # --- GitHub Actions / CI Tools ---
-    # 1. Runner Environment: Verify 'run:' scripts in the real environment.
-    # WARNING: This image is LARGE (~3GB).
     'gh-runner': {
         'image': 'catthehacker/ubuntu:act-22.04', 
         'cmd': ['bash']
     },
-    # 2. Linter: Verify YAML syntax.
     'actionlint': {
         'image': 'rhysd/actionlint:latest',
         'entrypoint': '/bin/sh',
@@ -395,13 +392,16 @@ def run_container_piped(icon, config, code, lang):
         code_bytes = code.replace('\r\n', '\n').encode('utf-8')
 
         # Base Command
-        podman_cmd = ['podman', 'run', '--rm', '-i', '--memory', '512m']
+        podman_cmd = ['podman', 'run', '--rm', '-i', '--memory', '2g']
         
         # --- UPDATED NETWORK LOGIC ---
-        # If 'unsafe' is used, we force '--network host'. 
-        # This bypasses WSL2/Bridge DNS issues by sharing the host's stack.
+        # WSL2 DNS FIX: When 'unsafe' is used, we use bridge networking
+        # BUT we explicitly force Google DNS (8.8.8.8) to bypass 
+        # local Windows resolver issues (EAI_AGAIN).
         if config.get('allow_network', False):
-            podman_cmd.extend(['--network', 'host'])
+            podman_cmd.extend(['--network', 'bridge'])
+            podman_cmd.extend(['--dns', '8.8.8.8'])
+            podman_cmd.extend(['--dns', '1.1.1.1']) # Backup
         else:
             podman_cmd.extend(['--network', 'none'])
         # -----------------------------
