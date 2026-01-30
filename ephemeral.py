@@ -395,13 +395,13 @@ def run_container_piped(icon, config, code, lang):
         podman_cmd = ['podman', 'run', '--rm', '-i', '--memory', '2g']
         
         # --- UPDATED NETWORK LOGIC ---
-        # WSL2 DNS FIX: When 'unsafe' is used, we use bridge networking
-        # BUT we explicitly force Google DNS (8.8.8.8) to bypass 
-        # local Windows resolver issues (EAI_AGAIN).
+        # FINAL FIX: Use default networking (implied bridge) but force DNS.
+        # This mirrors the successful terminal test.
         if config.get('allow_network', False):
-            podman_cmd.extend(['--network', 'bridge'])
+            # No network flag = default slirp4netns (which works)
+            # Add DNS to fix resolution
             podman_cmd.extend(['--dns', '8.8.8.8'])
-            podman_cmd.extend(['--dns', '1.1.1.1']) # Backup
+            podman_cmd.extend(['--dns', '1.1.1.1']) 
         else:
             podman_cmd.extend(['--network', 'none'])
         # -----------------------------
