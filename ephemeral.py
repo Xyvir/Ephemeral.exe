@@ -256,4 +256,264 @@ def resolve_runtime_config(header_line):
 
     if version and config and 'image' not in overrides:
         original_image = config.get('image', '')
-        if ':' in original_image
+        if ':' in original_image:
+            repo = original_image.split(':')[0]
+            config['image'] = f"{repo}:{version}"
+        else:
+            config['image'] = f"{original_image}:{version}"
+
+    if 'image' in overrides: config['image'] = overrides['image']
+    if 'cmd' in overrides: config['cmd'] = shlex.split(overrides['cmd'])
+    if 'entrypoint' in overrides: config['entrypoint'] = overrides['entrypoint']
+    
+    # 3. Inject Network Setting into Config
+    config['allow_network'] = network_enabled
+    return config
+
+# --- Clipboard Images (Windows) ---
+def copy_image_to_clipboard(image_path):
+    try:
+        from io import BytesIO
+        img = Image.open(image_path)
+        output = BytesIO()
+        img.convert("RGB").save(output, "BMP")
+        data = output.getvalue()[14:] 
+        output.close()
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        OpenClipboard = user32.OpenClipboard
+        EmptyClipboard = user32.EmptyClipboard
+        SetClipboardData = user32.SetClipboardData
+        CloseClipboard = user32.CloseClipboard
+        GlobalAlloc = kernel32.GlobalAlloc
+        GlobalLock = kernel32.GlobalLock
+        GlobalUnlock = kernel32.GlobalUnlock
+        GMEM_MOVEABLE = 0x0002
+        CF_DIB = 8
+        OpenClipboard(0)
+        EmptyClipboard()
+        hCd = GlobalAlloc(GMEM_MOVEABLE, len(data))
+        pchData = GlobalLock(hCd)
+        ctypes.memmove(pchData, data, len(data))
+        GlobalUnlock(hCd)
+        SetClipboardData(CF_DIB, hCd)
+        CloseClipboard()
+        return True
+    except Exception as e:
+        print(f"Image copy failed: {e}")
+        return False
+
+# --- Podman Lifecycle ---
+def check_podman_alive():
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        subprocess.check_call(['podman', 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo)
+        return True
+    except: return False
+
+def check_image_exists(image_name):
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        subprocess.check_call(['podman', 'image', 'exists', image_name], startupinfo=startupinfo)
+        return True
+    except: return False
+
+def ensure_podman_running(icon):
+    if check_podman_alive(): return
+    icon.notify("Podman is not running. Attempting to start...", title="Ephemeral Init")
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    try:
+        subprocess.check_call(['podman', 'machine', 'start'], startupinfo=startupinfo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        icon.notify("Podman machine started successfully.", title="Ephemeral Init")
+    except subprocess.CalledProcessError:
+        icon.notify("Start failed. Initializing new machine...", title="Ephemeral Init")
+        try:
+            subprocess.check_call(['podman', 'machine', 'init'], startupinfo=startupinfo)
+            subprocess.check_call(['podman', 'machine', 'start'], startupinfo=startupinfo)
+            icon.notify("Podman machine initialized and started.", title="Ephemeral Init")
+        except Exception as e:
+            icon.notify(f"Could not start Podman: {e}", title="Ephemeral Fatal Error")
+
+def stop_podman_machine(icon):
+    icon.notify("Stopping Podman machine...", title="Ephemeral Shutdown")
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    try:
+        subprocess.run(['podman', 'machine', 'stop'], startupinfo=startupinfo)
+    except Exception as e:
+        print(f"Error stopping podman: {e}")
+
+def show_post_mortem_error(error_text):
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as tmp:
+            tmp.write("--- EPHEMERAL EXECUTION ERROR ---\n\n")
+            tmp.write(error_text)
+            tmp_path = tmp.name
+        subprocess.Popen(f'start cmd /K "type "{tmp_path}" && echo. && echo. && echo [Ephemeral Debug] Window persisted due to error. Close to dismiss."', shell=True)
+    except Exception as e: print(f"Failed to show error window: {e}")
+
+def purge_cache(icon, item):
+    icon.notify("Pruning unused images... this may take a moment.", title="Ephemeral Maintenance")
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    try:
+        subprocess.run(['podman', 'image', 'prune', '--all', '--force'], startupinfo=startupinfo, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        icon.notify("Image cache cleared successfully.", title="Ephemeral")
+    except Exception as e: icon.notify(f"Error clearing cache: {e}", title="Ephemeral Error")
+
+def perform_visible_pull(image_name):
+    cmd_line = f'cmd /C "echo [Ephemeral] Image {image_name} not found. Downloading... && podman pull {image_name} || pause"'
+    process = subprocess.Popen(cmd_line, creationflags=subprocess.CREATE_NEW_CONSOLE)
+    return process.wait()
+
+def run_container_piped(icon, config, code, lang):
+    output_dir = tempfile.mkdtemp() # Create host temp dir for images
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        
+        if not code.endswith('\n'): code += '\n'
+        code_bytes = code.replace('\r\n', '\n').encode('utf-8')
+
+        # Base Command
+        podman_cmd = ['podman', 'run', '--rm', '-i', '--memory', '512m']
+        
+        # --- NETWORK LOGIC ---
+        # If 'unsafe' was found, we SKIP '--network none'.
+        # Default podman networking allows outbound internet (pip, git, curl).
+        if not config.get('allow_network', False):
+            podman_cmd.extend(['--network', 'none'])
+        # ---------------------
+
+        podman_cmd.extend(['-v', f'{output_dir}:/output'])
+        
+        if 'entrypoint' in config: podman_cmd.extend(['--entrypoint', config['entrypoint']])
+        podman_cmd.append(config['image'])
+        podman_cmd.extend(config['cmd'])
+
+        process = subprocess.Popen(
+            podman_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=False, startupinfo=startupinfo
+        )
+        
+        stdout_bytes, stderr_bytes = process.communicate(input=code_bytes)
+        stdout = strip_ansi_codes(stdout_bytes.decode('utf-8', errors='replace'))
+        stderr = strip_ansi_codes(stderr_bytes.decode('utf-8', errors='replace'))
+        
+        if process.returncode == 0:
+            # CHECK FOR ARTIFACTS
+            files = [f for f in os.listdir(output_dir) if os.path.isfile(os.path.join(output_dir, f))]
+            downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+            safe_lang = re.sub(r'[^a-zA-Z0-9]', '_', lang) if lang else "custom"
+
+            if len(files) == 0:
+                result = stdout
+                title_lang = lang.split()[0].capitalize() if lang else "Custom"
+                pyperclip.copy(f"Result ({title_lang}):\n---\n```text\n{result.strip()}\n```")
+                icon.notify(f"{title_lang} execution results copied to clipboard.", title="Ephemeral")
+            
+            elif len(files) == 1:
+                filename = files[0]
+                filepath = os.path.join(output_dir, filename)
+                
+                if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
+                    if copy_image_to_clipboard(filepath):
+                        icon.notify("Image generated and copied to clipboard!", title="Ephemeral")
+                    else:
+                        icon.notify("Failed to copy image. Check debug.", title="Ephemeral Error")
+                else:
+                    # Single non-image -> Move to Downloads
+                    target_name = f"Ephemeral_{safe_lang}_{filename}"
+                    target_path = os.path.join(downloads_dir, target_name)
+                    
+                    base, ext = os.path.splitext(target_path)
+                    counter = 1
+                    while os.path.exists(target_path):
+                        target_path = f"{base}_{counter}{ext}"
+                        counter += 1
+                    
+                    shutil.move(filepath, target_path)
+                    icon.notify(f"File saved to Downloads:\n{os.path.basename(target_path)}", title="Ephemeral")
+
+            else:
+                # Multiple files -> Zip to Downloads
+                timestamp = int(time.time())
+                zip_base_name = f"Ephemeral_{safe_lang}_Artifacts_{timestamp}"
+                zip_base_path = os.path.join(downloads_dir, zip_base_name)
+                
+                final_zip = shutil.make_archive(zip_base_path, 'zip', output_dir)
+                icon.notify(f"Artifacts zipped to Downloads:\n{os.path.basename(final_zip)}", title="Ephemeral")
+        else:
+            full_error = f"Exit Code: {process.returncode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
+            show_post_mortem_error(full_error)
+            icon.notify("Execution Failed. Debug window opened.", title="Ephemeral Error")
+    except Exception as e:
+        show_post_mortem_error(f"System Exception:\n{str(e)}")
+        icon.notify("Critical System Error", title="Ephemeral Failed")
+    finally:
+        try:
+            for f in os.listdir(output_dir):
+                os.remove(os.path.join(output_dir, f))
+            os.rmdir(output_dir)
+        except: pass
+
+def run_logic(icon):
+    global LAST_DETECTED_LANG
+    content = get_clipboard()
+    if re.search(r"^Result \(.*\):[\r\n]+---[\r\n]+", content.strip(), re.MULTILINE):
+        icon.notify("Clipboard contains previous results. Execution halted.", title="Ephemeral Safety")
+        return
+    lang, code = parse_codeblock(content)
+    if not lang:
+        if content and content.strip():
+            code = strip_shebang(content)
+            code = re.sub(r"```+\s*$", "", code.rstrip())
+            user_input = prompt_user_for_language(LAST_DETECTED_LANG, code)
+            if user_input: lang = user_input.strip() 
+            else:
+                icon.notify("Execution cancelled.", title="Ephemeral")
+                return
+        else:
+             icon.notify("Clipboard is empty.", title="Ephemeral Error")
+             return
+    LAST_DETECTED_LANG = lang.split()[0]
+    config = resolve_runtime_config(lang)
+    if not config or not config.get('image'):
+        icon.notify("Configuration failed. Could not resolve image.", title="Ephemeral Error")
+        return
+    icon.notify(f"Launching {LAST_DETECTED_LANG}...", title="Ephemeral Status")
+    image_name = config['image']
+    is_cached = check_image_exists(image_name)
+    if not is_cached:
+        exit_code = perform_visible_pull(image_name)
+        if exit_code != 0:
+            icon.notify("Image download failed.", title="Ephemeral Error")
+            return
+    run_container_piped(icon, config, code, lang)
+
+def on_hotkey(icon):
+    threading.Thread(target=run_logic, args=(icon,)).start()
+
+def setup(icon):
+    icon.visible = True
+    def init_sequence(): ensure_podman_running(icon)
+    threading.Thread(target=init_sequence).start()
+    keyboard.add_hotkey(HOTKEY, lambda: on_hotkey(icon))
+
+def quit_app(icon, item):
+    stop_podman_machine(icon)
+    icon.stop()
+    sys.exit()
+
+if __name__ == '__main__':
+    image = create_icon_image()
+    menu = (
+        item('Run Clipboard', lambda icon, item: on_hotkey(icon), default=True),
+        item('Clear Image Cache', purge_cache),
+        item('Quit', quit_app)
+    )
+    icon = pystray.Icon("Ephemeral", image, "Ephemeral", menu)
+    icon.run(setup)
