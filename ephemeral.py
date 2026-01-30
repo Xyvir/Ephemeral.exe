@@ -381,12 +381,14 @@ def run_container_piped(icon, config, code, lang):
         # Base Command
         podman_cmd = ['podman', 'run', '--rm', '-i', '--memory', '512m']
         
-        # --- NETWORK LOGIC ---
-        # If 'unsafe' was found, we SKIP '--network none'.
-        # Default podman networking allows outbound internet (pip, git, curl).
-        if not config.get('allow_network', False):
+        # --- UPDATED NETWORK LOGIC ---
+        # If 'unsafe' is used, we force '--network host'. 
+        # This bypasses WSL2/Bridge DNS issues by sharing the host's stack.
+        if config.get('allow_network', False):
+            podman_cmd.extend(['--network', 'host'])
+        else:
             podman_cmd.extend(['--network', 'none'])
-        # ---------------------
+        # -----------------------------
 
         podman_cmd.extend(['-v', f'{output_dir}:/output'])
         
