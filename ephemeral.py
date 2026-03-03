@@ -132,7 +132,6 @@ for lang in ESOLANGS:
 
 # --- Globals and State ---
 active_processes = []
-is_animating = False
 
 def create_icon_image(color=(0, 120, 215)):
     image = Image.new('RGB', (64, 64), (30, 30, 30))
@@ -142,23 +141,10 @@ def create_icon_image(color=(0, 120, 215)):
     return image
 
 def set_icon_animation_state(icon, state):
-    global is_animating
-    if state and not is_animating:
-        is_animating = True
-        threading.Thread(target=animate_icon, args=(icon,), daemon=True).start()
-    elif not state:
-        is_animating = False
-
-def animate_icon(icon):
-    colors = [(0, 120, 215), (255, 100, 0)]  # Blue, Orange
-    toggle = 0
-    while is_animating:
-        icon.icon = create_icon_image(colors[toggle])
-        toggle = 1 - toggle
-        time.sleep(random.uniform(0.01, 0.15))
-    
-    # Restore default resting state
-    icon.icon = create_icon_image()
+    if state:
+        icon.icon = create_icon_image((255, 100, 0))  # Solid Orange
+    else:
+        icon.icon = create_icon_image((0, 120, 215))   # Solid Blue
 
 def get_clipboard():
     return pyperclip.paste()
