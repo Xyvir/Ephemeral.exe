@@ -129,12 +129,35 @@ for lang in ESOLANGS:
     if lang not in LANG_MAP:
         LANG_MAP[lang] = {'image': f'esolang/{lang}', 'cmd': ['sh', '-c', 'cat > /tmp/code && script /tmp/code']}
 
-def create_icon_image():
+# --- Globals and State ---
+active_processes = []
+is_animating = False
+
+def create_icon_image(color=(0, 120, 215)):
     image = Image.new('RGB', (64, 64), (30, 30, 30))
     dc = ImageDraw.Draw(image)
     dc.rectangle((16, 16, 48, 48), fill=(255, 255, 255)) 
-    dc.rectangle((20, 20, 44, 28), fill=(0, 120, 215))    
+    dc.rectangle((20, 20, 44, 28), fill=color)    
     return image
+
+def set_icon_animation_state(icon, state):
+    global is_animating
+    if state and not is_animating:
+        is_animating = True
+        threading.Thread(target=animate_icon, args=(icon,), daemon=True).start()
+    elif not state:
+        is_animating = False
+
+def animate_icon(icon):
+    colors = [(0, 120, 215), (255, 100, 0)]  # Blue, Orange
+    toggle = 0
+    while is_animating:
+        icon.icon = create_icon_image(colors[toggle])
+        toggle = 1 - toggle
+        time.sleep(0.5)
+    
+    # Restore default resting state
+    icon.icon = create_icon_image()
 
 def get_clipboard():
     return pyperclip.paste()
@@ -175,8 +198,10 @@ def parse_codeblocks(content):
                 if first_line.startswith("#!"):
                     shebang_val = first_line.lstrip("#!").strip()
                     block_content = strip_shebang(block_content)
-                    if not header:
-                        header = shebang_val
+                    
+                    # If shebang exists, it OVERWRITES the markdown header
+                    header = shebang_val
+                
             blocks.append({'header': header, 'content': block_content})
     else:
         parts = re.split(r"(?m)^#![ \t]*", content)
@@ -428,6 +453,31 @@ def perform_visible_pull(image_name):
     process = subprocess.Popen(cmd_line, creationflags=subprocess.CREATE_NEW_CONSOLE)
     return process.wait()
 
+def force_stop_all(icon, item):
+    global active_processes
+    killed_count = 0
+    for p in list(active_processes):
+        try:
+            p.kill()
+            killed_count += 1
+        except:
+            pass
+    active_processes.clear()
+    
+    # Cleanup orphaned podman containers aggressively
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        subprocess.run(['podman', 'rm', '-f', '$(podman ps -q)'], shell=True, startupinfo=startupinfo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except:
+        pass
+
+    set_icon_animation_state(icon, False)
+    if killed_count > 0:
+        icon.notify(f"Forcefully stopped {killed_count} active runs.", title="Ephemeral Stopped")
+    else:
+        icon.notify("No active runs to stop.", title="Ephemeral")
+
 def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_runs):
     output_dir = tempfile.mkdtemp()
     try:
@@ -489,7 +539,14 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
             text=False, startupinfo=startupinfo
         )
         
+        active_processes.append(process)
+        set_icon_animation_state(icon, True)
+        
         stdout_bytes, stderr_bytes = process.communicate(input=script_code)
+        
+        if process in active_processes:
+            active_processes.remove(process)
+            
         stdout = strip_ansi_codes(stdout_bytes.decode('utf-8', errors='replace'))
         stderr = strip_ansi_codes(stderr_bytes.decode('utf-8', errors='replace'))
         
@@ -653,6 +710,7 @@ def run_logic(icon):
         icon.notify(f"Launching {LAST_DETECTED_LANG}...", title="Ephemeral Status")
     
     all_stdout = []
+    executed_langs = []
     
     for i, run in enumerate(runs):
         code_item = next(b for b in run if b['type'] == 'code')
@@ -671,14 +729,17 @@ def run_logic(icon):
         stdout = run_container_piped_group(icon, config, run, lang, run_index=i+1, total_runs=len(runs))
         if stdout:
             all_stdout.append(stdout)
+            title_lang = lang.split()[0].capitalize() if lang else "Custom"
+            if title_lang not in executed_langs:
+                executed_langs.append(title_lang)
             
     if all_stdout:
         final_result = "\n".join(all_stdout)
         pyperclip.copy(final_result)
-        if len(runs) > 1:
-            icon.notify("All executions finished. Results copied.", title="Ephemeral")
-        else:
-            icon.notify("Execution finished. Results copied.", title="Ephemeral")
+        lang_str = ", ".join(executed_langs) if executed_langs else "Custom"
+        icon.notify(f"{lang_str} Execution Finished. Results copied.", title="Ephemeral")
+        
+    set_icon_animation_state(icon, False)
 
 def on_hotkey(icon):
     threading.Thread(target=run_logic, args=(icon,)).start()
@@ -745,6 +806,7 @@ if __name__ == '__main__':
     image = create_icon_image()
     menu = (
         item('Run Clipboard', lambda icon, item: on_hotkey(icon), default=True),
+        item('Force Stop All Runs', force_stop_all),
         item('Clear Image Cache', purge_cache),
         item('Quit', quit_app)
     )
