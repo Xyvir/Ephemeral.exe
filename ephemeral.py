@@ -435,6 +435,10 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         
         wrapper_script = []
+        block_markers = []
+        code_blocks = [b for b in run_blocks if b['type'] == 'code']
+        is_single_step = len(code_blocks) <= 1
+        
         step_index = 1
         for b in run_blocks:
             marker = f"EPHEMERAL_EOF_{uuid.uuid4().hex}"
@@ -453,7 +457,11 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
                 
                 cmd_str = __shlex_join(config['cmd'])
                 block_lang = b.get('header', '').split()[0].capitalize() if b.get('header') else "Code"
-                wrapper_script.append(f"echo '### Step {step_index} ({block_lang})'")
+                
+                b_marker = f"EPHEMERAL_STEP_{step_index}_{uuid.uuid4().hex}"
+                block_markers.append((step_index, b_marker, block_lang))
+                wrapper_script.append(f"echo '{b_marker}'")
+                
                 wrapper_script.append(f"{cmd_str} << '{marker}'")
                 wrapper_script.append(content.replace('\r\n', '\n') + marker)
                 step_index += 1
@@ -490,13 +498,51 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
             downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
             safe_lang = re.sub(r'[^a-zA-Z0-9]', '_', lang) if lang else "custom"
             
-            result_str = stdout
+            outputs = {}
+            current_marker_idx = 0
+            current_text = []
+            
+            lines = stdout.split('\n')
+            for line in lines:
+                is_marker = False
+                if current_marker_idx < len(block_markers):
+                    expected_marker = block_markers[current_marker_idx][1]
+                    if line.strip() == expected_marker:
+                        if current_marker_idx > 0:
+                            prev_step_idx = block_markers[current_marker_idx-1][0]
+                            outputs[prev_step_idx] = '\n'.join(current_text)
+                        current_text = []
+                        current_marker_idx += 1
+                        is_marker = True
+                        
+                if not is_marker:
+                    # Strip any lingering "--- Container X ---" from output lines just in case
+                    cleaned_line = re.sub(r"^--- Container \d+ \(.*\) ---\s*", "", line)
+                    current_text.append(cleaned_line)
+                    
+            if current_marker_idx > 0:
+                prev_step_idx = block_markers[current_marker_idx-1][0]
+                outputs[prev_step_idx] = '\n'.join(current_text)
+
+            result_parts = []
             title_lang = lang.split()[0].capitalize() if lang else "Custom"
             
-            if total_runs > 1:
-                result_str = f"## Run {run_index} ({title_lang})\n```text\n{result_str.strip()}\n```\n"
-            else:
-                result_str = f"## Result ({title_lang})\n```text\n{result_str.strip()}\n```"
+            header_prefix = f"## Run {run_index} ({title_lang})" if total_runs > 1 else f"## Result ({title_lang})"
+            result_parts.append(header_prefix)
+            
+            for i, (step_idx, marker, block_lang) in enumerate(block_markers):
+                block_output = outputs.get(step_idx, "").strip('\r\n')
+                
+                # If it's a single "step" block, just put it inside codeblocks
+                if is_single_step:
+                    result_parts.append(f"```text\n{block_output}\n```")
+                else:
+                    # Strip any weird leading newlines the `\n\n\n` might have caused
+                    if not block_output:
+                        block_output = ""
+                    result_parts.append(f"### Step {step_idx} ({block_lang})\n```text\n{block_output}\n```")
+                    
+            result_str = "\n\n".join(result_parts) + "\n"
 
             if len(files) == 1:
                 filename = files[0]
