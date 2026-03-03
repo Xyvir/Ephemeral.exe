@@ -677,6 +677,8 @@ def run_logic(icon):
         pyperclip.copy(final_result)
         if len(runs) > 1:
             icon.notify("All executions finished. Results copied.", title="Ephemeral")
+        else:
+            icon.notify("Execution finished. Results copied.", title="Ephemeral")
 
 def on_hotkey(icon):
     threading.Thread(target=run_logic, args=(icon,)).start()
