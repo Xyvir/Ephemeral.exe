@@ -13,6 +13,7 @@ import time
 import shlex
 import ctypes
 import shutil
+import uuid
 
 # --- Configuration ---
 HOTKEY = 'ctrl+alt+x'
@@ -151,29 +152,68 @@ def strip_shebang(text):
         return ""
     return text
 
-def parse_codeblock(content):
+def __shlex_join(split_command):
+    if hasattr(shlex, 'join'):
+        return shlex.join(split_command)
+    return ' '.join(shlex.quote(arg) for arg in split_command)
+
+def parse_codeblocks(content):
+    blocks = []
     if not content or not content.strip():
-        return None, None
-        
-    # Scenario 1: Markdown Block (```python unsafe ...)
+        return blocks
+
     pattern = r"```(.*?)\n(.*?)```"
-    match = re.search(pattern, content, re.DOTALL)
-    if match:
-        header = match.group(1).strip() if match.group(1) else None
-        return header, strip_shebang(match.group(2))
-        
-    # Scenario 2: Shebang Line (#! python unsafe)
-    first_line = content.strip().splitlines()[0]
-    if first_line.startswith("#!"):
-        lower_line = first_line.lower()
-        sorted_keys = sorted(LANG_MAP.keys(), key=len, reverse=True)
-        for key in sorted_keys:
-            if key in lower_line:
-                # Return full header to capture flags
-                full_header = first_line.lstrip("#!").strip()
-                return full_header, strip_shebang(content)
+    matches = list(re.finditer(pattern, content, re.DOTALL))
+    if matches:
+        for match in matches:
+            header = match.group(1).strip() if match.group(1) else ""
+            block_content = match.group(2)
+            
+            block_lines = block_content.splitlines()
+            if block_lines:
+                first_line = block_lines[0].strip()
+                if first_line.startswith("#!"):
+                    shebang_val = first_line.lstrip("#!").strip()
+                    block_content = strip_shebang(block_content)
+                    if not header:
+                        header = shebang_val
+            blocks.append({'header': header, 'content': block_content})
+    else:
+        parts = re.split(r"(?m)^#![ \t]*", content)
+        if len(parts) > 1:
+            for i, part in enumerate(parts):
+                if i == 0 and not part.strip():
+                    continue
+                if i == 0 and part.strip():
+                    blocks.append({'header': '', 'content': part})
+                    continue
+                part_lines = part.split('\n', 1)
+                header = part_lines[0].strip()
+                block_content = part_lines[1] if len(part_lines) > 1 else ""
+                blocks.append({'header': header, 'content': block_content})
+        else:
+            blocks.append({'header': '', 'content': content})
+
+    classified = []
+    for b in blocks:
+        header = b['header']
+        tokens = header.split() if header else []
+        is_seed = False
+        if tokens:
+            first_token = tokens[0]
+            if re.search(r'\.[a-zA-Z0-9]{1,8}$', first_token) and ':' not in first_token and first_token.lower() not in LANG_MAP:
+                is_seed = True
+            elif first_token.lower() == 'file' and len(tokens) > 1:
+                first_token = tokens[1]
+                is_seed = True
                 
-    return None, None
+        if is_seed:
+            classified.append({'type': 'seed', 'name': first_token, 'content': b['content']})
+        else:
+            config = resolve_runtime_config(header)
+            classified.append({'type': 'code', 'header': header, 'content': b['content'], 'config': config})
+            
+    return classified
 
 def prompt_user_for_language(default_lang, code_preview=""):
     fd_out, path_out = tempfile.mkstemp(suffix='.txt')
@@ -388,37 +428,56 @@ def perform_visible_pull(image_name):
     process = subprocess.Popen(cmd_line, creationflags=subprocess.CREATE_NEW_CONSOLE)
     return process.wait()
 
-def run_container_piped(icon, config, code, lang):
+def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_runs):
     output_dir = tempfile.mkdtemp()
     try:
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         
-        if not code.endswith('\n'): code += '\n'
-        code_bytes = code.replace('\r\n', '\n').encode('utf-8')
+        wrapper_script = []
+        for b in run_blocks:
+            marker = f"EPHEMERAL_EOF_{uuid.uuid4().hex}"
+            if b['type'] == 'seed':
+                name = b['name']
+                content = b['content']
+                if not content.endswith('\n'): content += '\n'
+                
+                wrapper_script.append(f"mkdir -p \"$(dirname '{name}')\" 2>/dev/null || true")
+                wrapper_script.append(f"cat > '{name}' << '{marker}'")
+                wrapper_script.append(content.replace('\r\n', '\n') + marker)
+            
+            elif b['type'] == 'code':
+                content = b['content']
+                if not content.endswith('\n'): content += '\n'
+                
+                cmd_str = __shlex_join(config['cmd'])
+                wrapper_script.append(f"{cmd_str} << '{marker}'")
+                wrapper_script.append(content.replace('\r\n', '\n') + marker)
+                
+        script_code = ("\n".join(wrapper_script) + "\n").encode('utf-8')
 
         # Base Command
         podman_cmd = ['podman', 'run', '--rm', '-i', '--memory', '2g']
         
-        # --- NETWORK LOGIC ---
         if config.get('allow_network', False):
             pass 
         else:
             podman_cmd.extend(['--network', 'none'])
-        # ---------------------
 
         podman_cmd.extend(['-v', f'{output_dir}:/output'])
         
-        if 'entrypoint' in config: podman_cmd.extend(['--entrypoint', config['entrypoint']])
+        if 'entrypoint' in config: 
+            podman_cmd.extend(['--entrypoint', config['entrypoint']])
+            
         podman_cmd.append(config['image'])
-        podman_cmd.extend(config['cmd'])
+        podman_cmd.extend(['sh'])
 
         process = subprocess.Popen(
             podman_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=False, startupinfo=startupinfo
         )
         
-        stdout_bytes, stderr_bytes = process.communicate(input=code_bytes)
+        stdout_bytes, stderr_bytes = process.communicate(input=script_code)
         stdout = strip_ansi_codes(stdout_bytes.decode('utf-8', errors='replace'))
         stderr = strip_ansi_codes(stderr_bytes.decode('utf-8', errors='replace'))
         
@@ -426,18 +485,20 @@ def run_container_piped(icon, config, code, lang):
             files = [f for f in os.listdir(output_dir) if os.path.isfile(os.path.join(output_dir, f))]
             downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
             safe_lang = re.sub(r'[^a-zA-Z0-9]', '_', lang) if lang else "custom"
-
-            if len(files) == 0:
-                result = stdout
-                title_lang = lang.split()[0].capitalize() if lang else "Custom"
-                pyperclip.copy(f"Result ({title_lang}):\n---\n```text\n{result.strip()}\n```")
-                icon.notify(f"{title_lang} execution results copied to clipboard.", title="Ephemeral")
             
-            elif len(files) == 1:
+            result_str = stdout
+            title_lang = lang.split()[0].capitalize() if lang else "Custom"
+            
+            if total_runs > 1:
+                result_str = f"--- Run {run_index} ({title_lang}) ---\n```text\n{result_str.strip()}\n```\n"
+            else:
+                result_str = f"Result ({title_lang}):\n---\n```text\n{result_str.strip()}\n```"
+
+            if len(files) == 1:
                 filename = files[0]
                 filepath = os.path.join(output_dir, filename)
                 
-                if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
+                if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')) and total_runs == 1:
                     if copy_image_to_clipboard(filepath):
                         icon.notify("Image generated and copied to clipboard!", title="Ephemeral")
                     else:
@@ -455,19 +516,23 @@ def run_container_piped(icon, config, code, lang):
                     shutil.move(filepath, target_path)
                     icon.notify(f"File saved to Downloads:\n{os.path.basename(target_path)}", title="Ephemeral")
 
-            else:
+            elif len(files) > 1:
                 timestamp = int(time.time())
                 zip_base_name = f"Ephemeral_{safe_lang}_Artifacts_{timestamp}"
                 zip_base_path = os.path.join(downloads_dir, zip_base_name)
                 final_zip = shutil.make_archive(zip_base_path, 'zip', output_dir)
                 icon.notify(f"Artifacts zipped to Downloads:\n{os.path.basename(final_zip)}", title="Ephemeral")
+                
+            return result_str
         else:
             full_error = f"Exit Code: {process.returncode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
             show_post_mortem_error(full_error)
-            icon.notify("Execution Failed. Debug window opened.", title="Ephemeral Error")
+            icon.notify(f"Run {run_index} Failed. Debug window opened.", title="Ephemeral Error")
+            return f"--- Run {run_index} Failed ---\n```text\n{stderr.strip()}\n```\n"
     except Exception as e:
         show_post_mortem_error(f"System Exception:\n{str(e)}")
         icon.notify("Critical System Error", title="Ephemeral Failed")
+        return f"--- Run {run_index} System Error ---\n```text\n{str(e)}\n```\n"
     finally:
         try:
             for f in os.listdir(output_dir):
@@ -478,36 +543,90 @@ def run_container_piped(icon, config, code, lang):
 def run_logic(icon):
     global LAST_DETECTED_LANG
     content = get_clipboard()
-    if re.search(r"^Result \(.*\):[\r\n]+---[\r\n]+", content.strip(), re.MULTILINE):
+    if re.search(r"^Result \(.*\):[\r\n]+---[\r\n]+", content.strip(), re.MULTILINE) or re.search(r"^--- Run \d+ \(.*\) ---\n```text", content.strip(), re.MULTILINE):
         icon.notify("Clipboard contains previous results. Execution halted.", title="Ephemeral Safety")
         return
-    lang, code = parse_codeblock(content)
-    if not lang:
-        if content and content.strip():
-            code = strip_shebang(content)
-            code = re.sub(r"```+\s*$", "", code.rstrip())
-            user_input = prompt_user_for_language(LAST_DETECTED_LANG, code)
-            if user_input: lang = user_input.strip() 
-            else:
-                icon.notify("Execution cancelled.", title="Ephemeral")
-                return
+        
+    blocks = parse_codeblocks(content)
+    if not blocks:
+         icon.notify("Clipboard is empty.", title="Ephemeral Error")
+         return
+         
+    if len(blocks) == 1 and blocks[0]['type'] == 'code' and not blocks[0]['header']:
+        code = strip_shebang(blocks[0]['content'])
+        code = re.sub(r"```+\s*$", "", code.rstrip())
+        user_input = prompt_user_for_language(LAST_DETECTED_LANG, code)
+        if user_input: 
+            blocks[0]['header'] = user_input.strip()
+            blocks[0]['config'] = resolve_runtime_config(blocks[0]['header'])
         else:
-             icon.notify("Clipboard is empty.", title="Ephemeral Error")
-             return
-    LAST_DETECTED_LANG = lang.split()[0]
-    config = resolve_runtime_config(lang)
-    if not config or not config.get('image'):
-        icon.notify("Configuration failed. Could not resolve image.", title="Ephemeral Error")
-        return
-    icon.notify(f"Launching {LAST_DETECTED_LANG}...", title="Ephemeral Status")
-    image_name = config['image']
-    is_cached = check_image_exists(image_name)
-    if not is_cached:
-        exit_code = perform_visible_pull(image_name)
-        if exit_code != 0:
-            icon.notify("Image download failed.", title="Ephemeral Error")
+            icon.notify("Execution cancelled.", title="Ephemeral")
             return
-    run_container_piped(icon, config, code, lang)
+            
+    code_blocks = [b for b in blocks if b['type'] == 'code']
+    if not code_blocks:
+        icon.notify("Clipboard only contains seed files.", title="Ephemeral Error")
+        return
+
+    runs = []
+    current_run = []
+    
+    for b in blocks:
+        if b['type'] == 'seed':
+            current_run.append(b)
+        else:
+            if not b['config'] or not b['config'].get('image'):
+                icon.notify(f"Configuration failed for a block.", title="Ephemeral Error")
+                return
+            
+            if not current_run:
+                current_run.append(b)
+            else:
+                last_code = next((x for x in reversed(current_run) if x['type'] == 'code'), None)
+                if last_code:
+                    if last_code['config'] == b['config']:
+                        current_run.append(b)
+                    else:
+                        runs.append(current_run)
+                        current_run = [b]
+                else:
+                    current_run.append(b)
+                    
+    if current_run:
+        runs.append(current_run)
+
+    if len(runs) > 1:
+        icon.notify(f"Executing {len(runs)} grouped runs...", title="Ephemeral Status")
+    else:
+        lang = next(b for b in runs[0] if b['type'] == 'code')['header']
+        LAST_DETECTED_LANG = lang.split()[0] if lang else LAST_DETECTED_LANG
+        icon.notify(f"Launching {LAST_DETECTED_LANG}...", title="Ephemeral Status")
+    
+    all_stdout = []
+    
+    for i, run in enumerate(runs):
+        code_item = next(b for b in run if b['type'] == 'code')
+        lang = code_item['header']
+        LAST_DETECTED_LANG = lang.split()[0] if lang else LAST_DETECTED_LANG
+        config = code_item['config']
+        
+        image_name = config['image']
+        is_cached = check_image_exists(image_name)
+        if not is_cached:
+            exit_code = perform_visible_pull(image_name)
+            if exit_code != 0:
+                icon.notify("Image download failed.", title="Ephemeral Error")
+                return
+                
+        stdout = run_container_piped_group(icon, config, run, lang, run_index=i+1, total_runs=len(runs))
+        if stdout:
+            all_stdout.append(stdout)
+            
+    if all_stdout:
+        final_result = "\n".join(all_stdout)
+        pyperclip.copy(final_result)
+        if len(runs) > 1:
+            icon.notify("All executions finished. Results copied.", title="Ephemeral")
 
 def on_hotkey(icon):
     threading.Thread(target=run_logic, args=(icon,)).start()
