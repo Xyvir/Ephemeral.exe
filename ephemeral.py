@@ -435,6 +435,7 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         
         wrapper_script = []
+        step_index = 1
         for b in run_blocks:
             marker = f"EPHEMERAL_EOF_{uuid.uuid4().hex}"
             if b['type'] == 'seed':
@@ -451,8 +452,11 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
                 if not content.endswith('\n'): content += '\n'
                 
                 cmd_str = __shlex_join(config['cmd'])
+                block_lang = b.get('header', '').split()[0].capitalize() if b.get('header') else "Code"
+                wrapper_script.append(f"echo '### Step {step_index} ({block_lang})'")
                 wrapper_script.append(f"{cmd_str} << '{marker}'")
                 wrapper_script.append(content.replace('\r\n', '\n') + marker)
+                step_index += 1
                 
         script_code = ("\n".join(wrapper_script) + "\n").encode('utf-8')
 
@@ -490,9 +494,9 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
             title_lang = lang.split()[0].capitalize() if lang else "Custom"
             
             if total_runs > 1:
-                result_str = f"--- Run {run_index} ({title_lang}) ---\n```text\n{result_str.strip()}\n```\n"
+                result_str = f"## Run {run_index} ({title_lang})\n```text\n{result_str.strip()}\n```\n"
             else:
-                result_str = f"Result ({title_lang}):\n---\n```text\n{result_str.strip()}\n```"
+                result_str = f"## Result ({title_lang})\n```text\n{result_str.strip()}\n```"
 
             if len(files) == 1:
                 filename = files[0]
@@ -528,11 +532,11 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
             full_error = f"Exit Code: {process.returncode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
             show_post_mortem_error(full_error)
             icon.notify(f"Run {run_index} Failed. Debug window opened.", title="Ephemeral Error")
-            return f"--- Run {run_index} Failed ---\n```text\n{stderr.strip()}\n```\n"
+            return f"## Run {run_index} Failed\n```text\n{stderr.strip()}\n```\n"
     except Exception as e:
         show_post_mortem_error(f"System Exception:\n{str(e)}")
         icon.notify("Critical System Error", title="Ephemeral Failed")
-        return f"--- Run {run_index} System Error ---\n```text\n{str(e)}\n```\n"
+        return f"## Run {run_index} System Error\n```text\n{str(e)}\n```\n"
     finally:
         try:
             for f in os.listdir(output_dir):
@@ -543,7 +547,7 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
 def run_logic(icon):
     global LAST_DETECTED_LANG
     content = get_clipboard()
-    if re.search(r"^Result \(.*\):[\r\n]+---[\r\n]+", content.strip(), re.MULTILINE) or re.search(r"^--- Run \d+ \(.*\) ---\n```text", content.strip(), re.MULTILINE):
+    if re.search(r"^## (Run|Result) .*[\r\n]+```text", content.strip(), re.MULTILINE) or re.search(r"^Result \(.*\):[\r\n]+---[\r\n]+", content.strip(), re.MULTILINE) or re.search(r"^--- Run \d+ \(.*\) ---\n```text", content.strip(), re.MULTILINE):
         icon.notify("Clipboard contains previous results. Execution halted.", title="Ephemeral Safety")
         return
         
