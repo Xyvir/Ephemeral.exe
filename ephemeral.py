@@ -14,6 +14,7 @@ import shlex
 import ctypes
 import shutil
 import uuid
+import random
 
 # --- Configuration ---
 HOTKEY = 'ctrl+alt+x'
@@ -154,7 +155,7 @@ def animate_icon(icon):
     while is_animating:
         icon.icon = create_icon_image(colors[toggle])
         toggle = 1 - toggle
-        time.sleep(0.5)
+        time.sleep(random.uniform(0.01, 0.15))
     
     # Restore default resting state
     icon.icon = create_icon_image()
