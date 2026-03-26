@@ -467,6 +467,7 @@ def force_stop_all(icon, item):
 
 def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_runs):
     output_dir = tempfile.mkdtemp()
+    image_copied = False
     try:
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -595,6 +596,7 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
                 if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')) and total_runs == 1:
                     if copy_image_to_clipboard(filepath):
                         icon.notify("Image generated and copied to clipboard!", title="Ephemeral")
+                        image_copied = True
                     else:
                         icon.notify("Failed to copy image. Check debug.", title="Ephemeral Error")
                 else:
@@ -617,16 +619,16 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
                 final_zip = shutil.make_archive(zip_base_path, 'zip', output_dir)
                 icon.notify(f"Artifacts zipped to Downloads:\n{os.path.basename(final_zip)}", title="Ephemeral")
                 
-            return result_str
+            return result_str, image_copied
         else:
             full_error = f"Exit Code: {process.returncode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
             show_post_mortem_error(full_error)
             icon.notify(f"Run {run_index} Failed. Debug window opened.", title="Ephemeral Error")
-            return f"## Run {run_index} Failed\n```text\n{stderr.strip()}\n```\n"
+            return f"## Run {run_index} Failed\n```text\n{stderr.strip()}\n```\n", False
     except Exception as e:
         show_post_mortem_error(f"System Exception:\n{str(e)}")
         icon.notify("Critical System Error", title="Ephemeral Failed")
-        return f"## Run {run_index} System Error\n```text\n{str(e)}\n```\n"
+        return f"## Run {run_index} System Error\n```text\n{str(e)}\n```\n", False
     finally:
         try:
             for f in os.listdir(output_dir):
@@ -698,6 +700,7 @@ def run_logic(icon):
     
     all_stdout = []
     executed_langs = []
+    image_was_copied = False
     
     for i, run in enumerate(runs):
         code_item = next(b for b in run if b['type'] == 'code')
@@ -713,7 +716,10 @@ def run_logic(icon):
                 icon.notify("Image download failed.", title="Ephemeral Error")
                 return
                 
-        stdout = run_container_piped_group(icon, config, run, lang, run_index=i+1, total_runs=len(runs))
+        stdout, image_copied_this_run = run_container_piped_group(icon, config, run, lang, run_index=i+1, total_runs=len(runs))
+        if image_copied_this_run:
+            image_was_copied = True
+
         if stdout:
             all_stdout.append(stdout)
             title_lang = lang.split()[0].capitalize() if lang else "Custom"
@@ -722,9 +728,15 @@ def run_logic(icon):
             
     if all_stdout:
         final_result = "\n".join(all_stdout)
-        pyperclip.copy(final_result)
-        lang_str = ", ".join(executed_langs) if executed_langs else "Custom"
-        icon.notify(f"{lang_str} Execution Finished. Results copied.", title="Ephemeral")
+        
+        # If we copied an image and this was a single run, don't overwrite with STDOUT
+        if image_was_copied and len(runs) == 1:
+            lang_str = ", ".join(executed_langs) if executed_langs else "Custom"
+            icon.notify(f"{lang_str} Execution Finished. Image preserved in clipboard.", title="Ephemeral")
+        else:
+            pyperclip.copy(final_result)
+            lang_str = ", ".join(executed_langs) if executed_langs else "Custom"
+            icon.notify(f"{lang_str} Execution Finished. Results copied.", title="Ephemeral")
         
     set_icon_animation_state(icon, False)
 
