@@ -6,6 +6,7 @@ import subprocess
 import threading
 import keyboard
 import sys
+import winreg
 import re
 import os
 import tempfile
@@ -132,6 +133,7 @@ for lang in ESOLANGS:
 
 # --- Globals and State ---
 active_processes = []
+last_activity_time = time.time()
 
 def create_icon_image(color=(0, 120, 215)):
     image = Image.new('RGB', (64, 64), (30, 30, 30))
@@ -740,8 +742,50 @@ def run_logic(icon):
         
     set_icon_animation_state(icon, False)
 
+def idle_monitor(icon):
+    global last_activity_time
+    while True:
+        time.sleep(60)
+        if time.time() - last_activity_time > 600:
+            if not active_processes and check_podman_alive():
+                icon.notify("Idling for 10 minutes. Stopping Podman VM.", title="Ephemeral Sleep")
+                stop_podman_machine(icon)
+
 def on_hotkey(icon):
-    threading.Thread(target=run_logic, args=(icon,)).start()
+    global last_activity_time
+    last_activity_time = time.time()
+    def hotkey_task():
+        ensure_podman_running(icon)
+        run_logic(icon)
+    threading.Thread(target=hotkey_task).start()
+
+def set_startup(enable):
+    app_path = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(__file__)
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_ALL_ACCESS)
+        if enable:
+            winreg.SetValueEx(key, "Ephemeral", 0, winreg.REG_SZ, f'"{app_path}"')
+        else:
+            try:
+                winreg.DeleteValue(key, "Ephemeral")
+            except FileNotFoundError:
+                pass
+        winreg.CloseKey(key)
+    except Exception as e:
+        print(f"Failed to set startup: {e}")
+
+def check_startup():
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
+        winreg.QueryValueEx(key, "Ephemeral")
+        winreg.CloseKey(key)
+        return True
+    except FileNotFoundError:
+        return False
+
+def toggle_startup(icon, item):
+    is_enabled = check_startup()
+    set_startup(not is_enabled)
 
 # --- Main Entry Points ---
 def setup_tray_mode(icon):
@@ -750,6 +794,7 @@ def setup_tray_mode(icon):
     def init_sequence():
         ensure_podman_running(icon)
     threading.Thread(target=init_sequence).start()
+    threading.Thread(target=idle_monitor, args=(icon,), daemon=True).start()
     keyboard.add_hotkey(HOTKEY, lambda: on_hotkey(icon))
 
 def setup_oneshot_mode(icon, file_path):
@@ -805,6 +850,7 @@ if __name__ == '__main__':
     image = create_icon_image()
     menu = (
         item('Run Clipboard', lambda icon, item: on_hotkey(icon), default=True),
+        item('Start on Boot', toggle_startup, checked=lambda item: check_startup()),
         item('Force Stop All Runs', force_stop_all),
         item('Clear Image Cache', purge_cache),
         item('Quit', quit_app)
