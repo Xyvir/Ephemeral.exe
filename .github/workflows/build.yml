@@ -4,16 +4,25 @@ on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a new release and upload EXE'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
@@ -61,3 +70,18 @@ jobs:
       with:
         name: Ephemeral-Windows-EXE
         path: dist/Ephemeral.exe
+
+    - name: Generate Timestamp Tag
+      if: github.event.inputs.create_release == 'true'
+      id: time
+      shell: bash
+      run: echo "TIMESTAMP=$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_ENV
+
+    - name: Create Release and Upload EXE
+      if: github.event.inputs.create_release == 'true'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ env.TIMESTAMP }}
+        name: Release v${{ env.TIMESTAMP }}
+        files: dist/Ephemeral.exe
+        generate_release_notes: true
