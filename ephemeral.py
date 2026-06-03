@@ -885,7 +885,7 @@ if __name__ == '__main__':
     image = create_icon_image()
     menu = (
         item('Run Clipboard', lambda icon, item: on_hotkey(icon), default=True),
-        item('Install & Run on Boot', toggle_startup, checked=lambda item: check_startup()),
+        item('Install && Run on Boot', toggle_startup, checked=lambda item: check_startup()),
         item('Force Stop All Runs', force_stop_all),
         item('Clear Image Cache', purge_cache),
         item('Quit', quit_app)
