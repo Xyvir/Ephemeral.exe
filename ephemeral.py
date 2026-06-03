@@ -829,9 +829,6 @@ def toggle_startup(icon, item):
 def setup_tray_mode(icon):
     """Standard Mode: Persistent Tray Icon"""
     icon.visible = True
-    def init_sequence():
-        ensure_podman_running(icon)
-    threading.Thread(target=init_sequence).start()
     threading.Thread(target=idle_monitor, args=(icon,), daemon=True).start()
     keyboard.add_hotkey(HOTKEY, lambda: on_hotkey(icon))
 
