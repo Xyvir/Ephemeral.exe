@@ -759,20 +759,58 @@ def on_hotkey(icon):
         run_logic(icon)
     threading.Thread(target=hotkey_task).start()
 
-def set_startup(enable):
+def get_install_path():
+    app_data = os.getenv('LOCALAPPDATA', os.path.expanduser('~'))
+    install_dir = os.path.join(app_data, 'Ephemeral')
+    is_frozen = getattr(sys, 'frozen', False)
+    ext = '.exe' if is_frozen else '.py'
+    return os.path.join(install_dir, f'Ephemeral{ext}')
+
+def set_startup(enable, icon=None):
     app_path = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(__file__)
+    install_path = get_install_path()
+    
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_ALL_ACCESS)
         if enable:
-            winreg.SetValueEx(key, "Ephemeral", 0, winreg.REG_SZ, f'"{app_path}"')
+            # Install
+            if os.path.abspath(app_path) != os.path.abspath(install_path):
+                os.makedirs(os.path.dirname(install_path), exist_ok=True)
+                shutil.copy2(app_path, install_path)
+            
+            winreg.SetValueEx(key, "Ephemeral", 0, winreg.REG_SZ, f'"{install_path}"')
+            if icon:
+                icon.notify(f"Installed to and set to run on boot from:\n{install_path}", title="Ephemeral Setup")
         else:
+            # Uninstall
             try:
                 winreg.DeleteValue(key, "Ephemeral")
             except FileNotFoundError:
                 pass
+                
+            if os.path.exists(install_path):
+                if os.path.abspath(app_path) != os.path.abspath(install_path):
+                    try:
+                        os.remove(install_path)
+                        if icon:
+                            icon.notify("Removed installed copy and disabled start on boot.", title="Ephemeral Setup")
+                    except Exception as e:
+                        MOVEFILE_DELAY_UNTIL_REBOOT = 4
+                        ctypes.windll.kernel32.MoveFileExW(install_path, None, MOVEFILE_DELAY_UNTIL_REBOOT)
+                        if icon:
+                            icon.notify("Disabled start on boot. File will be deleted on next restart.", title="Ephemeral Setup")
+                else:
+                    # Running from the install path
+                    MOVEFILE_DELAY_UNTIL_REBOOT = 4
+                    ctypes.windll.kernel32.MoveFileExW(install_path, None, MOVEFILE_DELAY_UNTIL_REBOOT)
+                    if icon:
+                        icon.notify("Disabled start on boot. It will be deleted on next restart.", title="Ephemeral Setup")
+                
         winreg.CloseKey(key)
     except Exception as e:
         print(f"Failed to set startup: {e}")
+        if icon:
+            icon.notify(f"Failed to configure startup: {e}", title="Ephemeral Error")
 
 def check_startup():
     try:
@@ -785,7 +823,7 @@ def check_startup():
 
 def toggle_startup(icon, item):
     is_enabled = check_startup()
-    set_startup(not is_enabled)
+    set_startup(not is_enabled, icon)
 
 # --- Main Entry Points ---
 def setup_tray_mode(icon):
@@ -850,7 +888,7 @@ if __name__ == '__main__':
     image = create_icon_image()
     menu = (
         item('Run Clipboard', lambda icon, item: on_hotkey(icon), default=True),
-        item('Start on Boot', toggle_startup, checked=lambda item: check_startup()),
+        item('Install & Run on Boot', toggle_startup, checked=lambda item: check_startup()),
         item('Force Stop All Runs', force_stop_all),
         item('Clear Image Cache', purge_cache),
         item('Quit', quit_app)
