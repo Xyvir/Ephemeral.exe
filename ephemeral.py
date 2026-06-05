@@ -749,9 +749,9 @@ def idle_monitor(icon):
     global last_activity_time
     while True:
         time.sleep(60)
-        if time.time() - last_activity_time > 600:
+        if time.time() - last_activity_time > 1800:
             if not active_processes and check_podman_alive():
-                icon.notify("Idling for 10 minutes. Stopping Podman VM.", title="Ephemeral Sleep")
+                icon.notify("Idling for 30 minutes. Stopping Podman VM.", title="Ephemeral Sleep")
                 stop_podman_machine(icon)
 
 def on_hotkey(icon):
