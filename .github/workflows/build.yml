@@ -67,7 +67,9 @@ jobs:
         with open('ephemeral.py', 'r', encoding='utf-8') as f:
             content = f.read()
         
-        version = "Build ${{ github.run_number }} (${{ github.sha }})"
+        full_sha = "${{ github.sha }}"
+        short_sha = full_sha[:7]
+        version = "Build ${{ github.run_number }} (" + short_sha + ")"
         content = content.replace('Version number (injected from the github workflow)', version)
         
         with open('ephemeral.py', 'w', encoding='utf-8') as f:
@@ -89,7 +91,10 @@ jobs:
       if: github.event.inputs.create_release == 'true'
       id: time
       shell: bash
-      run: echo "TIMESTAMP=$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_ENV
+      run: |
+        FULL_SHA="${{ github.sha }}"
+        SHORT_SHA="${FULL_SHA:0:7}"
+        echo "TIMESTAMP=$(date +'%Y%m%d-%H%M%S')-$SHORT_SHA" >> $GITHUB_ENV
 
     - name: Create Release and Upload EXE
       if: github.event.inputs.create_release == 'true'
