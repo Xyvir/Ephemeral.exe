@@ -83,9 +83,35 @@ If you copy raw text without a language tag (e.g., no ` ```python `), Ephemeral 
 ### Smart Markdown Parsing
 
 Ephemeral is built to forgive messy clipboard copies. You don't need to perfectly select only the codeblock!
+* **Explanation Ignoring:** It gracefully ignores any explanatory text, formatting, or paragraphs outside of triple backticks. You can copy an entire tutorial with interstitial codeblocks and explanations, and Ephemeral will only extract and execute the code.
 * **Wrapper Filtering:** It automatically detects and strips outer markdown wrappers (like ` ````text `) commonly used on documentation sites or chat apps to display nested blocks.
 * **Orphaned Backticks:** Incomplete or trailing backticks are ignored; it exclusively extracts well-formed triple-backtick pairs.
 * **Shebang Overrides:** If your code contains a shebang (e.g., `#!/usr/bin/node`), Ephemeral prioritizes it over the markdown language tag. For example, a ` ```python ` block containing `#!/bin/bash` will be correctly executed as Bash.
+
+**Example: Copying a full tutorial document**
+You can safely copy all the text below and Ephemeral will only execute the code block:
+`````
+````text
+Welcome to my Python tutorial! First we will import the math module.
+As you can see this text is not code, but Ephemeral will ignore it.
+
+```python
+import math
+print("Pi is:", math.pi)
+```
+
+And that concludes the tutorial!
+````
+`````
+
+**Example output:**
+````
+## Result (Python)
+
+```text
+Pi is: 3.141592653589793
+```
+````
 
 ### Legacy Versioning
 You can override the default "Latest" version by appending a tag to the language name in your markdown block or shebang:
