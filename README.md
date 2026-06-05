@@ -135,6 +135,82 @@ plt.savefig('/output/plot.png')
 ```
 ````
 
+### Multi-Block Execution
+
+Ephemeral supports running multiple sequential codeblocks from a single clipboard copy. If multiple codeblocks use the same language and configuration, Ephemeral automatically groups them into a single container run. Since they execute in the same container, filesystem state is preserved between the blocks.
+
+**Example:**
+````text
+```python
+# Block 1 (Python container starts)
+with open("/tmp/shared.txt", "w") as f:
+    f.write("42")
+print("Saved 42 to /tmp/shared.txt")
+```
+
+```python
+# Block 2 (Runs in the same Python container)
+# Filesystem state is preserved between these blocks!
+with open("/tmp/shared.txt", "r") as f:
+    val = f.read()
+print(f"Read shared value: {val}")
+```
+
+```node
+// Block 3 (Switches to a new Node.js container)
+console.log("This runs in a completely separate, fresh environment.");
+```
+````
+
+**Example output:**
+````text
+## Run 1 (Python)
+
+### Step 1 (Python)
+```text
+Saved 42 to /tmp/shared.txt
+```
+
+### Step 2 (Python)
+```text
+Read shared value: 42
+```
+
+## Run 2 (Node)
+
+```text
+This runs in a completely separate, fresh environment.
+```
+````
+
+### Seed Files
+
+You can inject data files (like JSON, CSV, or text) into the container environment before your code executes. To do this, provide the filename as the language tag in the markdown header (e.g., `data.json` or `file data.json`). 
+
+**Example:**
+````text
+```data.json
+{
+  "message": "Hello from seed file!"
+}
+```
+
+```python
+import json
+with open('data.json', 'r') as f:
+    print(json.load(f)['message'])
+```
+````
+
+**Example output:**
+````text
+## Result (Python)
+
+```text
+Hello from seed file!
+```
+````
+
 ## Supported Languages
 
 05ab1e, Bash, Brainfuck, C, C++, CJam, Clojure, Common Lisp, Crystal, Elixir, Fortran, FreeBASIC, 
@@ -158,6 +234,3 @@ PROCEDURE DIVISION.
 > If you would like to have a built-in language added to the language map please open a pull request, preferrably containing a declarative example as above for me to test.
 
 
-## Todo
-* **Multi-Block Execution:** Support for running multiple sequential codeblocks found in a single clipboard copy.
-* **Seed Files:** Support for injecting data files (json, csv, etc.) into the container context before execution.

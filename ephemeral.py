@@ -876,6 +876,11 @@ def setup_oneshot_mode(icon, file_path):
 
     threading.Thread(target=auto_run_sequence).start()
 
+def show_about(icon, item):
+    about_text = "(Ephemeral.exe)\nVersion number (injected from the github workflow)\n Dev (Dunko Xyvir) \nLicense;\nhttps://github.com/Xyvir/Ephemeral.exe"
+    pyperclip.copy(about_text)
+    icon.notify(about_text, title="About Ephemeral")
+
 def quit_app(icon, item):
     stop_podman_machine(icon)
     icon.stop()
@@ -888,6 +893,7 @@ if __name__ == '__main__':
         item('Install && Run on Boot', toggle_startup, checked=lambda item: check_startup()),
         item('Force Stop All Runs', force_stop_all),
         item('Clear Image Cache', purge_cache),
+        item('About', show_about),
         item('Quit', quit_app)
     )
     icon = pystray.Icon("Ephemeral", image, "Ephemeral", menu)

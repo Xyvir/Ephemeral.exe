@@ -60,6 +60,20 @@ jobs:
         images[0].save('ephemeral.ico', format='ICO', sizes=[(img.width, img.height) for img in images])
         print("Icon generated successfully: ephemeral.ico")
 
+    - name: Inject Version Number
+      shell: python
+      run: |
+        import os
+        with open('ephemeral.py', 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        version = "Build ${{ github.run_number }} (${{ github.sha }})"
+        content = content.replace('Version number (injected from the github workflow)', version)
+        
+        with open('ephemeral.py', 'w', encoding='utf-8') as f:
+            f.write(content)
+        print(f"Injected version: {version}")
+
     - name: Build EXE with PyInstaller
       run: |
         # Added --icon flag to the build command
