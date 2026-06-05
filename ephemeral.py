@@ -50,6 +50,11 @@ LANG_MAP = {
         'entrypoint': '',
         'cmd': ['-c', 'cat > /tmp/main.yml && actionlint /tmp/main.yml']
     },
+    # --- Emulation & Cross-Compilation ---
+    'pywine': {
+        'image': 'tobix/pywine:latest',
+        'cmd': ['bash']
+    },
 
     # --- Science & Data ---
     'science': {'image': 'continuumio/anaconda3', 'cmd': ['python', '-']},
