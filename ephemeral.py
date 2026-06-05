@@ -174,6 +174,9 @@ def parse_codeblocks(content):
     if not content or not content.strip():
         return blocks
 
+    # Strip any lines starting with 4 or more backticks (to ignore markdown documentation wrappers)
+    content = re.sub(r"(?m)^\s*`{4,}.*$\n?", "", content)
+
     pattern = r"```(.*?)\n(.*?)```"
     matches = list(re.finditer(pattern, content, re.DOTALL))
     if matches:

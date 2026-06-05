@@ -81,6 +81,13 @@ If you copy raw text without a language tag (e.g., no ` ```python `), Ephemeral 
 
 
 
+### Smart Markdown Parsing
+
+Ephemeral is built to forgive messy clipboard copies. You don't need to perfectly select only the codeblock!
+* **Wrapper Filtering:** It automatically detects and strips outer markdown wrappers (like ` ````text `) commonly used on documentation sites or chat apps to display nested blocks.
+* **Orphaned Backticks:** Incomplete or trailing backticks are ignored; it exclusively extracts well-formed triple-backtick pairs.
+* **Shebang Overrides:** If your code contains a shebang (e.g., `#!/usr/bin/node`), Ephemeral prioritizes it over the markdown language tag. For example, a ` ```python ` block containing `#!/bin/bash` will be correctly executed as Bash.
+
 ### Legacy Versioning
 You can override the default "Latest" version by appending a tag to the language name in your markdown block or shebang:
 
@@ -208,6 +215,22 @@ with open('data.json', 'r') as f:
 
 ```text
 Hello from seed file!
+```
+````
+
+### Network Access (Unsafe Mode)
+
+By default, Ephemeral runs all containers with network access disabled (`--network none`) to ensure a secure, sandboxed execution environment. If your snippet needs to download dependencies or interact with web APIs, you can append the `unsafe` keyword to your language tag to enable internet access.
+
+> [!WARNING]
+> **Security Risk:** Using `unsafe` removes the network sandbox, allowing the container to communicate externally. Be cautious when using this mode, especially with untrusted code, as malicious artifacts could be downloaded or your environment could be compromised.
+
+**Example:**
+````text
+```python unsafe
+import urllib.request
+response = urllib.request.urlopen('http://httpbin.org/get')
+print("Successfully connected to the internet!")
 ```
 ````
 
