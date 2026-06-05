@@ -5,7 +5,6 @@
 ![Ephemeral Demo](ephemeral.gif)
 
 
-
 ## The Problem
 
 Windows is a fantastic OS, but it lacks the native "polyglot" flexibility of Linux. 
@@ -216,6 +215,13 @@ with open('data.json', 'r') as f:
 Hello from seed file!
 ```
 ````
+
+### No Local File Mounting
+
+Ephemeral intentionally does **not** have a mechanism to 'mount' or bind local directories into the container (aside from the secure `/output` drop folder). This is an intentional design decision for two key reasons:
+1. **Reproducibility**: Ephemeral codeblocks are envisioned to be entirely self-contained. By forcing data to be declared inside the markdown (via seed files), the snippet is guaranteed to run on any machine without relying on hidden external file structures.
+2. **Security**: Preventing local mounts reduces the possibility of local data-harvesting or ransomware payloads scanning your host machine's hard drive when running untrusted code with the `unsafe` network flag enabled. (see below)
+
 
 ### Network Access (Unsafe Mode)
 
