@@ -880,7 +880,7 @@ def setup_oneshot_mode(icon, file_path):
     threading.Thread(target=auto_run_sequence).start()
 
 def show_about(icon, item):
-    about_text = "(Ephemeral.exe)\nVersion number (injected from the github workflow)\n Dev (Dunko Xyvir) \nLicense;\nhttps://github.com/Xyvir/Ephemeral.exe"
+    about_text = "# Ephemeral.exe\nVersion: Version number (injected from the github workflow)\nDev: Dunko Xyvir\nLicense: MIT License\nURL: https://github.com/Xyvir/Ephemeral.exe"
     pyperclip.copy(about_text)
     icon.notify(about_text, title="About Ephemeral")
 
