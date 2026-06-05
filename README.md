@@ -121,8 +121,8 @@ Any file your script saves to the **`/output`** directory inside the container i
 3.  **Multiple Files:** If your script generates multiple files, they are automatically zipped into a timestamped archive and saved to **Downloads**.
 
 **Example (Python Plotting):**
-````
-```science
+```python
+#!science
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -140,7 +140,6 @@ plt.grid(True)
 # Save to /output to trigger auto-clipboard copy
 plt.savefig('/output/plot.png')
 ```
-````
 
 ### Multi-Block Execution
 
@@ -226,13 +225,12 @@ By default, Ephemeral runs all containers with network access disabled (`--netwo
 > **Security Risk:** Using `unsafe` removes the network sandbox, allowing the container to communicate externally. Be cautious when using this mode, especially with untrusted code, as malicious artifacts could be downloaded or your environment could be compromised.
 
 **Example:**
-````text
-```python unsafe
+```python
+#!python unsafe
 import urllib.request
 response = urllib.request.urlopen('http://httpbin.org/get')
 print("Successfully connected to the internet!")
 ```
-````
 
 ## Supported Languages
 
@@ -256,4 +254,20 @@ PROCEDURE DIVISION.
 
 > If you would like to have a built-in language added to the language map please open a pull request, preferrably containing a declarative example as above for me to test.
 
+## Building Ephemeral (with Ephemeral!)
 
+If you want to build or update the executable locally, you can do it using Ephemeral itself! Our GitHub Actions workflow (`.github/workflows/build.yml`) actually uses a "polyglot YAML" trick. It contains hidden shell commands under YAML comments that Ephemeral reads to build the exact same artifact locally using the `pywine` cross-compilation container!
+
+Alternatively, if you just want to run the build steps manually, you can copy and execute the following snippet. It pulls the repository, installs dependencies into the Wine environment, generates the icon, and drops the compiled `.exe` into your `/output` folder:
+
+````text
+```pywine unsafe
+wine python -c "import urllib.request, zipfile, io; zipfile.ZipFile(io.BytesIO(urllib.request.urlopen('https://github.com/Xyvir/Ephemeral.exe/archive/refs/heads/main.zip').read())).extractall()"
+cd Ephemeral.exe-main
+wine python -m pip install -r requirements.txt pyinstaller Pillow
+wine python -c "from PIL import Image, ImageDraw; img=Image.new('RGB', (64, 64), (30, 30, 30)); img.save('ephemeral.ico')"
+sed -i 's/Version number (injected from the github workflow)/LOCAL_$(date +%Y%m%d-%H%M%S)/g' ephemeral.py
+wine pyinstaller --noconsole --onefile --name Ephemeral --icon=ephemeral.ico ephemeral.py
+cp dist/Ephemeral.exe /output/
+```
+````

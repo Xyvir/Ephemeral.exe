@@ -1,3 +1,11 @@
+#!pywine cmd="sh -c 'grep ^#RUN: /dev/stdin | cut -c 7- | sh'" unsafe
+#RUN: wine python -c "import urllib.request, zipfile, io; zipfile.ZipFile(io.BytesIO(urllib.request.urlopen('https://github.com/Xyvir/Ephemeral.exe/archive/refs/heads/main.zip').read())).extractall()"
+#RUN: cd Ephemeral.exe-main
+#RUN: wine python -m pip install -r requirements.txt pyinstaller Pillow
+#RUN: wine python -c "from PIL import Image, ImageDraw; img=Image.new('RGB', (64, 64), (30, 30, 30)); img.save('ephemeral.ico')"
+#RUN: sed -i "s/Version number (injected from the github workflow)/LOCAL_$(date +%Y%m%d-%H%M%S)/g" ephemeral.py
+#RUN: wine pyinstaller --noconsole --onefile --name Ephemeral --icon=ephemeral.ico ephemeral.py
+#RUN: cp dist/Ephemeral.exe /output/
 name: Build Windows Executable
 
 on:
