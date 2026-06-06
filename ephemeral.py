@@ -292,7 +292,7 @@ def prompt_user_for_language(default_lang, code_preview=""):
             f.write(f'set /p "lang= Enter Language [Default: {default_lang}]: "\n')
             f.write(f'if "%lang%"=="" set lang={default_lang}\n')
             f.write(f'echo %lang%> "{path_out}"\n')
-        subprocess.run(path_bat, creationflags=subprocess.CREATE_NEW_CONSOLE)
+        subprocess.run(path_bat, creationflags=getattr(subprocess, 'CREATE_NEW_CONSOLE', 0))
         if os.path.exists(path_out):
             with open(path_out, 'r') as f:
                 val = f.read().strip()
@@ -469,7 +469,7 @@ def purge_cache(icon, item):
 
 def perform_visible_pull(image_name):
     cmd_line = f'cmd /C "echo [Ephemeral] Image {image_name} not found. Downloading... && podman pull {image_name} || pause"'
-    process = subprocess.Popen(cmd_line, creationflags=subprocess.CREATE_NEW_CONSOLE)
+    process = subprocess.Popen(cmd_line, creationflags=getattr(subprocess, 'CREATE_NEW_CONSOLE', 0))
     return process.wait()
 
 def force_stop_all(icon, item):
