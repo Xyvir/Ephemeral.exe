@@ -1,12 +1,7 @@
-import pystray
-from pystray import MenuItem as item
-from PIL import Image, ImageDraw
-import pyperclip
+import base64
 import subprocess
 import threading
-import keyboard
 import sys
-import winreg
 import re
 import os
 import tempfile
@@ -17,13 +12,29 @@ import shutil
 import uuid
 import random
 
+try:
+    import pystray
+    from pystray import MenuItem as item
+    from PIL import Image, ImageDraw, ImageGrab
+    import pyperclip
+    import keyboard
+    import winreg
+    HAS_GUI = True
+except ImportError:
+    HAS_GUI = False
+
 # --- Configuration ---
+CLI_MODE = False
 HOTKEY = 'ctrl+alt+x'
+CONVERT_HOTKEY = 'ctrl+win+x'
 APP_NAME = "Ephemeral"
 LAST_DETECTED_LANG = "python" # Default starting language
 
 # Only this specific keyword enables network access
 NETWORK_FLAGS = {'unsafe'} 
+
+# Keywords that prevent piping /output to the root of the next container
+NO_CHAIN_FLAGS = {'nopipe', 'nopiping'}
 
 # Map languages to the 'Clean Slate' Image on Docker Hub
 LANG_MAP = {
@@ -221,6 +232,7 @@ def parse_codeblocks(content):
         header = b['header']
         tokens = header.split() if header else []
         is_seed = False
+        is_b64 = False
         if tokens:
             first_token = tokens[0]
             if re.search(r'\.[a-zA-Z0-9]{1,8}$', first_token) and ':' not in first_token and first_token.lower() not in LANG_MAP:
@@ -229,8 +241,11 @@ def parse_codeblocks(content):
                 first_token = tokens[1]
                 is_seed = True
                 
+            if is_seed and 'b64' in [t.lower() for t in tokens]:
+                is_b64 = True
+                
         if is_seed:
-            classified.append({'type': 'seed', 'name': first_token, 'content': b['content']})
+            classified.append({'type': 'seed', 'name': first_token, 'content': b['content'], 'is_b64': is_b64})
         else:
             config = resolve_runtime_config(header)
             classified.append({'type': 'code', 'header': header, 'content': b['content'], 'config': config})
@@ -291,11 +306,14 @@ def resolve_runtime_config(header_line):
 
     # 1. Detect Network Flags
     network_enabled = False
+    chain_enabled = True
     cleaned_tokens = []
     
     for token in tokens:
         if token.lower() in NETWORK_FLAGS:
             network_enabled = True
+        elif token.lower() in NO_CHAIN_FLAGS:
+            chain_enabled = False
         else:
             cleaned_tokens.append(token)
             
@@ -349,6 +367,7 @@ def resolve_runtime_config(header_line):
     if 'entrypoint' in overrides: config['entrypoint'] = overrides['entrypoint']
     
     config['allow_network'] = network_enabled
+    config['allow_chain'] = chain_enabled
     return config
 
 # --- Clipboard Images ---
@@ -493,11 +512,18 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
             if b['type'] == 'seed':
                 name = b['name']
                 content = b['content']
+                is_b64 = b.get('is_b64', False)
                 if not content.endswith('\n'): content += '\n'
                 
                 wrapper_script.append(f"mkdir -p \"$(dirname '{name}')\" 2>/dev/null || true")
-                wrapper_script.append(f"cat > '{name}' << '{marker}'")
-                wrapper_script.append(content.replace('\r\n', '\n') + marker)
+                if is_b64:
+                    wrapper_script.append(f"cat > '{name}.b64' << '{marker}'")
+                    wrapper_script.append(content.replace('\r\n', '\n') + marker)
+                    wrapper_script.append(f"base64 -d < '{name}.b64' > '{name}'")
+                    wrapper_script.append(f"rm -f '{name}.b64'")
+                else:
+                    wrapper_script.append(f"cat > '{name}' << '{marker}'")
+                    wrapper_script.append(content.replace('\r\n', '\n') + marker)
             
             elif b['type'] == 'code':
                 content = b['content']
@@ -550,9 +576,23 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
         
         if process.returncode == 0:
             files = [f for f in os.listdir(output_dir) if os.path.isfile(os.path.join(output_dir, f))]
-            downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+            if CLI_MODE:
+                downloads_dir = os.path.abspath(os.getcwd())
+            else:
+                downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
             safe_lang = re.sub(r'[^a-zA-Z0-9]', '_', lang) if lang else "custom"
             
+            new_chained_files = []
+            if config.get('allow_chain', False):
+                for f in files:
+                    filepath = os.path.join(output_dir, f)
+                    try:
+                        with open(filepath, 'rb') as fd:
+                            content_b64 = base64.b64encode(fd.read()).decode('utf-8')
+                        new_chained_files.append({'type': 'seed', 'name': f, 'content': content_b64, 'is_b64': True})
+                    except Exception as e:
+                        print(f"Error reading {f} for chaining: {e}")
+                        
             outputs = {}
             current_marker_idx = 0
             current_text = []
@@ -571,7 +611,6 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
                         is_marker = True
                         
                 if not is_marker:
-                    # Strip any lingering "--- Container X ---" from output lines just in case
                     cleaned_line = re.sub(r"^--- Container \d+ \(.*\) ---\s*", "", line)
                     current_text.append(cleaned_line)
                     
@@ -588,11 +627,9 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
             for i, (step_idx, marker, block_lang) in enumerate(block_markers):
                 block_output = outputs.get(step_idx, "").strip('\r\n')
                 
-                # If it's a single "step" block, just put it inside codeblocks
                 if is_single_step:
                     result_parts.append(f"```text\n{block_output}\n```")
                 else:
-                    # Strip any weird leading newlines the `\n\n\n` might have caused
                     if not block_output:
                         block_output = ""
                     result_parts.append(f"### Step {step_idx} ({block_lang})\n```text\n{block_output}\n```")
@@ -629,16 +666,16 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
                 final_zip = shutil.make_archive(zip_base_path, 'zip', output_dir)
                 icon.notify(f"Artifacts zipped to Downloads:\n{os.path.basename(final_zip)}", title="Ephemeral")
                 
-            return result_str, image_copied
+            return result_str, image_copied, new_chained_files
         else:
             full_error = f"Exit Code: {process.returncode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
             show_post_mortem_error(full_error)
             icon.notify(f"Run {run_index} Failed. Debug window opened.", title="Ephemeral Error")
-            return f"## Run {run_index} Failed\n```text\n{stderr.strip()}\n```\n", False
+            return f"## Run {run_index} Failed\n```text\n{stderr.strip()}\n```\n", False, []
     except Exception as e:
         show_post_mortem_error(f"System Exception:\n{str(e)}")
         icon.notify("Critical System Error", title="Ephemeral Failed")
-        return f"## Run {run_index} System Error\n```text\n{str(e)}\n```\n", False
+        return f"## Run {run_index} System Error\n```text\n{str(e)}\n```\n", False, []
     finally:
         try:
             for f in os.listdir(output_dir):
@@ -646,9 +683,10 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
             os.rmdir(output_dir)
         except: pass
 
-def run_logic(icon):
+def run_logic(icon, content=None):
     global LAST_DETECTED_LANG
-    content = get_clipboard()
+    if content is None:
+        content = get_clipboard()
     if re.search(r"^## (Run|Result) .*[\r\n]+```text", content.strip(), re.MULTILINE) or re.search(r"^Result \(.*\):[\r\n]+---[\r\n]+", content.strip(), re.MULTILINE) or re.search(r"^--- Run \d+ \(.*\) ---\n```text", content.strip(), re.MULTILINE):
         icon.notify("Clipboard contains previous results. Execution halted.", title="Ephemeral Safety")
         return
@@ -711,8 +749,12 @@ def run_logic(icon):
     all_stdout = []
     executed_langs = []
     image_was_copied = False
+    chained_files = []
     
     for i, run in enumerate(runs):
+        if chained_files:
+            run = chained_files + run
+            
         code_item = next(b for b in run if b['type'] == 'code')
         lang = code_item['header']
         LAST_DETECTED_LANG = lang.split()[0] if lang else LAST_DETECTED_LANG
@@ -726,7 +768,8 @@ def run_logic(icon):
                 icon.notify("Image download failed.", title="Ephemeral Error")
                 return
                 
-        stdout, image_copied_this_run = run_container_piped_group(icon, config, run, lang, run_index=i+1, total_runs=len(runs))
+        stdout, image_copied_this_run, new_chained_files = run_container_piped_group(icon, config, run, lang, run_index=i+1, total_runs=len(runs))
+        chained_files = new_chained_files
         if image_copied_this_run:
             image_was_copied = True
 
@@ -744,7 +787,10 @@ def run_logic(icon):
             lang_str = ", ".join(executed_langs) if executed_langs else "Custom"
             icon.notify(f"{lang_str} Execution Finished. Image preserved in clipboard.", title="Ephemeral")
         else:
-            pyperclip.copy(final_result)
+            if not CLI_MODE:
+                pyperclip.copy(final_result)
+            else:
+                print(final_result)
             lang_str = ", ".join(executed_langs) if executed_langs else "Custom"
             icon.notify(f"{lang_str} Execution Finished. Results copied.", title="Ephemeral")
         
@@ -765,6 +811,51 @@ def on_hotkey(icon):
     def hotkey_task():
         ensure_podman_running(icon)
         run_logic(icon)
+    threading.Thread(target=hotkey_task).start()
+
+def on_convert_hotkey(icon):
+    global last_activity_time
+    last_activity_time = time.time()
+    def hotkey_task():
+        try:
+            clip_data = ImageGrab.grabclipboard()
+        except Exception:
+            clip_data = None
+            
+        result_text = ""
+        
+        if isinstance(clip_data, list) and len(clip_data) > 0:
+            file_path = clip_data[0]
+            filename = os.path.basename(file_path)
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                result_text = f"```seed.{filename.split('.')[-1] if '.' in filename else 'txt'} file={filename}\n{content}\n```"
+            except UnicodeDecodeError:
+                with open(file_path, 'rb') as f:
+                    b64_content = base64.b64encode(f.read()).decode('utf-8')
+                result_text = f"```seed.{filename.split('.')[-1] if '.' in filename else 'bin'} b64 file={filename}\n{b64_content}\n```"
+                
+        elif hasattr(clip_data, 'save'):
+            import io
+            buf = io.BytesIO()
+            clip_data.save(buf, format='PNG')
+            b64_content = base64.b64encode(buf.getvalue()).decode('utf-8')
+            result_text = f"```seed.png b64\n{b64_content}\n```"
+            
+        else:
+            text = pyperclip.paste()
+            if text:
+                result_text = f"```seed.txt\n{text}\n```"
+                
+        if result_text:
+            pyperclip.copy(result_text)
+            if icon:
+                icon.notify("Converted clipboard to Ephemeral format.", title="Ephemeral")
+        else:
+            if icon:
+                icon.notify("Nothing valid in clipboard to convert.", title="Ephemeral Error")
+
     threading.Thread(target=hotkey_task).start()
 
 def get_install_path():
@@ -839,6 +930,7 @@ def setup_tray_mode(icon):
     icon.visible = True
     threading.Thread(target=idle_monitor, args=(icon,), daemon=True).start()
     keyboard.add_hotkey(HOTKEY, lambda: on_hotkey(icon))
+    keyboard.add_hotkey(CONVERT_HOTKEY, lambda: on_convert_hotkey(icon))
 
 def setup_oneshot_mode(icon, file_path):
     """One-Shot Mode: Run file, respect Podman state, then exit."""
@@ -894,23 +986,74 @@ def quit_app(icon, item):
     icon.stop()
     sys.exit()
 
-if __name__ == '__main__':
-    image = create_icon_image()
-    menu = (
-        item('Run Clipboard', lambda icon, item: on_hotkey(icon), default=True),
-        item('Install && Run on Boot', toggle_startup, checked=lambda item: check_startup()),
-        item('Force Stop All Runs', force_stop_all),
-        item('Clear Image Cache', purge_cache),
-        item('About', show_about),
-        item('Quit', quit_app)
-    )
-    icon = pystray.Icon("Ephemeral", image, "Ephemeral", menu)
+def setup_headless_mode(file_path):
+    """Headless CLI Mode: Run file completely unattended, no GUI dependencies."""
+    class DummyIcon:
+        def notify(self, msg, title=""):
+            print(f"[{title}] {msg}")
+        def stop(self):
+            pass
+            
+    icon = DummyIcon()
+    
+    # 1. Check Initial State (assume podman is ready on ubuntu-latest)
+    was_podman_running = check_podman_alive()
+    if not was_podman_running:
+        ensure_podman_running(icon)
+        
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        icon.notify(f"Headless Mode: Running {os.path.basename(file_path)}...", title="Ephemeral CLI")
+        run_logic(icon, content=content)
+        
+    except Exception as e:
+        icon.notify(f"Headless Failed: {e}", title="Ephemeral Error")
+        
+    finally:
+        if not was_podman_running:
+            stop_podman_machine(icon)
 
+if __name__ == '__main__':
     # DETECT MODE
-    if len(sys.argv) > 1 and os.path.exists(sys.argv[1]):
-        # One-Shot Mode
-        file_target = sys.argv[1]
-        icon.run(lambda icon: setup_oneshot_mode(icon, file_target))
+    if len(sys.argv) > 1 and os.path.exists(sys.argv[-1]):
+        file_target = sys.argv[-1]
+        if "--cli" in sys.argv or "parse" in sys.argv:
+            CLI_MODE = True
+            setup_headless_mode(file_target)
+            sys.exit(0)
+        else:
+            if not HAS_GUI:
+                print("GUI dependencies not found. Falling back to CLI mode.")
+                CLI_MODE = True
+                setup_headless_mode(file_target)
+                sys.exit(0)
+            
+            image = create_icon_image()
+            menu = (
+                item('Run Clipboard', lambda icon, item: on_hotkey(icon), default=True),
+                item('Install && Run on Boot', toggle_startup, checked=lambda item: check_startup()),
+                item('Force Stop All Runs', force_stop_all),
+                item('Clear Image Cache', purge_cache),
+                item('About', show_about),
+                item('Quit', quit_app)
+            )
+            icon = pystray.Icon("Ephemeral", image, "Ephemeral", menu)
+            icon.run(lambda icon: setup_oneshot_mode(icon, file_target))
     else:
-        # Standard Tray Mode
+        if not HAS_GUI:
+            print("GUI dependencies not found. CLI mode requires a file argument.")
+            sys.exit(1)
+            
+        image = create_icon_image()
+        menu = (
+            item('Run Clipboard', lambda icon, item: on_hotkey(icon), default=True),
+            item('Install && Run on Boot', toggle_startup, checked=lambda item: check_startup()),
+            item('Force Stop All Runs', force_stop_all),
+            item('Clear Image Cache', purge_cache),
+            item('About', show_about),
+            item('Quit', quit_app)
+        )
+        icon = pystray.Icon("Ephemeral", image, "Ephemeral", menu)
         icon.run(setup_tray_mode)

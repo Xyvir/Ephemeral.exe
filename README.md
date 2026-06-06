@@ -214,6 +214,49 @@ This runs in a completely separate, fresh environment.
 ```
 ````
 
+### Container Chaining (Piping)
+
+By default, in multi-container executions (e.g., executing a Python block, followed by a Node.js block), any artifacts written to the `/output` directory in one container are automatically passed down to the root directory of the **following container**. This makes it incredibly easy to pipe data across entirely different language environments.
+
+If you wish to prevent this behavior (for example, to isolate containers completely), you can append the `nopiping` or `nopipe` parameter to your block header.
+
+**Example: Passing data from Python to Node.js**
+````text
+```python
+# Container 1 (Python)
+import json
+
+data = {"user": "Alice", "score": 42}
+with open("/output/data.json", "w") as f:
+    json.dump(data, f)
+print("Data written to /output/data.json")
+```
+
+```node
+// Container 2 (Node.js)
+// The data.json file from the previous container is automatically injected here!
+const fs = require('fs');
+
+const data = JSON.parse(fs.readFileSync('data.json', 'utf8'));
+console.log(`Hello ${data.user}, your score is ${data.score}!`);
+```
+````
+
+**Example output:**
+````text
+## Run 1 (Python)
+
+```text
+Data written to /output/data.json
+```
+
+## Run 2 (Node)
+
+```text
+Hello Alice, your score is 42!
+```
+````
+
 ### Seed Files
 
 You can inject data files (like JSON, CSV, or text) into the container environment before your code executes. To do this, provide the filename as the language tag in the markdown header (e.g., `data.json` or `file data.json`). 
@@ -288,9 +331,7 @@ PROCEDURE DIVISION.
 
 ## Building Ephemeral (with Ephemeral!)
 
-If you want to build or update the executable locally, you can do it using Ephemeral itself! Our GitHub Actions workflow (`.github/workflows/build.yml`) actually uses a "polyglot YAML" trick. It contains hidden shell commands under YAML comments that Ephemeral reads to build the exact same artifact locally using the `pywine` cross-compilation container!
-
-Alternatively, if you just want to run the build steps manually, you can copy and execute the following snippet. It pulls the repository, installs dependencies into the Wine environment, generates the icon, and drops the compiled `.exe` into your `/output` folder:
+If you want to build or update the executable locally, you can do it using Ephemeral itself! You can simply copy and execute the following snippet. It pulls the repository, installs dependencies into the Wine environment, generates the icon, and drops the compiled `.exe` into your `\Downloads` folder:
 
 ````text
 ```pywine unsafe
@@ -303,3 +344,15 @@ wine pyinstaller --noconsole --onefile --name Ephemeral --icon=ephemeral.ico eph
 cp dist/Ephemeral.exe /output/
 ```
 ````
+
+## CI/CD Pipeline & CLI Mode
+
+Ephemeral features a robust `--cli` (or `parse`) headless mode that completely bypasses the GUI, tray icon, and clipboard integrations. This allows Ephemeral to act as a central linchpin for your automated CI/CD pipelines.
+
+By executing `python ephemeral.py --cli your_script.md`, Ephemeral will:
+1. Parse your markdown file.
+2. Spin up the isolated container environment.
+3. Pipe stdout/stderr directly back to your terminal console.
+4. Export any `/output` artifacts directly to your **current working directory** (instead of your user Downloads folder).
+
+We use this very feature in our own GitHub Actions workflow (`.github/workflows/build.yml`). Instead of installing complex environments on the CI runner, we just run the cross-compilation steps through Ephemeral using our `build.md` script!

@@ -1,11 +1,3 @@
-#!pywine cmd="sh -c 'grep ^#RUN: /dev/stdin | cut -c 7- | sh'" unsafe
-#RUN: wine python -c "import urllib.request, zipfile, io; zipfile.ZipFile(io.BytesIO(urllib.request.urlopen('https://github.com/Xyvir/Ephemeral.exe/archive/refs/heads/main.zip').read())).extractall()"
-#RUN: cd Ephemeral.exe-main
-#RUN: wine python -m pip install -r requirements.txt pyinstaller Pillow
-#RUN: wine python -c "from PIL import Image, ImageDraw; img=Image.new('RGB', (64, 64), (30, 30, 30)); img.save('ephemeral.ico')"
-#RUN: sed -i "s/Version number (injected from the github workflow)/LOCAL_$(date +%Y%m%d-%H%M%S)/g" ephemeral.py
-#RUN: wine pyinstaller --noconsole --onefile --name Ephemeral --icon=ephemeral.ico ephemeral.py
-#RUN: cp dist/Ephemeral.exe /output/
 name: Build Windows Executable
 
 on:
@@ -24,7 +16,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4
@@ -34,60 +26,17 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Install Dependencies
+    - name: Prepare Build Script
+      run: sed -i "s/BRANCH_OR_SHA/${{ github.sha }}/g" build.md
+
+    - name: Build EXE via Ephemeral
+      run: python ephemeral.py --cli build.md
+
+    - name: Rename Artifact
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pyinstaller
-        # Pillow is likely in requirements.txt, but we explicitly need it for the next step.
-        pip install Pillow 
-
-    - name: Generate Icon
-      shell: python
-      run: |
-        from PIL import Image, ImageDraw
-        import os
-
-        def create_icon_image(size):
-            # Create a scaled version of the Ephemeral logo
-            image = Image.new('RGB', (size, size), (30, 30, 30))
-            dc = ImageDraw.Draw(image)
-            scale = size / 64
-            
-            # White generic document
-            dc.rectangle((16 * scale, 16 * scale, 48 * scale, 48 * scale), fill=(255, 255, 255))
-            # Blue header bar
-            dc.rectangle((20 * scale, 20 * scale, 44 * scale, 28 * scale), fill=(0, 120, 215))
-            return image
-
-        # Generate multiple sizes for a proper Windows .ico
-        sizes = [16, 32, 48, 64, 128, 256]
-        images = [create_icon_image(s) for s in sizes]
-
-        # Save the file to the current working directory
-        images[0].save('ephemeral.ico', format='ICO', sizes=[(img.width, img.height) for img in images])
-        print("Icon generated successfully: ephemeral.ico")
-
-    - name: Inject Version Number
-      shell: python
-      run: |
-        import os
-        with open('ephemeral.py', 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        full_sha = "${{ github.sha }}"
-        short_sha = full_sha[:7]
-        version = "Build ${{ github.run_number }} (" + short_sha + ")"
-        content = content.replace('Version number (injected from the github workflow)', version)
-        
-        with open('ephemeral.py', 'w', encoding='utf-8') as f:
-            f.write(content)
-        print(f"Injected version: {version}")
-
-    - name: Build EXE with PyInstaller
-      run: |
-        # Added --icon flag to the build command
-        pyinstaller --noconsole --onefile --name "Ephemeral" --icon="ephemeral.ico" ephemeral.py
+        mkdir dist
+        # Ephemeral names the downloaded file Ephemeral_pywine_Ephemeral.exe due to prefixing
+        mv Ephemeral_pywine_Ephemeral.exe dist/Ephemeral.exe
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
