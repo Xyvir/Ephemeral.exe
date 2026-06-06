@@ -147,6 +147,14 @@ for lang in ESOLANGS:
     if lang not in LANG_MAP:
         LANG_MAP[lang] = {'image': f'esolang/{lang}', 'cmd': ['sh', '-c', 'cat > /tmp/code && script /tmp/code']}
 
+
+def get_startupinfo():
+    if hasattr(subprocess, 'STARTUPINFO'):
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        return si
+    return None
+
 # --- Globals and State ---
 active_processes = []
 last_activity_time = time.time()
@@ -406,16 +414,14 @@ def copy_image_to_clipboard(image_path):
 # --- Podman Lifecycle ---
 def check_podman_alive():
     try:
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo = get_startupinfo()
         subprocess.check_call(['podman', 'info'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo)
         return True
     except: return False
 
 def check_image_exists(image_name):
     try:
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo = get_startupinfo()
         subprocess.check_call(['podman', 'image', 'exists', image_name], startupinfo=startupinfo)
         return True
     except: return False
@@ -423,8 +429,7 @@ def check_image_exists(image_name):
 def ensure_podman_running(icon):
     if check_podman_alive(): return
     icon.notify("Podman is not running. Attempting to start...", title="Ephemeral Init")
-    startupinfo = subprocess.STARTUPINFO()
-    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo = get_startupinfo()
     try:
         subprocess.check_call(['podman', 'machine', 'start'], startupinfo=startupinfo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         icon.notify("Podman machine started successfully.", title="Ephemeral Init")
@@ -439,8 +444,7 @@ def ensure_podman_running(icon):
 
 def stop_podman_machine(icon):
     icon.notify("Stopping Podman machine...", title="Ephemeral Shutdown")
-    startupinfo = subprocess.STARTUPINFO()
-    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo = get_startupinfo()
     try:
         subprocess.run(['podman', 'machine', 'stop'], startupinfo=startupinfo)
     except Exception as e:
@@ -457,8 +461,7 @@ def show_post_mortem_error(error_text):
 
 def purge_cache(icon, item):
     icon.notify("Pruning unused images... this may take a moment.", title="Ephemeral Maintenance")
-    startupinfo = subprocess.STARTUPINFO()
-    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo = get_startupinfo()
     try:
         subprocess.run(['podman', 'image', 'prune', '--all', '--force'], startupinfo=startupinfo, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         icon.notify("Image cache cleared successfully.", title="Ephemeral")
@@ -482,8 +485,7 @@ def force_stop_all(icon, item):
     
     # Cleanup orphaned podman containers aggressively
     try:
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo = get_startupinfo()
         subprocess.run(['podman', 'rm', '-f', '$(podman ps -q)'], shell=True, startupinfo=startupinfo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except:
         pass
@@ -498,8 +500,7 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
     output_dir = tempfile.mkdtemp()
     image_copied = False
     try:
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo = get_startupinfo()
         
         wrapper_script = []
         block_markers = []
