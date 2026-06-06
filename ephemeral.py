@@ -468,8 +468,13 @@ def purge_cache(icon, item):
     except Exception as e: icon.notify(f"Error clearing cache: {e}", title="Ephemeral Error")
 
 def perform_visible_pull(image_name):
-    cmd_line = f'cmd /C "echo [Ephemeral] Image {image_name} not found. Downloading... && podman pull {image_name} || pause"'
-    process = subprocess.Popen(cmd_line, creationflags=getattr(subprocess, 'CREATE_NEW_CONSOLE', 0))
+    import sys
+    if sys.platform == 'win32':
+        cmd_line = f'cmd /C "echo [Ephemeral] Image {image_name} not found. Downloading... && podman pull {image_name} || pause"'
+        process = subprocess.Popen(cmd_line, creationflags=getattr(subprocess, 'CREATE_NEW_CONSOLE', 0))
+    else:
+        cmd_line = ['podman', 'pull', image_name]
+        process = subprocess.Popen(cmd_line)
     return process.wait()
 
 def force_stop_all(icon, item):
