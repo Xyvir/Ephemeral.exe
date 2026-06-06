@@ -167,6 +167,7 @@ def create_icon_image(color=(0, 120, 215)):
     return image
 
 def set_icon_animation_state(icon, state):
+    if not HAS_GUI or not icon: return
     if state:
         icon.icon = create_icon_image((255, 100, 0))  # Solid Orange
     else:
@@ -452,6 +453,10 @@ def stop_podman_machine(icon):
 
 def show_post_mortem_error(error_text):
     try:
+        import sys
+        if sys.platform != 'win32':
+            print("--- EPHEMERAL EXECUTION ERROR ---\n" + error_text, file=sys.stderr)
+            return
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as tmp:
             tmp.write("--- EPHEMERAL EXECUTION ERROR ---\n\n")
             tmp.write(error_text)
