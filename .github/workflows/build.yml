@@ -27,7 +27,9 @@ jobs:
         python-version: '3.10'
 
     - name: Prepare Build Script
-      run: sed -i "s/BRANCH_OR_SHA/${{ github.sha }}/g" build.md
+      run: |
+        sed -i "s/main.zip/${{ github.sha }}.zip/g" build.md
+        sed -i "s/Ephemeral.exe-main/Ephemeral.exe-${{ github.sha }}/g" build.md
 
     - name: Build EXE via Ephemeral
       run: python ephemeral.py --cli build.md
