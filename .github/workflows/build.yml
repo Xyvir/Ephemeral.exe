@@ -37,8 +37,8 @@ jobs:
     - name: Rename Artifact
       run: |
         mkdir dist
-        # Ephemeral names the downloaded file Ephemeral_pywine_Ephemeral.exe due to prefixing
-        mv Ephemeral_pywine_Ephemeral.exe dist/Ephemeral.exe
+        # Ephemeral names the downloaded file Ephemeral_pywine_unsafe_Ephemeral.exe due to prefixing
+        mv Ephemeral_pywine_unsafe_Ephemeral.exe dist/Ephemeral.exe
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
