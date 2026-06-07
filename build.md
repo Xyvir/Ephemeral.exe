@@ -2,7 +2,8 @@
 
 This script automatically cross-compiles Ephemeral for Windows using PyWine.
 
-```pywine unsafe
+```python
+#!pywine unsafe
 # Download the exact commit source code
 curl -L -o main.zip https://github.com/Xyvir/Ephemeral.exe/archive/main.zip || (apt-get update && apt-get install -y curl && curl -L -o main.zip https://github.com/Xyvir/Ephemeral.exe/archive/main.zip)
 unzip main.zip
