@@ -257,11 +257,17 @@ Hello Alice, your score is 42!
 ```
 ````
 
-### Seed Files
+### Seed Files & Binary Data
 
 You can inject data files (like JSON, CSV, or text) into the container environment before your code executes. To do this, provide the filename as the language tag in the markdown header (e.g., `data.json` or `file data.json`). 
 
-**Example:**
+**Base64 Binary Seeding:** You can also seed binary files (like images or compiled data) by appending `b64` to the header. Ephemeral will automatically decode the base64 string back into the original binary file inside the container before your code runs.
+
+**Conversion Hotkey:** To make seeding effortless, Ephemeral includes a conversion hotkey (`Ctrl+Win+X`). If you copy an image, a file in your file explorer, or raw text to your clipboard and press `Ctrl+Win+X`, Ephemeral will automatically convert it into the correct markdown seed block format (including base64 encoding if necessary) and replace your clipboard content, ready to be pasted!
+
+*(Note: When using the hotkey on a copied file, Ephemeral will name the file `seed.<ext>` inside the container. It will also append `source=<original_name>` to the header just as informational metadata so you can remember where the data came from.)*
+
+**Example (Text and Binary Seeds):**
 ````text
 ```data.json
 {
@@ -269,10 +275,18 @@ You can inject data files (like JSON, CSV, or text) into the container environme
 }
 ```
 
+```seed.png b64 source=image.png
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=
+```
+
 ```python
 import json
+import os
+
 with open('data.json', 'r') as f:
     print(json.load(f)['message'])
+
+print(f"Image exists: {os.path.exists('seed.png')}")
 ```
 ````
 
@@ -282,6 +296,7 @@ with open('data.json', 'r') as f:
 
 ```text
 Hello from seed file!
+Image exists: True
 ```
 ````
 
