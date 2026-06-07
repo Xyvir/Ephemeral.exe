@@ -841,11 +841,13 @@ def on_convert_hotkey(icon):
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
-                result_text = f"```seed.{filename.split('.')[-1] if '.' in filename else 'txt'} file={filename}\n{content}\n```"
+                safe_name = filename.replace(' ', '_')
+                result_text = f"```{safe_name}\n{content}\n```"
             except UnicodeDecodeError:
                 with open(file_path, 'rb') as f:
                     b64_content = base64.b64encode(f.read()).decode('utf-8')
-                result_text = f"```seed.{filename.split('.')[-1] if '.' in filename else 'bin'} b64 file={filename}\n{b64_content}\n```"
+                safe_name = filename.replace(' ', '_')
+                result_text = f"```{safe_name} b64\n{b64_content}\n```"
                 
         elif hasattr(clip_data, 'save'):
             import io
