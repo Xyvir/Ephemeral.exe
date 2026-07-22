@@ -69,7 +69,7 @@ LANG_MAP = {
 
     # --- Science & Data ---
     'science': {'image': 'continuumio/anaconda3', 'cmd': ['python', '-']},
-    'octave':  {'image': 'gnuoctave/octave:latest', 'cmd': ['octave', '--no-gui', '--quiet']},
+    'octave':  {'image': 'tymills620/octave-forge:latest', 'cmd': ['octave', '--no-gui', '--quiet']},
     'r':       {'image': 'r-base:latest',           'cmd': ['R', '--vanilla', '--slave', '-f', '/dev/stdin']},
     'julia':   {'image': 'julia:alpine',            'cmd': ['julia']},
 
