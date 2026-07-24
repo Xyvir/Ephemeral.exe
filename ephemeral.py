@@ -118,7 +118,7 @@ LANG_MAP = {
     'pwsh':    {'image': 'mcr.microsoft.com/powershell', 'cmd': ['pwsh', '-NoProfile', '-NonInteractive', '-Command', '-']},
     
     # --- Aliases ---
-    'py': 'python', 'js': 'node', 'sh': 'bash',
+    'py': 'python', 'js': 'node', 'javascript': 'node', 'npm': 'node', 'npx': 'node', 'cjs': 'node', 'mjs': 'node', 'sh': 'bash',
     'numpy': 'science', 'pandas': 'science',
     'matlab': 'octave',
     'powershell': 'pwsh', 'ps1': 'pwsh', 'cmd': 'pwsh', 'batch': 'pwsh',
@@ -512,7 +512,7 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
     try:
         startupinfo = get_startupinfo()
         
-        wrapper_script = []
+        wrapper_script = ["mkdir -p /output 2>/dev/null || true"]
         block_markers = []
         code_blocks = [b for b in run_blocks if b['type'] == 'code']
         is_single_step = len(code_blocks) <= 1
@@ -554,7 +554,7 @@ def run_container_piped_group(icon, config, run_blocks, lang, run_index, total_r
         script_code = ("\n".join(wrapper_script) + "\n").encode('utf-8')
 
         # Base Command
-        podman_cmd = ['podman', 'run', '--rm', '-i', '--memory', '2g']
+        podman_cmd = ['podman', 'run', '--rm', '-i', '--memory', '2g', '-w', '/tmp']
         
         if config.get('allow_network', False):
             pass 
