@@ -115,13 +115,23 @@ chown -R "$APP_USER":"$APP_USER" "$INSTALL_DIR"
 
 # --- Step 5: Initialize Podman (Rootless) ---
 warn "Initializing Podman for user '$APP_USER' (this may take a moment)..."
-if sudo -u "$APP_USER" podman info &>/dev/null; then
+
+APP_UID=$(id -u "$APP_USER")
+if [ ! -d "/run/user/$APP_UID" ]; then
+    warn "Runtime directory /run/user/$APP_UID missing (common in CI). Creating it..."
+    mkdir -p "/run/user/$APP_UID"
+    chown "$APP_UID":"$APP_UID" "/run/user/$APP_UID"
+    chmod 700 "/run/user/$APP_UID"
+    export XDG_RUNTIME_DIR="/run/user/$APP_UID"
+fi
+
+if sudo -E -u "$APP_USER" XDG_RUNTIME_DIR="/run/user/$APP_UID" podman info &>/dev/null; then
     info "Podman already initialized for '$APP_USER'"
 else
     # Give the system user a dedicated pool of Sub-UIDs/Sub-GIDs for rootless Podman
     usermod --add-subuids 1000000-1065535 --add-subgids 1000000-1065535 "$APP_USER" 2>/dev/null || true
     # Then migrate Podman
-    sudo -u "$APP_USER" podman system migrate 2>/dev/null || true
+    sudo -E -u "$APP_USER" XDG_RUNTIME_DIR="/run/user/$APP_UID" podman system migrate 2>/dev/null || true
     info "Podman initialized for '$APP_USER'"
 fi
 
