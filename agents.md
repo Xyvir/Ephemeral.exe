@@ -43,7 +43,7 @@ These flags must remain in `executor.py` and must not be weakened:
 ### Artifact Routing
 
 Artifact routing is the caller's responsibility, not the core's:
-- **API** (`main_api.py`): Zips to `/ephemeral/` (WebDAV mount)
+- **API** (`main_api.py`): Zips to `/data/ephemeral/` (WebDAV mount)
 - **Local** (`main_local.py`): Single image → clipboard, single file → Downloads, multiple → zipped to Downloads
 
 ### Dependencies

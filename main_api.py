@@ -4,7 +4,7 @@ Ephemeral API Server — FastAPI backend for remote code execution.
 This module provides a REST API that accepts base64-encoded Markdown documents,
 passes them to ephemeral_core for sandboxed execution in Podman containers,
 and returns structured JSON results with optional artifact routing to a
-local WebDAV mount at /ephemeral/.
+local WebDAV mount at /data/ephemeral/.
 
 Usage:
     uvicorn main_api:app --host 0.0.0.0 --port 8000
@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, field_validator
 import ephemeral_core
 
 # --- Configuration ---
-WEBDAV_PATH = "/ephemeral"
+WEBDAV_PATH = "/data/ephemeral"
 
 # --- Pydantic Models ---
 
@@ -97,7 +97,7 @@ async def run_code(request: RunRequest) -> RunResponse:
     in sandboxed Podman containers, and return the results.
     
     If artifacts are generated, they are zipped and written to the
-    WebDAV share at /ephemeral/ with a timestamped filename.
+    WebDAV share at /data/ephemeral/ with a timestamped filename.
     """
     try:
         result = await ephemeral_core.parse_and_execute(

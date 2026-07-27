@@ -50,7 +50,7 @@ install.sh               ← One-shot sidecar deployment (systemd + rootless Pod
 | **Tray** (default) | `main_local.py` | Clipboard (images) or `~/Downloads` (files) |
 | **One-shot** | `main_local.py script.md` | Same as tray, then exits |
 | **Headless CLI** | `ephemeral.exe --cli script.md` | Current working directory |
-| **API Server** | `uvicorn main_api:app` | `/ephemeral/` (WebDAV mount) |
+| **API Server** | `uvicorn main_api:app` | `/data/ephemeral/` (WebDAV mount) |
 | **Sidecar Deploy** | `sudo ./install.sh` | systemd service on port 8787 |
 
 

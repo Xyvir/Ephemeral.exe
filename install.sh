@@ -10,7 +10,7 @@
 #   - Linux host with systemd
 #   - Podman installed and accessible by the service user
 #   - Python 3.10+ with pip
-#   - /ephemeral/ directory exists (WebDAV mount point)
+#   - /data/ephemeral/ directory exists (WebDAV mount point)
 #
 # Usage:
 #   chmod +x install.sh && sudo ./install.sh
@@ -18,7 +18,7 @@
 # What this does:
 #   1. Creates a dedicated system user (ephemeral)
 #   2. Installs the Python package + dependencies into a venv
-#   3. Ensures /ephemeral/ artifact directory exists
+#   3. Ensures /data/ephemeral/ artifact directory exists
 #   4. Creates and enables a systemd service
 #   5. Initializes Podman for the service user (rootless)
 # ============================================================================
@@ -30,7 +30,7 @@ APP_NAME="ephemeral-api"
 APP_USER="ephemeral"
 INSTALL_DIR="/opt/ephemeral"
 VENV_DIR="${INSTALL_DIR}/venv"
-WEBDAV_DIR="/ephemeral"
+WEBDAV_DIR="/data/ephemeral"
 SERVICE_PORT=8787
 BIND_HOST="127.0.0.1"    # Bind to localhost; reverse-proxy (Caddy) handles external
 
