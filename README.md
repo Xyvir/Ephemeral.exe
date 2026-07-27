@@ -1,6 +1,6 @@
 # Ephemeral.exe
 
-**Ephemeral.exe** is a lightweight, daemonless utility for Windows that instantly executes code snippets from your clipboard inside isolated, secure containers.
+**Ephemeral** is a sandboxed code execution engine that parses Markdown for codeblocks, runs them in isolated Podman containers, and extracts generated artifacts. It can be used as a **Windows tray application** (clipboard-driven) or as a **FastAPI server** (for remote execution as a sidecar service).
 
 ![Ephemeral Demo](ephemeral.gif)
 
@@ -25,6 +25,33 @@ Ephemeral acts as a "Sidecar Notebook" for your entire operating system. It leve
 3.  **Security:** Snippets run in a sandbox (`--network none`). A malicious `rm -rf /` only deletes a temporary container, not your hard drive.
 4.  **Legacy Support:** Need to test a script in Python 2.7? Just type `python:2.7`. Ephemeral pulls the specific version for that run.
 5.  **Context Agnostic:** It works anywhere you can copy text. 
+
+## Architecture
+
+Ephemeral uses a modular, dual-entry-point architecture. The core execution engine is platform-agnostic and can be driven by either a local Windows tray app or a remote FastAPI server.
+
+```
+ephemeral_core/          ← Platform-agnostic engine (parsing + Podman orchestration)
+├── config.py            ← Language map (50+ languages), network & chaining flags
+├── parser.py            ← Markdown codeblock extraction & runtime resolution
+├── executor.py          ← Async container execution via parse_and_execute()
+├── models.py            ← ExecutionResult, GroupResult, BlockResult dataclasses
+└── __init__.py
+
+main_local.py            ← Windows tray client (clipboard → Podman → clipboard)
+main_api.py              ← FastAPI server (POST /api/v1/run, base64 payloads)
+install.sh               ← One-shot sidecar deployment (systemd + rootless Podman)
+```
+
+### Running Modes
+
+| Mode | Entry Point | Artifacts Route To |
+|---|---|---|
+| **Tray** (default) | `main_local.py` | Clipboard (images) or `~/Downloads` (files) |
+| **One-shot** | `main_local.py script.md` | Same as tray, then exits |
+| **Headless CLI** | `main_local.py --cli script.md` | Current working directory |
+| **API Server** | `uvicorn main_api:app` | `/ephemeral/` (WebDAV mount) |
+| **Sidecar Deploy** | `sudo ./install.sh` | systemd service on port 8787 |
 
 
 
@@ -344,30 +371,76 @@ PROCEDURE DIVISION.
 
 > If you would like to have a built-in language added to the language map please open a pull request, preferrably containing a declarative example as above for me to test.
 
-## Building Ephemeral (with Ephemeral!)
+## Building from Source (with Ephemeral!)
 
-If you want to build or update the executable locally, you can do it using Ephemeral itself! You can simply copy and execute the following snippet. It pulls the repository, installs dependencies into the Wine environment, generates the icon, and drops the compiled `.exe` into your `\Downloads` folder:
+Ephemeral can build itself! If you already have a working copy of Ephemeral, you can update to the latest version by copying and executing this snippet. It fetches the latest source from GitHub, cross-compiles a Windows `.exe` using PyWine, and drops it into your `\Downloads` folder:
 
 ````text
 ```pywine unsafe
+# Fetch latest source from GitHub
 wine python -c "import urllib.request, zipfile, io; zipfile.ZipFile(io.BytesIO(urllib.request.urlopen('https://github.com/Xyvir/Ephemeral.exe/archive/refs/heads/main.zip').read())).extractall()"
 cd Ephemeral.exe-main
+
+# Install all dependencies
 wine python -m pip install -r requirements.txt pyinstaller Pillow
-wine python -c "from PIL import Image, ImageDraw; img=Image.new('RGB', (64, 64), (30, 30, 30)); img.save('ephemeral.ico')"
-sed -i 's/Version number (injected from the github workflow)/LOCAL_$(date +%Y%m%d-%H%M%S)/g' ephemeral.py
-wine pyinstaller --noconsole --onefile --name Ephemeral --icon=ephemeral.ico ephemeral.py
+
+# Generate icon
+wine python -c "from PIL import Image, ImageDraw; img=Image.new('RGB', (64, 64), (30, 30, 30)); dc=ImageDraw.Draw(img); dc.rectangle((16,16,48,48), fill=(255,255,255)); dc.rectangle((20,20,44,28), fill=(0,120,215)); img.save('ephemeral.ico')"
+
+# Inject build timestamp as version
+sed -i "s/Version number (injected from the github workflow)/LOCAL_$(date +%Y%m%d-%H%M%S)/g" main_local.py
+
+# Build — main_local.py is the entry point, ephemeral_core is bundled as a hidden import
+wine pyinstaller --noconsole --onefile --name Ephemeral --icon=ephemeral.ico --hidden-import=ephemeral_core main_local.py
 cp dist/Ephemeral.exe /output/
 ```
 ````
 
-## CI/CD Pipeline & CLI Mode
+> **Note:** This is not the primary build pipeline — it's a convenience for self-updating. The official builds use GitHub Actions (see below).
 
-Ephemeral features a robust `--cli` (or `parse`) headless mode that completely bypasses the GUI, tray icon, and clipboard integrations. This allows Ephemeral to act as a central linchpin for your automated CI/CD pipelines.
+## CI/CD Pipeline
 
-By executing `python ephemeral.py --cli your_script.md`, Ephemeral will:
-1. Parse your markdown file.
+The official build pipeline uses GitHub Actions (`.github/workflows/build.yml`) with three stages:
+
+1.  **Test** — Runs `test_core.py` + `test_api.py` on `ubuntu-latest` across Python 3.10 and 3.12.
+2.  **Build** — Builds the Windows `.exe` via PyInstaller on `windows-latest`.
+3.  **Release** — Creates a GitHub Release with the artifact (manual dispatch only).
+
+## CLI Mode
+
+Ephemeral features a `--cli` (or `parse`) headless mode that completely bypasses the GUI, tray icon, and clipboard integrations. This allows Ephemeral to run in automated pipelines or on headless machines.
+
+```bash
+python main_local.py --cli your_script.md
+```
+
+In CLI mode, Ephemeral will:
+1. Parse your markdown file for codeblocks.
 2. Spin up the isolated container environment.
-3. Pipe stdout/stderr directly back to your terminal console.
-4. Export any `/output` artifacts directly to your **current working directory** (instead of your user Downloads folder).
+3. Pipe stdout/stderr directly back to your terminal.
+4. Export any `/output` artifacts to your **current working directory** (instead of Downloads).
 
-We use this very feature in our own GitHub Actions workflow (`.github/workflows/build.yml`). Instead of installing complex environments on the CI runner, we just run the cross-compilation steps through Ephemeral using our `build.md` script!
+## API Server
+
+For remote or programmatic execution, Ephemeral can run as a FastAPI server:
+
+```bash
+pip install -r requirements-api.txt
+uvicorn main_api:app --host 0.0.0.0 --port 8000
+```
+
+Send a base64-encoded Markdown document via `POST /api/v1/run`:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/run \
+  -H "Content-Type: application/json" \
+  -d '{"document_blob": "'$(echo '```python\nprint("Hello!")\n```' | base64)'", "timeout": 10}'
+```
+
+For production deployment as a sidecar (e.g., alongside Caddy + WebDAV), use the included `install.sh`:
+
+```bash
+chmod +x install.sh && sudo ./install.sh
+```
+
+This creates a hardened systemd service at `127.0.0.1:8787`, ready to be reverse-proxied.

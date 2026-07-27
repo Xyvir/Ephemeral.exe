@@ -34,10 +34,10 @@ class RunRequest(BaseModel):
     Attributes:
         document_blob: Base64-encoded UTF-8 Markdown string containing code blocks.
                        Automatically decoded to plaintext by the field_validator.
-        timeout: Maximum execution time per container in seconds (1-300, default 10).
+        timeout: Maximum execution time per container in seconds (1-600, default 300).
     """
     document_blob: str
-    timeout: int = Field(default=10, ge=1, le=300)
+    timeout: int = Field(default=300, ge=1, le=600)
 
     @field_validator("document_blob", mode="before")
     @classmethod

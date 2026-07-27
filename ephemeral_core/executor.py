@@ -133,7 +133,7 @@ def _run_container_sync(
     run_index: int,
     total_runs: int,
     output_dir: str,
-    timeout: int
+    timeout: int | None
 ) -> GroupResult:
     """
     Synchronous container execution. Called via asyncio.to_thread.
@@ -317,7 +317,7 @@ async def run_container_group(
     run_index: int,
     total_runs: int,
     output_dir: str,
-    timeout: int = 60
+    timeout: int | None = None
 ) -> GroupResult:
     """
     Async wrapper around the synchronous container execution.
@@ -335,7 +335,7 @@ async def run_container_group(
 
 async def parse_and_execute(
     markdown_text: str,
-    timeout: int = 60
+    timeout: int | None = None
 ) -> ExecutionResult:
     """
     Parse Markdown text for codeblocks and execute them in Podman containers.

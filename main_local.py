@@ -445,7 +445,7 @@ def run_logic(icon, content=None):
                     run_index=i + 1,
                     total_runs=len(runs),
                     output_dir=output_dir,
-                    timeout=60
+                    timeout=None
                 )
             )
 
