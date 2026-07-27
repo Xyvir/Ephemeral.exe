@@ -16,7 +16,7 @@ ephemeral_core/          ← Platform-agnostic engine (no GUI/HTTP)
 ├── models.py            ← ExecutionResult, GroupResult, BlockResult dataclasses
 └── __init__.py          ← Public API re-exports
 
-main_api.py              ← FastAPI server (POST /api/v1/run, base64 Pydantic model)
+main_api.py              ← FastAPI server (POST /ephemeral/api/v1/run, base64 Pydantic model)
 main_local.py            ← Windows tray client (clipboard, hotkeys, pystray)
 install.sh               ← One-shot sidecar deployment (systemd + rootless Podman)
 ```

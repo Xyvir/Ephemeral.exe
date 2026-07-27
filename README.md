@@ -39,7 +39,7 @@ ephemeral_core/          ← Platform-agnostic engine (parsing + Podman orchestr
 └── __init__.py
 
 main_local.py            ← Windows tray client (clipboard → Podman → clipboard)
-main_api.py              ← FastAPI server (POST /api/v1/run, base64 payloads)
+main_api.py              ← FastAPI server (POST /ephemeral/api/v1/run, base64 payloads)
 install.sh               ← One-shot sidecar deployment (systemd + rootless Podman)
 ```
 
@@ -49,7 +49,7 @@ install.sh               ← One-shot sidecar deployment (systemd + rootless Pod
 |---|---|---|
 | **Tray** (default) | `main_local.py` | Clipboard (images) or `~/Downloads` (files) |
 | **One-shot** | `main_local.py script.md` | Same as tray, then exits |
-| **Headless CLI** | `main_local.py --cli script.md` | Current working directory |
+| **Headless CLI** | `ephemeral.exe --cli script.md` | Current working directory |
 | **API Server** | `uvicorn main_api:app` | `/ephemeral/` (WebDAV mount) |
 | **Sidecar Deploy** | `sudo ./install.sh` | systemd service on port 8787 |
 
@@ -429,10 +429,10 @@ pip install -r requirements-api.txt
 uvicorn main_api:app --host 0.0.0.0 --port 8000
 ```
 
-Send a base64-encoded Markdown document via `POST /api/v1/run`:
+Send a base64-encoded Markdown document via `POST /ephemeral/api/v1/run`:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/run \
+curl -X POST http://localhost:8000/ephemeral/api/v1/run \
   -H "Content-Type: application/json" \
   -d '{"document_blob": "'$(echo '```python\nprint("Hello!")\n```' | base64)'", "timeout": 10}'
 ```

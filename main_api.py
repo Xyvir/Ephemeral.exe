@@ -29,7 +29,7 @@ WEBDAV_PATH = "/ephemeral"
 
 class RunRequest(BaseModel):
     """
-    Request payload for the /api/v1/run endpoint.
+    Request payload for the /ephemeral/api/v1/run endpoint.
     
     Attributes:
         document_blob: Base64-encoded UTF-8 Markdown string containing code blocks.
@@ -57,7 +57,7 @@ class RunRequest(BaseModel):
 
 class RunResponse(BaseModel):
     """
-    Response payload from the /api/v1/run endpoint.
+    Response payload from the /ephemeral/api/v1/run endpoint.
     
     Attributes:
         exit_code: Overall exit code (0 = all runs succeeded).
@@ -82,7 +82,7 @@ app = FastAPI(
 
 
 @app.post(
-    "/api/v1/run",
+    "/ephemeral/api/v1/run",
     response_model=RunResponse,
     summary="Execute code blocks from a Markdown document",
     responses={
