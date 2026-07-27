@@ -1,0 +1,167 @@
+"""
+Ephemeral API Server — FastAPI backend for remote code execution.
+
+This module provides a REST API that accepts base64-encoded Markdown documents,
+passes them to ephemeral_core for sandboxed execution in Podman containers,
+and returns structured JSON results with optional artifact routing to a
+local WebDAV mount at /ephemeral/.
+
+Usage:
+    uvicorn main_api:app --host 0.0.0.0 --port 8000
+"""
+from __future__ import annotations
+
+import base64
+import os
+import shutil
+import tempfile
+from datetime import datetime, timezone
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field, field_validator
+
+import ephemeral_core
+
+# --- Configuration ---
+WEBDAV_PATH = "/ephemeral"
+
+# --- Pydantic Models ---
+
+class RunRequest(BaseModel):
+    """
+    Request payload for the /api/v1/run endpoint.
+    
+    Attributes:
+        document_blob: Base64-encoded UTF-8 Markdown string containing code blocks.
+                       Automatically decoded to plaintext by the field_validator.
+        timeout: Maximum execution time per container in seconds (1-300, default 10).
+    """
+    document_blob: str
+    timeout: int = Field(default=10, ge=1, le=300)
+
+    @field_validator("document_blob", mode="before")
+    @classmethod
+    def decode_base64(cls, v: str) -> str:
+        """Decode the base64-encoded document_blob into a UTF-8 Markdown string."""
+        if not isinstance(v, str):
+            raise ValueError("document_blob must be a base64-encoded string")
+        try:
+            decoded_bytes = base64.b64decode(v, validate=True)
+        except Exception as e:
+            raise ValueError(f"Invalid base64 encoding: {e}") from e
+        try:
+            return decoded_bytes.decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise ValueError(f"Decoded content is not valid UTF-8: {e}") from e
+
+
+class RunResponse(BaseModel):
+    """
+    Response payload from the /api/v1/run endpoint.
+    
+    Attributes:
+        exit_code: Overall exit code (0 = all runs succeeded).
+        stdout: Markdown-formatted execution output.
+        stderr: Aggregate stderr from all runs.
+        artifact_file: Filename of the generated artifact zip on the WebDAV share,
+                       or null if no artifacts were produced.
+    """
+    exit_code: int
+    stdout: str
+    stderr: str
+    artifact_file: str | None = None
+
+
+# --- FastAPI Application ---
+
+app = FastAPI(
+    title="Ephemeral API",
+    description="Remote code execution engine powered by Podman containers.",
+    version="1.0.0",
+)
+
+
+@app.post(
+    "/api/v1/run",
+    response_model=RunResponse,
+    summary="Execute code blocks from a Markdown document",
+    responses={
+        422: {"description": "Invalid base64 or non-UTF-8 content"},
+        500: {"description": "Podman infrastructure failure"},
+        504: {"description": "Execution timed out"},
+    },
+)
+async def run_code(request: RunRequest) -> RunResponse:
+    """
+    Accept a base64-encoded Markdown document, execute all code blocks
+    in sandboxed Podman containers, and return the results.
+    
+    If artifacts are generated, they are zipped and written to the
+    WebDAV share at /ephemeral/ with a timestamped filename.
+    """
+    try:
+        result = await ephemeral_core.parse_and_execute(
+            markdown_text=request.document_blob,
+            timeout=request.timeout,
+        )
+    except ValueError as e:
+        # Bad input: missing language, no code blocks, safety rejection, etc.
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except RuntimeError as e:
+        # Infrastructure failure: Podman won't start, image pull failed, etc.
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}") from e
+
+    # Route artifacts to the WebDAV share
+    artifact_filename = None
+    if result.artifact_paths and result.artifact_dir:
+        try:
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            artifact_filename = f"{timestamp}-artifact.zip"
+            
+            os.makedirs(WEBDAV_PATH, exist_ok=True)
+            
+            # Create a zip from the artifact directory
+            zip_base = os.path.join(
+                tempfile.gettempdir(),
+                f"ephemeral_api_{timestamp}"
+            )
+            final_zip = shutil.make_archive(zip_base, 'zip', result.artifact_dir)
+            
+            # Move the zip to the WebDAV mount
+            target_path = os.path.join(WEBDAV_PATH, artifact_filename)
+            shutil.move(final_zip, target_path)
+            
+        except Exception as e:
+            # Don't fail the whole request if artifact routing fails
+            artifact_filename = None
+            result_stderr = f"{result.stderr}\nArtifact routing error: {e}"
+        else:
+            result_stderr = result.stderr
+        finally:
+            # Clean up the temp artifact directory
+            if result.artifact_dir:
+                try:
+                    shutil.rmtree(result.artifact_dir, ignore_errors=True)
+                except Exception:
+                    pass
+    else:
+        result_stderr = result.stderr
+
+    return RunResponse(
+        exit_code=result.exit_code,
+        stdout=result.stdout,
+        stderr=result_stderr,
+        artifact_file=artifact_filename,
+    )
+
+
+@app.get("/health")
+async def health_check():
+    """Check if the API and Podman backend are operational."""
+    podman_alive = ephemeral_core.check_podman_alive()
+    return {
+        "status": "healthy" if podman_alive else "degraded",
+        "podman": "running" if podman_alive else "stopped",
+    }

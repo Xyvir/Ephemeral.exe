@@ -1,12 +1,14 @@
-name: Build Windows Executable
+name: Build & Release
 
 on:
   push:
     branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
     inputs:
       create_release:
-        description: 'Create a new release and upload EXE'
+        description: 'Create a new release'
         required: false
         type: boolean
         default: false
@@ -15,8 +17,34 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  # ── Tests ─────────────────────────────────────────────────────
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.12']
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: pip install -r requirements-api.txt
+
+    - name: Run core tests
+      run: python test_core.py
+
+    - name: Run API model tests
+      run: python test_api.py
+
+  # ── Windows EXE Build ─────────────────────────────────────────
+  build-exe:
+    runs-on: windows-latest
+    needs: test
 
     steps:
     - uses: actions/checkout@v4
@@ -26,40 +54,58 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Prepare Build Script
+    - name: Install dependencies
       run: |
-        sed -i "s/main.zip/${{ github.sha }}.zip/g" build.md
-        sed -i "s/Ephemeral.exe-main/Ephemeral.exe-${{ github.sha }}/g" build.md
+        pip install -r requirements.txt pyinstaller
+        pip install -r requirements-api.txt
 
-    - name: Build EXE via Ephemeral
-      run: python ephemeral.py --cli build.md
+    - name: Generate icon
+      run: python -c "from PIL import Image, ImageDraw; img=Image.new('RGB', (64, 64), (30, 30, 30)); dc=ImageDraw.Draw(img); dc.rectangle((16, 16, 48, 48), fill=(255, 255, 255)); dc.rectangle((20, 20, 44, 28), fill=(0, 120, 215)); img.save('ephemeral.ico')"
 
-    - name: Rename Artifact
+    - name: Inject version
+      shell: bash
       run: |
-        mkdir dist
-        # Ephemeral names the downloaded file Ephemeral_pywine_unsafe_Ephemeral.exe due to prefixing
-        mv Ephemeral_pywine_unsafe_Ephemeral.exe dist/Ephemeral.exe
+        FULL_SHA="${{ github.sha }}"
+        SHORT_SHA="${FULL_SHA:0:7}"
+        VERSION="$(date +'%Y%m%d')-${SHORT_SHA}"
+        sed -i "s/Version number (injected from the github workflow)/${VERSION}/g" main_local.py
 
-    - name: Upload Artifact
+    - name: Build EXE
+      run: pyinstaller --noconsole --onefile --name Ephemeral --icon=ephemeral.ico --hidden-import=ephemeral_core main_local.py
+
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: Ephemeral-Windows-EXE
         path: dist/Ephemeral.exe
 
-    - name: Generate Timestamp Tag
-      if: github.event.inputs.create_release == 'true'
-      id: time
+  # ── Release ───────────────────────────────────────────────────
+  release:
+    runs-on: ubuntu-latest
+    needs: build-exe
+    if: github.event.inputs.create_release == 'true'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: Ephemeral-Windows-EXE
+        path: dist/
+
+    - name: Generate tag
+      id: tag
       shell: bash
       run: |
         FULL_SHA="${{ github.sha }}"
         SHORT_SHA="${FULL_SHA:0:7}"
-        echo "TIMESTAMP=$(date +'%Y%m%d-%H%M%S')-$SHORT_SHA" >> $GITHUB_ENV
+        echo "TAG=v$(date +'%Y%m%d-%H%M%S')-${SHORT_SHA}" >> $GITHUB_ENV
 
-    - name: Create Release and Upload EXE
-      if: github.event.inputs.create_release == 'true'
+    - name: Create release
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v${{ env.TIMESTAMP }}
-        name: Release v${{ env.TIMESTAMP }}
+        tag_name: ${{ env.TAG }}
+        name: Release ${{ env.TAG }}
         files: dist/Ephemeral.exe
         generate_release_notes: true

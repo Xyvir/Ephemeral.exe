@@ -1,0 +1,30 @@
+"""
+ephemeral_core — Platform-agnostic code execution engine.
+
+This package provides the core Podman orchestration, Markdown code-block
+parsing, and artifact extraction logic for Ephemeral. It is designed to
+be driven by either:
+
+  - main_api.py  (FastAPI server for remote execution)
+  - main_local.py (Windows tray client for local execution)
+
+Public API:
+    parse_and_execute(markdown_text, timeout) -> ExecutionResult
+    check_podman_alive() -> bool
+    ensure_podman_running() -> None
+    parse_codeblocks(content) -> list[dict]
+"""
+
+from .models import ExecutionResult, GroupResult, BlockResult
+from .executor import parse_and_execute, check_podman_alive, ensure_podman_running
+from .parser import parse_codeblocks
+
+__all__ = [
+    "parse_and_execute",
+    "check_podman_alive",
+    "ensure_podman_running",
+    "parse_codeblocks",
+    "ExecutionResult",
+    "GroupResult",
+    "BlockResult",
+]
