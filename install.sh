@@ -10,7 +10,7 @@
 #   - Linux host with systemd
 #   - Podman installed and accessible by the service user
 #   - Python 3.10+ with pip
-#   - /data/ephemeral/ directory exists (WebDAV mount point)
+#   - /ephemeral/ directory exists (WebDAV mount point)
 #
 # Usage:
 #   chmod +x install.sh && sudo ./install.sh
@@ -18,7 +18,7 @@
 # What this does:
 #   1. Creates a dedicated system user (ephemeral)
 #   2. Installs the Python package + dependencies into a venv
-#   3. Ensures /data/ephemeral/ artifact directory exists
+#   3. Ensures /ephemeral/ artifact directory exists
 #   4. Creates and enables a systemd service
 #   5. Initializes Podman for the service user (rootless)
 # ============================================================================
@@ -30,7 +30,7 @@ APP_NAME="ephemeral-api"
 APP_USER="ephemeral"
 INSTALL_DIR="/opt/ephemeral"
 VENV_DIR="${INSTALL_DIR}/venv"
-WEBDAV_DIR="/data/ephemeral"
+WEBDAV_DIR="/ephemeral"
 SERVICE_PORT=8787
 BIND_HOST="127.0.0.1"    # Bind to localhost; reverse-proxy (Caddy) handles external
 
@@ -53,30 +53,8 @@ echo ""
 
 [[ $EUID -eq 0 ]] || error "This script must be run as root (sudo)."
 
-if ! command -v python3 >/dev/null 2>&1 || ! python3 -c "import venv" >/dev/null 2>&1; then
-    warn "python3 (or venv module) is not found. Attempting to install..."
-    if command -v apt-get >/dev/null 2>&1; then
-        apt-get update -qq && apt-get install -y -qq python3 python3-venv
-    elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y python3
-    elif command -v yum >/dev/null 2>&1; then
-        yum install -y python3
-    else
-        error "Could not install python3 automatically. Please install it manually."
-    fi
-fi
-if ! command -v podman >/dev/null 2>&1; then
-    warn "podman is required but not found. Attempting to install..."
-    if command -v apt-get >/dev/null 2>&1; then
-        apt-get update -qq && apt-get install -y -qq podman
-    elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y podman
-    elif command -v yum >/dev/null 2>&1; then
-        yum install -y podman
-    else
-        error "Could not install podman automatically. Please install it manually."
-    fi
-fi
+command -v python3 >/dev/null 2>&1 || error "python3 is required but not found."
+command -v podman  >/dev/null 2>&1 || error "podman is required but not found."
 command -v systemctl >/dev/null 2>&1 || error "systemd is required but not found."
 
 PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
@@ -112,6 +90,9 @@ cp "$SCRIPT_DIR/main_api.py" "$INSTALL_DIR/"
 info "Installed application to $INSTALL_DIR"
 
 # Create virtual environment and install dependencies
+if command -v apt-get >/dev/null 2>&1; then
+    apt-get install -y -qq python3 python${PYTHON_VERSION}-venv 2>/dev/null || true
+fi
 if [[ ! -d "$VENV_DIR" ]]; then
     python3 -m venv "$VENV_DIR"
     info "Created virtual environment at $VENV_DIR"
@@ -137,6 +118,9 @@ warn "Initializing Podman for user '$APP_USER' (this may take a moment)..."
 if sudo -u "$APP_USER" podman info &>/dev/null; then
     info "Podman already initialized for '$APP_USER'"
 else
+    # Give the system user a dedicated pool of Sub-UIDs/Sub-GIDs for rootless Podman
+    usermod --add-subuids 1000000-1065535 --add-subgids 1000000-1065535 "$APP_USER" 2>/dev/null || true
+    # Then migrate Podman
     sudo -u "$APP_USER" podman system migrate 2>/dev/null || true
     info "Podman initialized for '$APP_USER'"
 fi
@@ -169,10 +153,11 @@ StandardError=journal
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
+ReadWritePaths=/run/user/$(id -u "$APP_USER")
 ReadWritePaths=${WEBDAV_DIR}
 ReadWritePaths=/tmp
 ReadWritePaths=${INSTALL_DIR}
-PrivateTmp=yes
+# PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target
@@ -200,13 +185,13 @@ echo "  Setup Complete!"
 echo "══════════════════════════════════════════════"
 echo ""
 echo "  Service:    ${APP_NAME}.service"
-echo "  Endpoint:   http://${BIND_HOST}:${SERVICE_PORT}/ephemeral/api/v1/run"
+echo "  Endpoint:   http://${BIND_HOST}:${SERVICE_PORT}/api/v1/run"
 echo "  Health:     http://${BIND_HOST}:${SERVICE_PORT}/health"
 echo "  Artifacts:  ${WEBDAV_DIR}/"
 echo "  Logs:       journalctl -u ${APP_NAME} -f"
 echo ""
 echo "  Caddy reverse-proxy example:"
-echo "    route /ephemeral/api/v1/* {"
+echo "    route /api/v1/* {"
 echo "        reverse_proxy localhost:${SERVICE_PORT}"
 echo "    }"
 echo ""
