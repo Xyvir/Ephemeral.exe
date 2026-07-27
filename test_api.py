@@ -11,8 +11,8 @@ print("PASS: Base64 auto-decode")
 
 # Test 2: Default timeout
 req2 = RunRequest(document_blob=base64.b64encode(b"test").decode())
-assert req2.timeout == 10
-print("PASS: Default timeout = 10")
+assert req2.timeout == 300
+print("PASS: Default timeout = 300")
 
 # Test 3: Invalid base64 rejected
 try:
@@ -32,6 +32,6 @@ try:
     RunRequest(document_blob=base64.b64encode(b"test").decode(), timeout=999)
     assert False, "Should have raised"
 except Exception as e:
-    print(f"PASS: Timeout > 300 rejected ({type(e).__name__})")
+    print(f"PASS: Timeout > 600 rejected ({type(e).__name__})")
 
 print("\n=== ALL API MODEL TESTS PASSED ===")
