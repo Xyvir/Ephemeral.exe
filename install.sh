@@ -159,15 +159,11 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
-# Hardening
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=/run/user/$(id -u "$APP_USER")
-ReadWritePaths=${WEBDAV_DIR}
-ReadWritePaths=/tmp
-ReadWritePaths=${INSTALL_DIR}
-# PrivateTmp=yes
+# Podman requires cgroup delegation and setuid (newuidmap)
+Delegate=yes
+LimitNOFILE=1048576
+LimitNPROC=1048576
+LimitCORE=infinity
 
 [Install]
 WantedBy=multi-user.target
