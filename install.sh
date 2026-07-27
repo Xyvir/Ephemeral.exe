@@ -53,8 +53,30 @@ echo ""
 
 [[ $EUID -eq 0 ]] || error "This script must be run as root (sudo)."
 
-command -v python3 >/dev/null 2>&1 || error "python3 is required but not found."
-command -v podman  >/dev/null 2>&1 || error "podman is required but not found."
+if ! command -v python3 >/dev/null 2>&1 || ! python3 -c "import venv" >/dev/null 2>&1; then
+    warn "python3 (or venv module) is not found. Attempting to install..."
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq && apt-get install -y -qq python3 python3-venv
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y python3
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y python3
+    else
+        error "Could not install python3 automatically. Please install it manually."
+    fi
+fi
+if ! command -v podman >/dev/null 2>&1; then
+    warn "podman is required but not found. Attempting to install..."
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq && apt-get install -y -qq podman
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y podman
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y podman
+    else
+        error "Could not install podman automatically. Please install it manually."
+    fi
+fi
 command -v systemctl >/dev/null 2>&1 || error "systemd is required but not found."
 
 PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
