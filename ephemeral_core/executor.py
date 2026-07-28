@@ -22,6 +22,8 @@ from .config import LANG_MAP
 from .models import ExecutionResult, GroupResult
 from .parser import parse_codeblocks, strip_ansi_codes, strip_shebang, resolve_runtime_config
 
+_active_pulls = set()
+
 
 # --- Subprocess Helpers ---
 
@@ -335,7 +337,8 @@ async def run_container_group(
 
 async def parse_and_execute(
     markdown_text: str,
-    timeout: int | None = None
+    timeout: int | None = None,
+    server_mode: bool = False
 ) -> ExecutionResult:
     """
     Parse Markdown text for codeblocks and execute them in Podman containers.
@@ -419,6 +422,7 @@ async def parse_and_execute(
     all_artifact_paths = []
     final_artifact_dir = None
     chained_files = []
+    cancelled_images = set()
 
     for i, run in enumerate(runs):
         if chained_files:
@@ -429,8 +433,30 @@ async def parse_and_execute(
         config = code_item['config']
 
         image_name = config['image']
+        
+        if server_mode and image_name in cancelled_images:
+            continue
+            
         is_cached = check_image_exists(image_name)
         if not is_cached:
+            if server_mode:
+                lang_name = lang.split()[0].capitalize() if lang else "Requested"
+                msg = f"The {lang_name} runner isn't cached yet and is currently downloading. Please wait approximately 5 minutes, then run your code again."
+                all_stdout.append(msg + "\n")
+                
+                cancelled_images.add(image_name)
+                
+                if image_name not in _active_pulls:
+                    _active_pulls.add(image_name)
+                    async def bg_pull(img=image_name):
+                        try:
+                            await pull_image(img)
+                        finally:
+                            _active_pulls.discard(img)
+                    asyncio.create_task(bg_pull())
+                
+                continue
+                
             exit_code = await pull_image(image_name)
             if exit_code != 0:
                 raise RuntimeError(f"Failed to pull image: {image_name}")

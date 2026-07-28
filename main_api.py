@@ -103,6 +103,7 @@ async def run_code(request: RunRequest) -> RunResponse:
         result = await ephemeral_core.parse_and_execute(
             markdown_text=request.document_blob,
             timeout=request.timeout,
+            server_mode=True,
         )
     except ValueError as e:
         # Bad input: missing language, no code blocks, safety rejection, etc.
