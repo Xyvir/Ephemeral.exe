@@ -65,11 +65,14 @@ class RunResponse(BaseModel):
         stderr: Aggregate stderr from all runs.
         artifact_file: Filename of the generated artifact zip on the WebDAV share,
                        or null if no artifacts were produced.
+        artifact_ext: File extension (e.g. '.png', '.svg', '.zip') to help the front-end
+                      understand how to present the data, or null.
     """
     exit_code: int
     stdout: str
     stderr: str
     artifact_file: str | None = None
+    artifact_ext: str | None = None
 
 
 # --- FastAPI Application ---
@@ -145,6 +148,7 @@ async def run_code(request: RunRequest) -> RunResponse:
                         stdout=result.stdout,
                         stderr=result.stderr,
                         artifact_file=None,
+                        artifact_ext=ext if ext else '.txt',
                     )
             except UnicodeDecodeError:
                 # Not a valid UTF-8 plaintext file, fallback to zipping
@@ -192,6 +196,7 @@ async def run_code(request: RunRequest) -> RunResponse:
         stdout=result.stdout,
         stderr=result_stderr,
         artifact_file=artifact_filename,
+        artifact_ext='.zip' if artifact_filename else None,
     )
 
 
