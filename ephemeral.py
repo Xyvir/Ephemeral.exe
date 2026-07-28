@@ -48,7 +48,7 @@ LANG_MAP = {
     'tiddlywiki': {
         'image': 'elasticdog/tiddlywiki', 
         'entrypoint': '', 
-        'cmd': ['-c', 'cat > /tmp/build_script.sh && chmod +x /tmp/build_script.sh && /tmp/build_script.sh']
+        'cmd': ['sh', '-c', 'cat > /tmp/build_script.sh && chmod +x /tmp/build_script.sh && /tmp/build_script.sh']
     },
 
     # --- GitHub Actions / CI Tools ---
@@ -59,7 +59,7 @@ LANG_MAP = {
     'actionlint': {
         'image': 'rhysd/actionlint:latest',
         'entrypoint': '',
-        'cmd': ['-c', 'cat > /tmp/main.yml && actionlint /tmp/main.yml']
+        'cmd': ['sh', '-c', 'cat > /tmp/main.yml && actionlint /tmp/main.yml']
     },
     # --- Emulation & Cross-Compilation ---
     'pywine': {
@@ -109,10 +109,10 @@ LANG_MAP = {
     'php':     {'image': 'php:alpine',      'cmd': ['php']},
 
     # --- Documents & Typesetting ---
-    'latex':   {'image': 'pandoc/extra', 'entrypoint': '', 'cmd': ['-c', 'cat > /output/doc.tex && pdflatex -output-directory /output /output/doc.tex']},
-    'pandoc':  {'image': 'pandoc/extra', 'entrypoint': '', 'cmd': ['-c', 'cat > /tmp/input.md && pandoc /tmp/input.md -o /output/converted.pdf']},
-    'pandoc-pdf': {'image': 'pandoc/extra', 'entrypoint': '', 'cmd': ['-c', 'cat > /tmp/input.md && pandoc /tmp/input.md -o /output/converted.pdf']},
-    'pandoc-docx': {'image': 'pandoc/extra', 'entrypoint': '', 'cmd': ['-c', 'cat > /tmp/input.md && pandoc /tmp/input.md -o /output/converted.docx']},
+    'latex':   {'image': 'pandoc/extra', 'entrypoint': '', 'cmd': ['sh', '-c', 'cat > /output/doc.tex && pdflatex -output-directory /output /output/doc.tex']},
+    'pandoc':  {'image': 'pandoc/extra', 'entrypoint': '', 'cmd': ['sh', '-c', 'cat > /tmp/input.md && pandoc /tmp/input.md -o /output/converted.pdf']},
+    'pandoc-pdf': {'image': 'pandoc/extra', 'entrypoint': '', 'cmd': ['sh', '-c', 'cat > /tmp/input.md && pandoc /tmp/input.md -o /output/converted.pdf']},
+    'pandoc-docx': {'image': 'pandoc/extra', 'entrypoint': '', 'cmd': ['sh', '-c', 'cat > /tmp/input.md && pandoc /tmp/input.md -o /output/converted.docx']},
 
     # --- Windows-like Shells ---
     'pwsh':    {'image': 'mcr.microsoft.com/powershell', 'cmd': ['pwsh', '-NoProfile', '-NonInteractive', '-Command', '-']},
