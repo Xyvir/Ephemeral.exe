@@ -117,6 +117,43 @@ async def run_code(request: RunRequest) -> RunResponse:
     # Route artifacts to the WebDAV share
     artifact_filename = None
     if result.artifact_paths and result.artifact_dir:
+        # --- Special single-artifact handling ---
+        if len(result.artifact_paths) == 1:
+            single_file = result.artifact_paths[0]
+            ext = os.path.splitext(single_file)[1].lower()
+            image_exts = {'.png', '.jpeg', '.jpg', '.gif', '.bmp', '.webp', '.ico', '.tif', '.tiff'}
+            
+            handled_as_inline = False
+            try:
+                if ext in image_exts:
+                    with open(single_file, 'rb') as f:
+                        b64_content = base64.b64encode(f.read()).decode('utf-8')
+                    result.stdout = b64_content
+                    handled_as_inline = True
+                else:
+                    # Check if it is plaintext or SVG by attempting UTF-8 decode
+                    with open(single_file, 'rb') as f:
+                        raw_data = f.read()
+                    text_content = raw_data.decode('utf-8')
+                    result.stdout = text_content
+                    handled_as_inline = True
+                    
+                if handled_as_inline:
+                    shutil.rmtree(result.artifact_dir, ignore_errors=True)
+                    return RunResponse(
+                        exit_code=result.exit_code,
+                        stdout=result.stdout,
+                        stderr=result.stderr,
+                        artifact_file=None,
+                    )
+            except UnicodeDecodeError:
+                # Not a valid UTF-8 plaintext file, fallback to zipping
+                pass
+            except Exception as e:
+                # Any other error, fallback to zipping
+                result.stderr += f"\nWarning: Failed to process single artifact inline: {e}"
+
+        # --- Standard artifact routing (zip to WebDAV) ---
         try:
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
             artifact_filename = f"{timestamp}-artifact.zip"
