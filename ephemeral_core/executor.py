@@ -202,7 +202,8 @@ def _run_container_sync(
     podman_cmd = ['podman', 'run', '--rm', '-i', '--memory', '2g', '-w', '/tmp']
 
     if config.get('allow_network', False):
-        pass  # Network explicitly enabled via 'unsafe' keyword
+        # Pass explicit public DNS resolvers to prevent systemd-resolved loopback failures in rootless Podman
+        podman_cmd.extend(['--dns', '8.8.8.8', '--dns', '1.1.1.1'])
     else:
         podman_cmd.extend(['--network', 'none'])
 
