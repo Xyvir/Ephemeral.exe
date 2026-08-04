@@ -1,6 +1,6 @@
 # Ephemeral.exe
 
-**Ephemeral** is a sandboxed code execution engine that parses Markdown for codeblocks, runs them in isolated Podman containers, and extracts generated artifacts. It can be used as a **Windows tray application** (clipboard-driven) or as a **FastAPI server** (for remote execution as a sidecar service).
+**Ephemeral** is a **one-shot** sandboxed code execution engine that parses Markdown for codeblocks, runs them in isolated Podman containers, and extracts generated artifacts. Rather than acting as a long-running daemon or task scheduler, Ephemeral serves as a stateless, on-demand processing pipeline — much like a Jupyter Notebook cell execution for your desktop or server. It can be used as a **Windows tray application** (clipboard-driven) or as a **FastAPI server** (for remote sidecar execution).
 
 ![Ephemeral Demo](ephemeral.gif)
 
@@ -16,7 +16,7 @@ Windows is a fantastic OS, but it lacks the native "polyglot" flexibility of Lin
 
 ## The Ephemeral Solution
 
-Ephemeral acts as a "Sidecar Notebook" for your entire operating system. It leverages **Podman** (via WSL2) to create instant, disposable execution environments.
+Ephemeral acts as a **one-shot "Sidecar Notebook"** processing pipeline for your entire operating system. It leverages **Podman** (via WSL2) to create instant, disposable execution environments that spin up, run your pipeline, return outputs/artifacts, and vanish.
 
 
 ### Why you want this:
