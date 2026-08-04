@@ -135,6 +135,18 @@ else
     info "Podman initialized for '$APP_USER'"
 fi
 
+# Configure Podman DNS servers (prevents rootless systemd-resolved DNS loopback failures on Linux)
+mkdir -p "${INSTALL_DIR}/.config/containers"
+cat > "${INSTALL_DIR}/.config/containers/containers.conf" << 'EOF'
+[containers]
+dns_servers = [
+  "8.8.8.8",
+  "1.1.1.1"
+]
+EOF
+chown -R "$APP_USER":"$APP_USER" "${INSTALL_DIR}/.config"
+info "Configured fallback DNS servers (8.8.8.8, 1.1.1.1) for rootless Podman containers"
+
 # --- Step 6: Create systemd Service ---
 cat > "/etc/systemd/system/${APP_NAME}.service" << EOF
 [Unit]
