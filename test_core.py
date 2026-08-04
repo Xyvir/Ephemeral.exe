@@ -7,7 +7,7 @@ md = "```python\nprint(42)\n```"
 blocks = parse_codeblocks(md)
 assert len(blocks) == 1, f"Expected 1 block, got {len(blocks)}"
 assert blocks[0]['type'] == 'code'
-assert blocks[0]['config']['image'] == 'ghcr.io/astral-sh/uv:python3.12-alpine'
+assert blocks[0]['config']['image'] == 'docker.io/tymills620/ephemeral-python-uv:latest'
 assert blocks[0]['config']['cmd'] == ['uv', 'run', '-']
 assert blocks[0]['config']['allow_network'] == False
 print("PASS: Basic fenced codeblock")
@@ -28,7 +28,7 @@ print("PASS: No-chain flag (nopipe)")
 # --- Test 4: Version override ---
 md4 = "```python:3.11\nprint(1)\n```"
 blocks4 = parse_codeblocks(md4)
-assert blocks4[0]['config']['image'] == 'ghcr.io/astral-sh/uv:3.11'
+assert blocks4[0]['config']['image'] == 'docker.io/tymills620/ephemeral-python-uv:3.11'
 print("PASS: Version override (python:3.11)")
 
 # --- Test 5: Alias resolution ---
@@ -40,7 +40,7 @@ print("PASS: Alias resolution (js -> node)")
 # --- Test 6: Shebang inside fenced block overwrites header ---
 md6 = "```bash\n#! python\nprint(1)\n```"
 blocks6 = parse_codeblocks(md6)
-assert blocks6[0]['config']['image'] == 'ghcr.io/astral-sh/uv:python3.12-alpine'
+assert blocks6[0]['config']['image'] == 'docker.io/tymills620/ephemeral-python-uv:latest'
 print("PASS: Shebang overwrites fenced header")
 
 # --- Test 7: Seed file detection ---
@@ -61,7 +61,7 @@ print("PASS: Seed file with b64 flag")
 md9 = "```python\nprint(1)\n```\n\n```node\nconsole.log(2)\n```"
 blocks9 = parse_codeblocks(md9)
 assert len(blocks9) == 2
-assert blocks9[0]['config']['image'] == 'ghcr.io/astral-sh/uv:python3.12-alpine'
+assert blocks9[0]['config']['image'] == 'docker.io/tymills620/ephemeral-python-uv:latest'
 assert blocks9[1]['config']['image'] == 'docker.io/library/node:18-alpine'
 print("PASS: Multiple blocks with different languages")
 
@@ -69,7 +69,7 @@ print("PASS: Multiple blocks with different languages")
 md10 = "#! python\nprint('hello')\n"
 blocks10 = parse_codeblocks(md10)
 assert len(blocks10) == 1
-assert blocks10[0]['config']['image'] == 'ghcr.io/astral-sh/uv:python3.12-alpine'
+assert blocks10[0]['config']['image'] == 'docker.io/tymills620/ephemeral-python-uv:latest'
 print("PASS: Shebang-only (no fences)")
 
 # --- Test 11: Empty input ---
@@ -81,7 +81,7 @@ print("PASS: Empty input")
 md12 = "````markdown\n```python\nprint(1)\n```\n````"
 blocks12 = parse_codeblocks(md12)
 assert len(blocks12) == 1
-assert blocks12[0]['config']['image'] == 'ghcr.io/astral-sh/uv:python3.12-alpine'
+assert blocks12[0]['config']['image'] == 'docker.io/tymills620/ephemeral-python-uv:latest'
 print("PASS: Quad-backtick stripping")
 
 # --- Test 13: Dataclass construction ---
