@@ -39,7 +39,7 @@ NO_CHAIN_FLAGS = {'nopipe', 'nopiping'}
 # Map languages to the 'Clean Slate' Image on Docker Hub
 LANG_MAP = {
     # --- Standard Interpreted ---
-    'python': {'image': 'python:3.10-slim', 'cmd': ['python', '-']},
+    'python': {'image': 'ghcr.io/astral-sh/uv:python3.12-alpine', 'cmd': ['uv', 'run', '-']},
     'node':   {'image': 'node:18-alpine',   'cmd': ['node', '-']},
     'bash':   {'image': 'alpine:latest',    'cmd': ['sh']},
     'ruby':   {'image': 'ruby:alpine',      'cmd': ['ruby']},
