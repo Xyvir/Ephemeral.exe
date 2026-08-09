@@ -334,6 +334,25 @@ Ephemeral intentionally does **not** have a mechanism to 'mount' or bind local d
 2. **Security**: Preventing local mounts reduces the possibility of local data-harvesting or ransomware payloads scanning your host machine's hard drive when running untrusted code with the `unsafe` network flag enabled. (see below)
 
 
+### Automatic Python Dependency Resolution
+
+For Python blocks, Ephemeral resolves third-party packages automatically — no `unsafe` flag and no inline metadata required.
+
+1. **Implicit dependency injection:** Ephemeral scans your Python code for `import` statements, filters out standard-library modules, and injects a [PEP 723](https://peps.python.org/pep-0723/) `# /// script` header declaring the inferred packages before the block is sent to the container.
+2. **Two-stage sandboxed resolution:** When inferred dependencies exist and you did *not* opt into `unsafe`, the block runs in two container stages instead of one:
+    - **Stage A** starts a container *with* network access and installs the dependencies into a virtual environment on a shared volume.
+    - **Stage C** starts a fresh container *without* network access (`--network none`) and runs your payload using that environment's interpreter.
+
+Your payload never sees the network — only the package-resolution step does. If you already wrote your own PEP 723 metadata, it is respected as-is (no re-injection), and if you do use `unsafe`, dependencies resolve in the normal single-stage mode.
+
+**Example (no `unsafe`, no comments needed):**
+```python
+#!python
+import requests
+response = requests.get('https://httpbin.org/get')
+print("Successfully resolved and executed offline:", response.status_code)
+```
+
 ### Network Access (Unsafe Mode)
 
 By default, Ephemeral runs all containers with network access disabled (`--network none`) to ensure a secure, sandboxed execution environment. If your snippet needs to download dependencies or interact with web APIs, you can append the `unsafe` keyword to your language tag to enable internet access.

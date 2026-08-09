@@ -1,5 +1,12 @@
 """Smoke tests for ephemeral_core parser and models."""
-from ephemeral_core.parser import parse_codeblocks, resolve_runtime_config
+from ephemeral_core.parser import (
+    parse_codeblocks,
+    resolve_runtime_config,
+    infer_python_dependencies,
+    extract_declared_dependencies,
+    inject_python_dependency_metadata,
+    prepare_python_block,
+)
 from ephemeral_core.models import ExecutionResult, GroupResult, BlockResult
 
 # --- Test 1: Basic fenced codeblock ---
@@ -104,4 +111,64 @@ cfg2 = resolve_runtime_config("tiddlywiki")
 assert cfg2['entrypoint'] == ''
 print("PASS: Entrypoint from LANG_MAP")
 
-print("\n=== ALL 15 TESTS PASSED ===")
+# --- Test 16: Infer third-party deps from imports ---
+code16 = """import requests
+from numpy import array
+import pandas as pd
+import os, sys, json
+from collections import OrderedDict
+import matplotlib.pyplot as plt
+"""
+deps16 = infer_python_dependencies(code16)
+assert deps16 == ['matplotlib', 'numpy', 'pandas', 'requests'], f"Unexpected deps: {deps16}"
+assert infer_python_dependencies("print(1)\nimport math\n") == []
+print("PASS: Import-based dependency inference")
+
+# --- Test 17: Dotted and multi-line imports ---
+code17 = """from sklearn.ensemble import (
+    RandomForestClassifier,
+    GradientBoosting,
+)
+import urllib.request
+"""
+assert infer_python_dependencies(code17) == ['sklearn']
+assert infer_python_dependencies("from . import helper\nfrom ..pkg import thing\n") == []
+print("PASS: Dotted/multi-line import handling")
+
+# --- Test 18: PEP 723 metadata respected (no double injection) ---
+code18 = """# /// script
+# dependencies = ["requests<3", "rich"]
+# ///
+import requests
+"""
+assert extract_declared_dependencies(code18) == ['requests<3', 'rich']
+assert inject_python_dependency_metadata(code18, ['numpy']) == code18
+print("PASS: Existing PEP 723 metadata respected")
+
+# --- Test 19: Multi-line declared dependencies preserved ---
+code19 = """# /// script
+# dependencies = [
+#     "aiohttp",
+#     "pydantic>=2",
+# ]
+# ///
+import aiohttp
+"""
+assert extract_declared_dependencies(code19) == ['aiohttp', 'pydantic>=2']
+print("PASS: Multi-line declared dependencies")
+
+# --- Test 20: Header injection preserves shebang ---
+code20 = "#! python\nimport requests\nprint(1)\n"
+injected20 = inject_python_dependency_metadata(code20, ['requests'])
+assert injected20.startswith("#! python\n# /// script\n"), injected20
+print("PASS: Header injection after shebang")
+
+# --- Test 21: prepare_python_block returns deps + injected content ---
+block21 = {'type': 'code', 'header': 'python', 'content': 'import numpy\nprint(1)\n', 'config': {}}
+prepared21, deps21 = prepare_python_block(block21)
+assert deps21 == ['numpy']
+assert prepared21['content'].startswith("# /// script\n")
+assert block21['content'] == 'import numpy\nprint(1)\n'  # original untouched
+print("PASS: prepare_python_block")
+
+print("\n=== ALL 21 TESTS PASSED ===")

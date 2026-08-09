@@ -14,13 +14,20 @@ import base64
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import tempfile
 import uuid
 
 from .config import LANG_MAP
 from .models import ExecutionResult, GroupResult
-from .parser import parse_codeblocks, strip_ansi_codes, strip_shebang, resolve_runtime_config
+from .parser import (
+    parse_codeblocks,
+    prepare_python_block,
+    resolve_runtime_config,
+    strip_ansi_codes,
+    strip_shebang,
+)
 
 _active_pulls = set()
 
@@ -143,6 +150,13 @@ def _run_container_sync(
     This is the core Podman orchestration logic extracted from the original
     run_container_piped_group(), with GUI dependencies removed.
     
+    Python blocks backed by `uv run` get their third-party imports turned into
+    a PEP 723 inline-script header (implicit dependency injection). When those
+    blocks declare dependencies but the user did NOT grant network access via
+    the `unsafe` keyword, the run is split into two container stages:
+    resolve the dependencies into a shared venv with the network up, then
+    execute the payload with the network removed (see _run_two_stage_python).
+    
     Args:
         config: Runtime configuration dict (image, cmd, entrypoint, flags)
         run_blocks: List of classified blocks (seed + code) for this run
@@ -155,14 +169,93 @@ def _run_container_sync(
     Returns:
         GroupResult with formatted stdout, stderr, exit code, and artifact paths.
     """
-    startupinfo = get_startupinfo()
-
-    wrapper_script = ["mkdir -p /output 2>/dev/null || true"]
-    block_markers = []
     code_blocks = [b for b in run_blocks if b['type'] == 'code']
     is_single_step = len(code_blocks) <= 1
+    uses_uv_python = config.get('cmd') == ['uv', 'run', '-']
 
+    # Implicit PEP 723 dependency injection: infer third-party imports and
+    # prepend a `# /// script` header so `uv run` knows what to resolve.
+    prepared_blocks = run_blocks
+    python_deps: list[str] = []
+    if uses_uv_python:
+        prepared_blocks = []
+        for b in run_blocks:
+            if b['type'] == 'code':
+                prepared, deps = prepare_python_block(b)
+                prepared_blocks.append(prepared)
+                python_deps.extend(deps)
+            else:
+                prepared_blocks.append(b)
+        python_deps = sorted(set(python_deps))
+
+    # Two-stage execution: dependencies need the network, the payload doesn't.
+    if uses_uv_python and python_deps and not config.get('allow_network', False):
+        return _run_two_stage_python(
+            config, prepared_blocks, python_deps, lang,
+            run_index, total_runs, output_dir, timeout, is_single_step
+        )
+
+    # Normal single-stage execution (offline, or `unsafe` with network).
+    return _run_single_stage(
+        config, prepared_blocks, lang,
+        run_index, total_runs, output_dir, timeout, is_single_step
+    )
+
+
+def _build_podman_cmd(
+    config: dict,
+    output_dir: str,
+    extra_mounts: list[tuple[str, str]] | None = None,
+    network: bool | None = None
+) -> list[str]:
+    """
+    Build the `podman run` command with Ephemeral's security flags.
+
+    `network=True` uses the default bridge plus explicit public DNS resolvers;
+    `network=False` applies `--network none`. When `network` is None the
+    container's `allow_network` config flag decides.
+    """
+    podman_cmd = ['podman', 'run', '--rm', '-i', '--memory', '2g', '-w', '/tmp']
+
+    if network is not None:
+        if network:
+            # Pass explicit public DNS resolvers to prevent systemd-resolved loopback failures in rootless Podman
+            podman_cmd.extend(['--dns', '8.8.8.8', '--dns', '1.1.1.1'])
+        else:
+            podman_cmd.extend(['--network', 'none'])
+    elif config.get('allow_network', False):
+        podman_cmd.extend(['--dns', '8.8.8.8', '--dns', '1.1.1.1'])
+    else:
+        podman_cmd.extend(['--network', 'none'])
+
+    podman_cmd.extend(['-v', f'{output_dir}:/output'])
+    for host_path, container_path in (extra_mounts or []):
+        podman_cmd.extend(['-v', f'{host_path}:{container_path}'])
+
+    if 'entrypoint' in config:
+        podman_cmd.extend(['--entrypoint', config['entrypoint']])
+
+    podman_cmd.append(config['image'])
+    podman_cmd.extend(['sh'])
+    return podman_cmd
+
+
+def _build_wrapper_script(
+    run_blocks: list[dict],
+    cmd: list[str]
+) -> tuple[list[str], list[tuple[int, str, str]]]:
+    """
+    Build the shell wrapper script that stages seed files and runs each code
+    block with the given command.
+
+    Returns ``(script_lines, block_markers)`` where ``block_markers`` is a list
+    of ``(step_index, marker, language)`` tuples used to demultiplex stdout.
+    """
+    wrapper_script = ["mkdir -p /output 2>/dev/null || true"]
+    block_markers = []
     step_index = 1
+    cmd_str = _shlex_join(cmd)
+
     for b in run_blocks:
         marker = f"EPHEMERAL_EOF_{uuid.uuid4().hex}"
         if b['type'] == 'seed':
@@ -185,7 +278,6 @@ def _run_container_sync(
             content = b['content']
             if not content.endswith('\n'): content += '\n'
 
-            cmd_str = _shlex_join(config['cmd'])
             block_lang = b.get('header', '').split()[0].capitalize() if b.get('header') else "Code"
 
             b_marker = f"EPHEMERAL_STEP_{step_index}_{uuid.uuid4().hex}"
@@ -196,25 +288,21 @@ def _run_container_sync(
             wrapper_script.append(content.replace('\r\n', '\n') + marker)
             step_index += 1
 
-    script_code = ("\n".join(wrapper_script) + "\n").encode('utf-8')
+    return wrapper_script, block_markers
 
-    # Build Podman command with security flags
-    podman_cmd = ['podman', 'run', '--rm', '-i', '--memory', '2g', '-w', '/tmp']
 
-    if config.get('allow_network', False):
-        # Pass explicit public DNS resolvers to prevent systemd-resolved loopback failures in rootless Podman
-        podman_cmd.extend(['--dns', '8.8.8.8', '--dns', '1.1.1.1'])
-    else:
-        podman_cmd.extend(['--network', 'none'])
+def _run_podman_script(
+    podman_cmd: list[str],
+    script_code: bytes,
+    timeout: int | None
+) -> tuple[int | None, str, str]:
+    """
+    Run a podman container with ``script_code`` piped to its stdin.
 
-    podman_cmd.extend(['-v', f'{output_dir}:/output'])
-
-    if 'entrypoint' in config:
-        podman_cmd.extend(['--entrypoint', config['entrypoint']])
-
-    podman_cmd.append(config['image'])
-    podman_cmd.extend(['sh'])
-
+    Returns ``(returncode, stdout, stderr)``; ``returncode`` is None when the
+    run exceeded ``timeout``.
+    """
+    startupinfo = get_startupinfo()
     process = subprocess.Popen(
         podman_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=False, startupinfo=startupinfo
@@ -225,92 +313,218 @@ def _run_container_sync(
     except subprocess.TimeoutExpired:
         process.kill()
         process.communicate()
+        return None, "", f"Execution exceeded {timeout}s timeout."
+
+    stdout = strip_ansi_codes(stdout_bytes.decode('utf-8', errors='replace'))
+    stderr = strip_ansi_codes(stderr_bytes.decode('utf-8', errors='replace'))
+    return process.returncode, stdout, stderr
+
+
+def _format_success_result(
+    stdout: str,
+    stderr: str,
+    block_markers: list[tuple[int, str, str]],
+    lang: str,
+    run_index: int,
+    total_runs: int,
+    is_single_step: bool,
+    output_dir: str,
+    allow_chain: bool
+) -> GroupResult:
+    """Format a successful run's raw stdout/stderr into a GroupResult."""
+    files = [f for f in os.listdir(output_dir) if os.path.isfile(os.path.join(output_dir, f))]
+
+    # Collect chained files for piping to the next run
+    new_chained_files = []
+    if allow_chain:
+        for f in files:
+            filepath = os.path.join(output_dir, f)
+            try:
+                with open(filepath, 'rb') as fd:
+                    content_b64 = base64.b64encode(fd.read()).decode('utf-8')
+                new_chained_files.append({'type': 'seed', 'name': f, 'content': content_b64, 'is_b64': True})
+            except Exception as e:
+                print(f"Error reading {f} for chaining: {e}")
+
+    # Demultiplex stdout by marker
+    outputs = {}
+    current_marker_idx = 0
+    current_text = []
+
+    lines = stdout.split('\n')
+    for line in lines:
+        is_marker = False
+        if current_marker_idx < len(block_markers):
+            expected_marker = block_markers[current_marker_idx][1]
+            if line.strip() == expected_marker:
+                if current_marker_idx > 0:
+                    prev_step_idx = block_markers[current_marker_idx - 1][0]
+                    outputs[prev_step_idx] = '\n'.join(current_text)
+                current_text = []
+                current_marker_idx += 1
+                is_marker = True
+
+        if not is_marker:
+            cleaned_line = re.sub(r"^--- Container \d+ \(.*\) ---\s*", "", line)
+            current_text.append(cleaned_line)
+
+    if current_marker_idx > 0:
+        prev_step_idx = block_markers[current_marker_idx - 1][0]
+        outputs[prev_step_idx] = '\n'.join(current_text)
+
+    # Format output markdown
+    result_parts = []
+    title_lang = lang.split()[0].capitalize() if lang else "Custom"
+
+    header_prefix = f"## Run {run_index} ({title_lang})" if total_runs > 1 else f"## Result ({title_lang})"
+    result_parts.append(header_prefix)
+
+    for i, (step_idx, marker_val, block_lang) in enumerate(block_markers):
+        block_output = outputs.get(step_idx, "").strip('\r\n')
+
+        if is_single_step:
+            result_parts.append(f"```text\n{block_output}\n```")
+        else:
+            if not block_output:
+                block_output = ""
+            result_parts.append(f"### Step {step_idx} ({block_lang})\n```text\n{block_output}\n```")
+
+    result_str = "\n\n".join(result_parts) + "\n"
+    artifact_paths = [os.path.join(output_dir, f) for f in files]
+
+    return GroupResult(
+        stdout_formatted=result_str,
+        stderr=stderr,
+        exit_code=0,
+        artifact_paths=artifact_paths,
+        chained_files=new_chained_files,
+        image_copied=False  # Image-to-clipboard is handled by the local client, not the core
+    )
+
+
+def _run_single_stage(
+    config: dict,
+    run_blocks: list[dict],
+    lang: str,
+    run_index: int,
+    total_runs: int,
+    output_dir: str,
+    timeout: int | None,
+    is_single_step: bool
+) -> GroupResult:
+    """Run a container group exactly once (the original single-container path)."""
+    script_lines, block_markers = _build_wrapper_script(run_blocks, config['cmd'])
+    script_code = ("\n".join(script_lines) + "\n").encode('utf-8')
+
+    podman_cmd = _build_podman_cmd(config, output_dir)
+    returncode, stdout, stderr = _run_podman_script(podman_cmd, script_code, timeout)
+
+    if returncode is None:
         return GroupResult(
             stdout_formatted=f"## Run {run_index} Timed Out\n```text\nExecution exceeded {timeout}s timeout.\n```\n",
             stderr=f"Timeout after {timeout} seconds",
             exit_code=-1
         )
 
-    stdout = strip_ansi_codes(stdout_bytes.decode('utf-8', errors='replace'))
-    stderr = strip_ansi_codes(stderr_bytes.decode('utf-8', errors='replace'))
-
-    if process.returncode == 0:
-        files = [f for f in os.listdir(output_dir) if os.path.isfile(os.path.join(output_dir, f))]
-        safe_lang = re.sub(r'[^a-zA-Z0-9]', '_', lang) if lang else "custom"
-
-        # Collect chained files for piping to the next run
-        new_chained_files = []
-        if config.get('allow_chain', False):
-            for f in files:
-                filepath = os.path.join(output_dir, f)
-                try:
-                    with open(filepath, 'rb') as fd:
-                        content_b64 = base64.b64encode(fd.read()).decode('utf-8')
-                    new_chained_files.append({'type': 'seed', 'name': f, 'content': content_b64, 'is_b64': True})
-                except Exception as e:
-                    print(f"Error reading {f} for chaining: {e}")
-
-        # Demultiplex stdout by marker
-        outputs = {}
-        current_marker_idx = 0
-        current_text = []
-
-        lines = stdout.split('\n')
-        for line in lines:
-            is_marker = False
-            if current_marker_idx < len(block_markers):
-                expected_marker = block_markers[current_marker_idx][1]
-                if line.strip() == expected_marker:
-                    if current_marker_idx > 0:
-                        prev_step_idx = block_markers[current_marker_idx - 1][0]
-                        outputs[prev_step_idx] = '\n'.join(current_text)
-                    current_text = []
-                    current_marker_idx += 1
-                    is_marker = True
-
-            if not is_marker:
-                cleaned_line = re.sub(r"^--- Container \d+ \(.*\) ---\s*", "", line)
-                current_text.append(cleaned_line)
-
-        if current_marker_idx > 0:
-            prev_step_idx = block_markers[current_marker_idx - 1][0]
-            outputs[prev_step_idx] = '\n'.join(current_text)
-
-        # Format output markdown
-        result_parts = []
-        title_lang = lang.split()[0].capitalize() if lang else "Custom"
-
-        header_prefix = f"## Run {run_index} ({title_lang})" if total_runs > 1 else f"## Result ({title_lang})"
-        result_parts.append(header_prefix)
-
-        for i, (step_idx, marker_val, block_lang) in enumerate(block_markers):
-            block_output = outputs.get(step_idx, "").strip('\r\n')
-
-            if is_single_step:
-                result_parts.append(f"```text\n{block_output}\n```")
-            else:
-                if not block_output:
-                    block_output = ""
-                result_parts.append(f"### Step {step_idx} ({block_lang})\n```text\n{block_output}\n```")
-
-        result_str = "\n\n".join(result_parts) + "\n"
-        artifact_paths = [os.path.join(output_dir, f) for f in files]
-
-        return GroupResult(
-            stdout_formatted=result_str,
-            stderr=stderr,
-            exit_code=0,
-            artifact_paths=artifact_paths,
-            chained_files=new_chained_files,
-            image_copied=False  # Image-to-clipboard is handled by the local client, not the core
+    if returncode == 0:
+        return _format_success_result(
+            stdout, stderr, block_markers, lang, run_index, total_runs,
+            is_single_step, output_dir, config.get('allow_chain', False)
         )
-    else:
-        full_error = f"Exit Code: {process.returncode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
+
+    full_error = f"Exit Code: {returncode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
+    return GroupResult(
+        stdout_formatted=f"## Run {run_index} Failed\n```text\n{stderr.strip()}\n```\n",
+        stderr=full_error,
+        exit_code=returncode
+    )
+
+
+def _run_two_stage_python(
+    config: dict,
+    run_blocks: list[dict],
+    deps: list[str],
+    lang: str,
+    run_index: int,
+    total_runs: int,
+    output_dir: str,
+    timeout: int | None,
+    is_single_step: bool
+) -> GroupResult:
+    """
+    Run a Python payload in two stages so dependencies can be resolved without
+    permanently granting the payload network access:
+
+      Stage A: a network-enabled container installs `deps` into a venv created
+               on a volume shared with the next stage. This is the only stage
+               with internet access.
+      Stage C: a network-disabled container executes the payload with that
+               venv's interpreter. The payload itself never sees the network.
+
+    The venv lives in a host temp directory mounted at /deps in both containers
+    and is removed when the run finishes.
+    """
+    deps_dir = tempfile.mkdtemp(prefix="ephemeral_deps_")
+    try:
+        # --- Stage A: resolve dependencies with network access ---
+        install_script = (
+            "mkdir -p /deps /output 2>/dev/null || true\n"
+            "uv venv /deps/venv || exit 1\n"
+            "uv pip install --no-cache --python /deps/venv/bin/python "
+            + " ".join(shlex.quote(d) for d in deps)
+            + "\n"
+        ).encode('utf-8')
+
+        stage_a_cmd = _build_podman_cmd(
+            config, output_dir, extra_mounts=[(deps_dir, '/deps')], network=True
+        )
+        retcode, stdout, stderr = _run_podman_script(stage_a_cmd, install_script, timeout)
+        if retcode is None:
+            return GroupResult(
+                stdout_formatted=f"## Run {run_index} Timed Out\n```text\nDependency resolution exceeded {timeout}s timeout.\n```\n",
+                stderr=f"Dependency resolution timed out after {timeout} seconds",
+                exit_code=-1
+            )
+        if retcode != 0:
+            full_error = (
+                f"Dependency resolution failed for: {', '.join(deps)}\n"
+                f"Exit Code: {retcode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
+            )
+            return GroupResult(
+                stdout_formatted=f"## Run {run_index} Failed (dependency resolution)\n```text\n{stderr.strip()}\n```\n",
+                stderr=full_error,
+                exit_code=retcode
+            )
+
+        # --- Stage C: run the payload with the network removed ---
+        script_lines, block_markers = _build_wrapper_script(run_blocks, ['/deps/venv/bin/python', '-'])
+        script_code = ("\n".join(script_lines) + "\n").encode('utf-8')
+
+        stage_c_cmd = _build_podman_cmd(
+            config, output_dir, extra_mounts=[(deps_dir, '/deps')], network=False
+        )
+        retcode, stdout, stderr = _run_podman_script(stage_c_cmd, script_code, timeout)
+        if retcode is None:
+            return GroupResult(
+                stdout_formatted=f"## Run {run_index} Timed Out\n```text\nExecution exceeded {timeout}s timeout.\n```\n",
+                stderr=f"Timeout after {timeout} seconds",
+                exit_code=-1
+            )
+
+        if retcode == 0:
+            return _format_success_result(
+                stdout, stderr, block_markers, lang, run_index, total_runs,
+                is_single_step, output_dir, config.get('allow_chain', False)
+            )
+
+        full_error = f"Exit Code: {retcode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
         return GroupResult(
             stdout_formatted=f"## Run {run_index} Failed\n```text\n{stderr.strip()}\n```\n",
             stderr=full_error,
-            exit_code=process.returncode
+            exit_code=retcode
         )
+    finally:
+        shutil.rmtree(deps_dir, ignore_errors=True)
 
 
 async def run_container_group(

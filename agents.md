@@ -37,8 +37,17 @@ result: ExecutionResult = await parse_and_execute(markdown_text, timeout=60)
 These flags must remain in `executor.py` and must not be weakened:
 
 - `podman run --rm -i --memory 2g -w /tmp --network none` — default for all containers
-- `--network none` is only removed when the user explicitly writes the `unsafe` keyword in a codeblock header
+- `--network none` is only removed when the user explicitly writes the `unsafe` keyword in a codeblock header **or** during the dependency-resolution stage of a two-stage Python run (see below)
 - Containers have no host filesystem access except the ephemeral `/output` volume mount
+
+### Python Dependency Resolution (Two-Stage Runs)
+
+Python blocks backed by `uv run` (the `docker.io/tymills620/ephemeral-python-uv` image) get implicit PEP 723 injection: `ephemeral_core/parser.py` scans `import`/`from` statements, filters stdlib, and prepends a `# /// script` header. When inferred/declared deps exist and the user did NOT write `unsafe`, `executor.py` runs the block in two stages:
+
+1. **Stage A** — `podman run` with network (`--dns 8.8.8.8 --dns 1.1.1.1`, no `--network none`) runs `uv venv /deps/venv && uv pip install <deps>` into a host temp dir mounted at `/deps`. The payload is NOT executed here.
+2. **Stage C** — a second `podman run` with `--network none` executes the payload via `/deps/venv/bin/python -` from the same `/deps` mount.
+
+The `/deps` temp dir is removed after the run. Existing user PEP 723 metadata is authoritative (never overwritten). With `unsafe`, python deps resolve in the normal single-stage `uv run -` path using the injected header.
 
 ### Artifact Routing
 
