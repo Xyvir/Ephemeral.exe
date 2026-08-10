@@ -50,7 +50,7 @@ jobs:
     - name: Run self-host distributed gateway tests
       run: python test_self_host.py
 
-  # ── Windows EXE Build ─────────────────────────────────────────
+  # ── Windows EXE: local ────────────────────────────────────────
   build-exe:
     runs-on: windows-latest
     needs: test
@@ -88,20 +88,118 @@ jobs:
         name: Ephemeral-Windows-EXE
         path: dist/Ephemeral.exe
 
+  # ── Windows EXE: distributed ──────────────────────────────────
+  build-exe-distributed:
+    runs-on: windows-latest
+    needs: test
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt pyinstaller
+        pip install -r requirements-api.txt
+        pip install -r requirements-net.txt
+
+    - name: Generate icon
+      run: python -c "from PIL import Image, ImageDraw; img=Image.new('RGB', (64, 64), (30, 30, 30)); dc=ImageDraw.Draw(img); dc.rectangle((16, 16, 48, 48), fill=(255, 255, 255)); dc.rectangle((20, 20, 44, 28), fill=(0, 120, 215)); img.save('ephemeral.ico')"
+
+    - name: Inject version
+      shell: bash
+      run: |
+        FULL_SHA="${{ github.sha }}"
+        SHORT_SHA="${FULL_SHA:0:7}"
+        VERSION="$(date +'%Y%m%d')-${SHORT_SHA}"
+        sed -i "s/Version number (injected from the github workflow)/${VERSION}/g" main_distributed_client.py
+
+    - name: Build EXE
+      run: pyinstaller --noconsole --onefile --name Ephemeral-Distributed --icon=ephemeral.ico --hidden-import=ephemeral_core --hidden-import=ephemeral_net --collect-all iroh main_distributed_client.py
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Ephemeral-Distributed-Windows-EXE
+        path: dist/Ephemeral-Distributed.exe
+
+  # ── Linux AppImages: local + distributed ──────────────────────
+  build-linux-appimage:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Build local AppImage
+      shell: bash
+      run: |
+        VERSION="$(date +'%Y%m%d')-${GITHUB_SHA::7}" bash packaging/build_appimage.sh local
+
+    - name: Build distributed AppImage
+      shell: bash
+      run: |
+        VERSION="$(date +'%Y%m%d')-${GITHUB_SHA::7}" bash packaging/build_appimage.sh distributed
+
+    - name: Smoke test — local AppImage self-check
+      shell: bash
+      run: |
+        chmod +x dist/ephemeral-local-x86_64.AppImage
+        APPIMAGE_EXTRACT_AND_RUN=1 ./dist/ephemeral-local-x86_64.AppImage --self-check
+
+    - name: Smoke test — distributed AppImage self-check
+      shell: bash
+      run: |
+        chmod +x dist/ephemeral-distributed-x86_64.AppImage
+        APPIMAGE_EXTRACT_AND_RUN=1 ./dist/ephemeral-distributed-x86_64.AppImage --self-check
+
+    - name: Package wasm/SPA bundle
+      shell: bash
+      run: |
+        cd ephemeral-wasm-library
+        tar czf ../dist/ephemeral-wasm-library.tar.gz web/ src/ Cargo.toml build.sh README.md .cargo/
+        cd ..
+
+    - name: Package self-host distributed tier
+      shell: bash
+      run: |
+        tar czf dist/ephemeral-self-host-distributed.tar.gz \
+          ephemeral_self_host/ main_distributed.py \
+          requirements-net.txt requirements-api.txt Dockerfile .dockerignore
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: Ephemeral-Linux-AppImages
+        path: |
+          dist/ephemeral-local-x86_64.AppImage
+          dist/ephemeral-distributed-x86_64.AppImage
+          dist/ephemeral-wasm-library.tar.gz
+          dist/ephemeral-self-host-distributed.tar.gz
+
   # ── Release ───────────────────────────────────────────────────
   release:
     runs-on: ubuntu-latest
-    needs: build-exe
+    needs: [build-exe, build-exe-distributed, build-linux-appimage]
     if: github.event.inputs.create_release == 'true'
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Download artifact
+    - name: Download artifacts
       uses: actions/download-artifact@v4
       with:
-        name: Ephemeral-Windows-EXE
         path: dist/
+        merge-multiple: true
 
     - name: Generate tag
       id: tag
@@ -116,5 +214,11 @@ jobs:
       with:
         tag_name: ${{ env.TAG }}
         name: Release ${{ env.TAG }}
-        files: dist/Ephemeral.exe
+        files: |
+          dist/Ephemeral.exe
+          dist/Ephemeral-Distributed.exe
+          dist/ephemeral-local-x86_64.AppImage
+          dist/ephemeral-distributed-x86_64.AppImage
+          dist/ephemeral-wasm-library.tar.gz
+          dist/ephemeral-self-host-distributed.tar.gz
         generate_release_notes: true

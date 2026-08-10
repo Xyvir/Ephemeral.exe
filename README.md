@@ -59,20 +59,52 @@ install.sh               ← One-shot sidecar deployment (systemd + rootless Pod
 
 Ephemeral is expanding into a multi-tier distributed architecture built on the [iroh](https://www.iroh.computer) peer-to-peer networking library. The distributed tiers share the same `ephemeral_core` engine and a common networking core (`ephemeral_net`) that adds a peer-to-peer job network on top:
 
-**Implemented so far:** `ephemeral_net` Phase 1 (QUIC transport, hello handshake, seed-mediated discovery, job streaming over one connection) and Phase 2 (receiver-side sandboxing — image allowlist, `unsafe` stripped, `image=`/`cmd=`/`entrypoint=` overrides ignored, `--memory 2g`/`--cpus 2`/`--pids-limit 512`/`--network none` enforced — plus nearest-neighbor offloading: when an image isn't warm locally, the job forwards to the nearest node that has it while the image pulls in the background). `ephemeral-self-host-distributed` Phase 2.5 ships as `main_distributed.py` (a REST gateway that joins the cluster as a compute node; `pip install -r requirements-api.txt -r requirements-net.txt` and run `uvicorn main_distributed:app`, configured via `EPHEMERAL_RELAY`, `EPHEMERAL_SEEDS`, `EPHEMERAL_SECRET`, `EPHEMERAL_ALLOW_NETWORK`).
+**Implemented so far:** `ephemeral_net` Phase 1 (QUIC transport, hello handshake, seed-mediated discovery, job streaming over one connection) and Phase 2 (receiver-side sandboxing — image allowlist, `unsafe` stripped, `image=`/`cmd=`/`entrypoint=` overrides ignored, `--memory 2g`/`--cpus 2`/`--pids-limit 512`/`--network none` enforced — plus nearest-neighbor offloading: when an image isn't warm locally, the job forwards to the nearest node that has it while the image pulls in the background). `ephemeral-self-host-distributed` Phase 2.5 ships as `main_distributed.py` (a REST gateway that joins the cluster as a compute node; `pip install -r requirements-api.txt -r requirements-net.txt` and run `uvicorn main_distributed:app`, configured via `EPHEMERAL_RELAY`, `EPHEMERAL_SEEDS`, `EPHEMERAL_SECRET`, `EPHEMERAL_ALLOW_NETWORK`). Phase 3 ships the browser WebAssembly client (below) and the `ephemeral-distributed` desktop tier (`main_distributed_client.py`), and both desktop tiers build for Windows (EXE) and Linux (AppImage) — see **Release artifacts**.
 
 | Package | Role | Runtime | Trust Model |
 |---|---|---|---|
-| `ephemeral-wasm-library` | Browser client translating REST-style job requests into the distributed network | Browser (WebAssembly) | **Public** — good-faith |
-| `ephemeral-distributed.exe` | Windows tray app: local execution, compute node, and nearest-neighbor offloading | Windows (PyInstaller + iroh) | Public or private |
-| `ephemeral-self-host-distributed` | Headless compute node + REST gateway for self-hosting (Docker/Coolify) | Linux container | Public or private |
-| `main_local.py` / `main_api.py` (existing) | Local-only execution | Windows / Linux | **Private** — nothing ever leaves the machine |
+| `ephemeral-wasm-library` | Browser thin client (SPA) translating REST-style jobs into the distributed network | Browser (WebAssembly) | **Public** — good-faith |
+| `ephemeral-distributed` | Desktop tray app: local execution, compute node, and nearest-neighbor offloading | Windows EXE + Linux AppImage | Public or private |
+| `ephemeral-self-host-distributed` | Headless compute node + REST gateway for self-hosting (Docker/Coolify) | Linux container (Dockerfile) / source tarball | Public or private |
+| `ephemeral-local` | Local-only desktop tray app (clipboard-driven, Podman) | Windows EXE + Linux AppImage | **Private** — nothing ever leaves the machine |
 
 > **Trust Model & Privacy — please read before using the distributed tiers.**
 > The public distributed network is a *good-faith* model designed for teaching (e.g., college students and professors running code snippets). **Anything you submit to the public ephemeral cloud should be treated as public knowledge — there is no privacy guarantee.** It is not security-first or trust-first: other network participants may be able to observe submitted code and outputs, and the shared public relays carry no uptime or performance guarantees.
 > If you need privacy, **self-host instead** and use the non-distributed packages (`main_local.py` / `main_api.py`, or `ephemeral-self-host-distributed` on infrastructure you control).
 
+### Web thin client (`ephemeral-wasm-library`)
 
+Phase 3 ships a browser-side WebAssembly client that speaks the **same wire protocol** as the Python tiers (`hello` handshake + `job_request` → `job_log`/`job_done`/`error` over iroh QUIC bi-streams), so it interoperates with Python compute nodes with zero translation. Browsers cannot hole-punch, so all browser↔cluster traffic traverses an iroh relay — n0's public relays by default, or a self-hosted one via the Relay URL field.
+
+The SPA thin client lives in `ephemeral-wasm-library/web/` (vanilla JS — no framework). To run it:
+
+```bash
+cd ephemeral-wasm-library/web && python -m http.server 8787
+# open http://localhost:8787 and run code — no ticket pasting needed.
+```
+
+**Discovery is automagic.** The client ships with a small bootstrap config in `web/config.js` (relay URL + seed `EndpointTicket`s) compiled into the bundle — this is configuration, not a job-routing dependency, so the execution path still runs entirely over the iroh network with no HTTP endpoint. On load the client dials the seed(s), completes the `hello` handshake, and learns the whole cluster from the seed's peer table (dialable tickets + warm images). Jobs then route automatically to the best available compute node — a peer whose warm images cover the document's languages first, then lowest RTT. A manual seed-ticket field remains as an override for operators, and the *Cluster* panel lists discovered nodes with their images and latency.
+
+To rebuild the wasm module: `cd ephemeral-wasm-library && bash build.sh` (see `build.sh` for the toolchain requirements — a stable Rust toolchain with the `wasm32-unknown-unknown` target, a wasm-capable clang for `ring`'s C files such as wasi-sdk, and the `wasm-bindgen` CLI pinned to 0.2.127). The built glue is committed under `web/wbg/` so the SPA works without a Rust toolchain.
+
+### Desktop tiers & Linux AppImages
+
+The desktop tray clients (`main_local.py` local-only, `main_distributed_client.py` distributed) are cross-platform: the same code builds a Windows EXE (PyInstaller) and a Linux **AppImage** (PyInstaller onedir + appimagetool, via `packaging/build_appimage.sh local|distributed`). Platform plumbing is guarded: the language prompt uses zenity/kdialog/tkinter on Linux, image-clipboard uses wl-copy/xclip, login autostart writes a `~/.config/autostart/ephemeral.desktop` entry, and Podman lifecycle uses the native rootless socket (`systemctl --user start podman.socket`) instead of `podman machine`. The AppImage needs a desktop with a StatusNotifier/AppIndicator host (most GNOME/KDE setups) or an X11 session (pystray's Xorg backend); on hosts without FUSE, run it with `APPIMAGE_EXTRACT_AND_RUN=1`. Both apps also expose `--cli script.md` (headless) and `--self-check` (install verification) modes.
+
+### Release artifacts
+
+The CI workflow (`/.github/workflows/build.yml`) builds and attaches **six artifacts** to each release (triggered via the `workflow_dispatch` → *Create a new release* checkbox, or a push to `main`):
+
+| Artifact | Tier | Notes |
+|---|---|---|
+| `Ephemeral.exe` | local (Windows) | one-file EXE |
+| `Ephemeral-Distributed.exe` | distributed (Windows) | one-file EXE, bundles `iroh` |
+| `ephemeral-local-x86_64.AppImage` | local (Linux) | portable tray app |
+| `ephemeral-distributed-x86_64.AppImage` | distributed (Linux) | portable tray app, bundles `iroh` |
+| `ephemeral-wasm-library.tar.gz` | web (browser) | SPA + wasm glue + crate source to rebuild |
+| `ephemeral-self-host-distributed.tar.gz` | self-host (server) | gateway source + `Dockerfile` for Docker/Coolify |
+
+Run an AppImage like any executable: `chmod +x ephemeral-distributed-x86_64.AppImage && ./ephemeral-distributed-x86_64.AppImage` (configure the cluster via `EPHEMERAL_SEEDS`/`EPHEMERAL_RELAY`/`EPHEMERAL_SECRET`/`EPHEMERAL_ALLOW_NETWORK` environment variables, as with the Windows build). For the self-host tier, `docker build -t ephemeral-self-host-distributed .` and mount the host Podman socket (`-v /run/podman/podman.sock:/run/podman/podman.sock`) so the node can execute jobs.
 
 ## Prerequisites
 Before running Ephemeral, you must ensure your Windows environment is ready to host Linux containers.
@@ -485,6 +517,6 @@ This creates a hardened systemd service at `127.0.0.1:8787`, ready to be reverse
 
 ## Future Plans
 
-- **Room Codes:** per-class gossip topics so a professor's students share an isolated topic and can see each other's runs. Implemented as a lightweight string in the job payload (not authentication), a topic per class.
+- **Room Codes:** a short, human-friendly code that selects *which network* to join (a routing/partition field on top of the seed table — not authentication). With seed-mediated auto-discovery already handling node selection within a network, a room code becomes the user-facing way to choose the right cluster, e.g. per-class topics so a professor's students share an isolated room.
 - **Paper-Light REST Clients:** a static-URL REST API that sends requests and responds over the ephemeral distributed network, for 'paper-light' clients (curl-friendly, no WASM required) — with rate limiting, cached responses, and the like. This is a non-trivial service with a lot of implementation surface, so it is deliberately deferred.
 - **Image-Layer Sync:** instead of pulling images from a registry after offloading, transfer warm image layers from the neighbor node over the iroh network (content-addressed, integrity-verified) so repeat jobs start instantly.
