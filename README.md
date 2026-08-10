@@ -599,6 +599,16 @@ The official build pipeline runs on every push (`.github/workflows/build.yml`) a
 2. **Build** — Windows EXEs via PyInstaller (`Ephemeral.exe` + `Ephemeral-Distributed.exe`), both Linux AppImages via PyInstaller onedir + appimagetool (with `--self-check` smoke tests), the wasm/SPA tarball, and both self-host tarballs (each import-smoke-tested), plus a smoke test that runs `install_self_host.sh` for both flavors.
 3. **Release** — `workflow_dispatch` with the *Create a new release* checkbox; attaches all seven artifacts.
 
+### Hosting the web demo on GitHub Pages
+
+The thin-client SPA (`ephemeral-wasm-library/web/`) is fully static — the compiled wasm glue (`wbg/`) is checked in — so it hosts on GitHub Pages with no build step:
+
+1. **Settings → Pages** → *Source: Deploy from a branch* → branch `main`, folder **`/` (root)** — the whole repo is served, so `ephemeral-wasm-library/web/` is reachable.
+2. The root `.nojekyll` skips Jekyll processing (it would otherwise mangle the repo's files).
+3. The bare site URL (`https://<owner>.github.io/Ephemeral.exe/`) lands on `docs/index.html`, which redirects straight to the SPA at `ephemeral-wasm-library/web/`.
+
+> **Note:** don't select the `/docs` folder as the Pages source — a `/docs`-only deploy publishes *just* that folder, so the redirect target (the SPA elsewhere in the repo) would 404.
+
 ---
 
 ## Future Plans
