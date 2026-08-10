@@ -28,8 +28,8 @@ from .jobs import JobErrorEvent, JobExecutor, JobRequest, parse_job_frame
 from .swarm import (
     SWARM_DNS_TXT,
     SWARM_LIST_URLS,
-    fetch_swarm_anchor_dns,
     fetch_swarm_list,
+    fetch_swarm_list_dns,
 )
 from .protocol import (
     ALPN,
@@ -368,10 +368,10 @@ class Node:
 
         ``dns_txt``: when the list is unreachable (e.g. GitHub is down),
         resolve this hostname's TXT record via DNS-over-HTTPS and dial
-        the anchor node it points at — DNS is tiered/cached
-        infrastructure, an independent path to first contact. ``None``
-        (default) uses ``EPHEMERAL_DNS_TXT`` or :data:`SWARM_DNS_TXT`;
-        empty disables the fallback.
+        the members it mirrors — DNS is tiered/cached infrastructure, an
+        independent path to first contact. ``None`` (default) uses
+        ``EPHEMERAL_DNS_TXT`` or :data:`SWARM_DNS_TXT`; empty disables
+        the fallback.
         """
         self._list_urls = list(urls if urls is not None else SWARM_LIST_URLS)
         self._dns_txt = (
@@ -417,15 +417,16 @@ class Node:
                 targets.append((node_id, relay, ticket))
         elif self._dns_txt:
             # GitHub unreachable — DNS TXT fallback: the refresh Action
-            # keeps a single anchor record pointing at the always-on node,
-            # and the hello handshake expands it into the whole swarm.
+            # keeps a TXT mirror of the list (compact node_id + relay
+            # entries) at this hostname, and dialing any of them reveals
+            # the whole swarm via hello.
             try:
                 anchors = await asyncio.wait_for(
-                    asyncio.to_thread(fetch_swarm_anchor_dns, self._dns_txt),
+                    asyncio.to_thread(fetch_swarm_list_dns, self._dns_txt),
                     timeout=self._dial_timeout,
                 )
             except Exception as e:
-                logger.warning("swarm DNS anchor fetch failed: %s", e)
+                logger.warning("swarm DNS mirror fetch failed: %s", e)
                 anchors = []
             for node_id, relay in anchors:
                 if node_id == self.node_id():

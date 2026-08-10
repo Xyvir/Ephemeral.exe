@@ -51,12 +51,12 @@ SWARM_LIST_URLS: list[str] = [
 
 # DNS TXT fallback for first contact. When the live list (GitHub) is
 # unreachable, a node can still find the swarm through a DNS TXT record
-# the operator keeps updated (the scheduled refresh Action writes it):
+# that mirrors the list (the scheduled refresh Action keeps it in sync):
 # DNS is tiered, cached infrastructure, so it is an independent path to
 # the swarm. Empty (default) disables the fallback; set the
 # EPHEMERAL_DNS_TXT environment variable (or edit this constant) to the
-# hostname owning a TXT record whose content is the anchor format
-# documented on :func:`parse_swarm_anchor_dns`.
+# hostname owning a TXT record whose content is the mirror format
+# documented on :func:`parse_swarm_list_dns`.
 SWARM_DNS_TXT: str = ""
 
 # DNS-over-HTTPS (RFC 8484 JSON) endpoints used for the TXT lookup — no
@@ -142,19 +142,22 @@ def parse_seeds(env_value: str | None) -> list[str]:
     return [s.strip() for s in env_value.split(",") if s.strip()]
 
 
-def parse_swarm_anchor_dns(content: str) -> list[tuple[str, str]]:
+def parse_swarm_list_dns(content: str) -> list[tuple[str, str]]:
     """
-    Parse the swarm anchor out of a DNS TXT record value.
+    Parse the swarm-list mirror out of a DNS TXT record value.
 
-    Format: ``iroh1:<node_id>;<relay_url>`` — one entry per record,
-    comma-separated for multiple anchors. The relay may be omitted
-    (``iroh1:<node_id>``) and :data:`DEFAULT_RELAY` is used. Surrounding
-    quotes (how some resolvers render TXT) are tolerated; non-``iroh1``
-    values and malformed entries are skipped.
+    The record mirrors the live swarm list (``docs/swarm.json``) in
+    compact form — one ``iroh1:<node_id>;<relay_url>`` entry per node,
+    comma-separated, split across the record's 255-char strings as
+    needed. Tickets are intentionally omitted (they're ~200+ chars and
+    arrive via the hello handshake anyway; current code dials by node id
+    + relay). Quotes (how some resolvers render TXT) are stripped; a
+    relay may be omitted (``iroh1:<node_id>``) and :data:`DEFAULT_RELAY`
+    is used; non-``iroh1`` values and malformed entries are skipped.
     """
     anchors: list[tuple[str, str]] = []
-    for part in content.split(","):
-        part = part.strip().strip('"').strip()
+    for part in content.replace('"', "").split(","):
+        part = part.strip()
         if not part.startswith("iroh1:"):
             continue
         body = part[len("iroh1:") :].strip()
@@ -166,16 +169,17 @@ def parse_swarm_anchor_dns(content: str) -> list[tuple[str, str]]:
     return anchors
 
 
-def fetch_swarm_anchor_dns(
+def fetch_swarm_list_dns(
     hostname: str, urls: Sequence[str] | None = None
 ) -> list[tuple[str, str]]:
     """
-    Resolve the swarm anchor TXT record for ``hostname`` via DNS-over-HTTPS.
+    Resolve the swarm-list mirror TXT record for ``hostname`` via DNS-over-HTTPS.
 
-    Returns ``[(node_id, relay_url), ...]`` — the operator's always-on
-    anchor, which the hello handshake expands into the whole swarm.
-    ``[]`` when the record is missing, malformed, or no resolver is
-    reachable (callers keep retrying on the next maintenance cycle).
+    Returns every ``(node_id, relay_url)`` entry mirrored in the record
+    (deduped by node id) — the same ranked list the JSON file carries,
+    minus tickets. ``[]`` when the record is missing, malformed, or no
+    resolver is reachable (callers keep retrying on the next maintenance
+    cycle).
     """
     if not hostname:
         return []
@@ -189,11 +193,20 @@ def fetch_swarm_anchor_dns(
             )
             with urllib.request.urlopen(req, timeout=8) as res:
                 data = json.loads(res.read().decode("utf-8"))
+            entries: list[tuple[str, str]] = []
             for answer in data.get("Answer") or []:
                 if answer.get("type") == 16:  # TXT
-                    anchors = parse_swarm_anchor_dns(answer.get("data") or "")
-                    if anchors:
-                        return anchors
+                    entries.extend(parse_swarm_list_dns(answer.get("data") or ""))
+            if entries:
+                # Dedupe by node id across strings/answers.
+                seen: set[str] = set()
+                unique: list[tuple[str, str]] = []
+                for node_id, relay in entries:
+                    if node_id in seen:
+                        continue
+                    seen.add(node_id)
+                    unique.append((node_id, relay))
+                return unique
         except Exception:
             continue
     return []
@@ -231,10 +244,10 @@ __all__ = [
     "SWARM_DNS_TXT",
     "SWARM_LIST_URLS",
     "default_state_dir",
-    "fetch_swarm_anchor_dns",
     "fetch_swarm_list",
+    "fetch_swarm_list_dns",
     "load_or_create_secret",
     "parse_seed_nodes",
     "parse_seeds",
-    "parse_swarm_anchor_dns",
+    "parse_swarm_list_dns",
 ]

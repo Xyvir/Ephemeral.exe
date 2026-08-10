@@ -61,11 +61,11 @@ async function fetchSwarmNodes() {
 }
 
 // DNS TXT fallback (DoH): when every swarm.json URL is unreachable,
-// resolve the operator's anchor TXT record (`iroh1:<node_id>;<relay>`)
-// via DNS-over-HTTPS — DNS is tiered/cached infrastructure, so this is
-// an independent path to first contact. One anchor is enough: its hello
-// handshake reveals the whole swarm.
-async function fetchDnsAnchor(hostname) {
+// resolve the operator's TXT mirror of the list (one `iroh1:<node_id>;<relay>`
+// per node, comma-separated, split across 255-char strings) via
+// DNS-over-HTTPS — DNS is tiered/cached infrastructure, so this is an
+// independent path to first contact.
+async function fetchDnsMirror(hostname) {
   const urls = [
     `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=TXT`,
     `https://dns.google/resolve?name=${encodeURIComponent(hostname)}&type=TXT`,
@@ -75,15 +75,17 @@ async function fetchDnsAnchor(hostname) {
       const res = await fetch(url, { headers: { Accept: "application/dns-json" } });
       if (!res.ok) continue;
       const data = await res.json();
+      const entries = [];
       for (const a of data.Answer || []) {
         if (a.type !== 16) continue; // TXT
-        const m = /^iroh1:([0-9a-f]{64})(?:;([^,\s"]+))?/.exec(
-          String(a.data).replace(/^"|"$/g, "")
-        );
-        if (m) {
-          setStatus(`dns anchor: ${m[1].slice(0, 8)}… (${hostname})`);
-          return [{ node_id: m[1], relay: m[2] || null, ticket: null }];
+        for (const part of String(a.data).replace(/"/g, "").split(",")) {
+          const m = /^iroh1:([0-9a-f]{64})(?:;([^,\s"]+))?/.exec(part.trim());
+          if (m) entries.push({ node_id: m[1], relay: m[2] || null, ticket: null });
         }
+      }
+      if (entries.length) {
+        setStatus(`dns mirror: ${entries.length} node(s) (${hostname})`);
+        return entries;
       }
     } catch (e) {
       // unreachable — try the next resolver
@@ -177,9 +179,9 @@ async function refreshPeers() {
   // are dialed too. Dedupe by node_id (falling back to ticket).
   const swarmNodes = await fetchSwarmNodes();
   // DNS TXT fallback when the list is unreachable (independent, tiered
-  // path — see fetchDnsAnchor).
+  // path — see fetchDnsMirror).
   const dnsNodes = !swarmNodes.length && BOOTSTRAP.dnsTxt
-    ? await fetchDnsAnchor(BOOTSTRAP.dnsTxt)
+    ? await fetchDnsMirror(BOOTSTRAP.dnsTxt)
     : [];
   const candidates = [];
   const seen = new Set();

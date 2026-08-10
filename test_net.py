@@ -548,36 +548,40 @@ def test_fetch_swarm_list():
     print("  fetch_swarm_list: parsing + fallback OK")
 
 
-def test_parse_swarm_anchor_dns():
-    """TXT anchor parsing: iroh1:<node_id>;<relay>, quotes, defaults."""
-    from ephemeral_net.swarm import DEFAULT_RELAY, parse_swarm_anchor_dns
+def test_parse_swarm_list_dns():
+    """TXT mirror parsing: entries, quotes, multi-string, defaults."""
+    from ephemeral_net.swarm import DEFAULT_RELAY, parse_swarm_list_dns
 
+    # One entry with an explicit relay.
     good = "iroh1:" + "a" * 64 + ";https://relay.example."
-    assert parse_swarm_anchor_dns(good) == [("a" * 64, "https://relay.example.")]
+    assert parse_swarm_list_dns(good) == [("a" * 64, "https://relay.example.")]
 
-    # Relay-less entries default to DEFAULT_RELAY; surrounding quotes
-    # (how some resolvers render TXT) are tolerated.
-    quoted = '"iroh1:' + "b" * 64 + '"'
-    assert parse_swarm_anchor_dns(quoted) == [("b" * 64, DEFAULT_RELAY)]
-
-    # Comma-separated multiple anchors.
-    multi = "iroh1:" + "c" * 64 + ";https://r1.,iroh1:" + "d" * 64
-    assert parse_swarm_anchor_dns(multi) == [
-        ("c" * 64, "https://r1."),
-        ("d" * 64, DEFAULT_RELAY),
+    # Relay-less entries default to DEFAULT_RELAY; quotes (how resolvers
+    # render TXT, including mid-content) are stripped.
+    quoted = '"iroh1:' + "b" * 64 + ';https://r1.,iroh1:' + "c" * 64 + '"'
+    assert parse_swarm_list_dns(quoted) == [
+        ("b" * 64, "https://r1."),
+        ("c" * 64, DEFAULT_RELAY),
     ]
 
-    # Non-anchor records (SPF, DKIM, ...) and malformed entries are skipped.
-    assert parse_swarm_anchor_dns("v=spf1 include:_spf.example.com ~all") == []
-    assert parse_swarm_anchor_dns("iroh1:not-a-node-id;https://relay.example.") == []
-    print("PASS: parse_swarm_anchor_dns")
+    # Comma-separated multiple entries, mixed relays.
+    multi = "iroh1:" + "d" * 64 + ";https://r1.,iroh1:" + "e" * 64
+    assert parse_swarm_list_dns(multi) == [
+        ("d" * 64, "https://r1."),
+        ("e" * 64, DEFAULT_RELAY),
+    ]
+
+    # Non-iroh1 records (SPF, DKIM, ...) and malformed entries are skipped.
+    assert parse_swarm_list_dns("v=spf1 include:_spf.example.com ~all") == []
+    assert parse_swarm_list_dns("iroh1:not-a-node-id;https://relay.example.") == []
+    print("PASS: parse_swarm_list_dns")
 
 
-def test_fetch_swarm_anchor_dns():
-    """DoH TXT lookup: parses the anchor, falls through on failure."""
+def test_fetch_swarm_list_dns():
+    """DoH TXT lookup: mirrors the full list, falls through on failure."""
     from unittest import mock
 
-    from ephemeral_net.swarm import fetch_swarm_anchor_dns
+    from ephemeral_net.swarm import fetch_swarm_list_dns
 
     class _Res:
         def __enter__(self):
@@ -589,16 +593,40 @@ def test_fetch_swarm_anchor_dns():
         def read(self):
             return (
                 b'{"Status":0,"Answer":[{"name":"x","type":16,"TTL":120,'
-                b'"data":"iroh1:' + b"c" * 64 + b';https://relay.example."}]}'
+                b'"data":"iroh1:'
+                + b"c" * 64
+                + b';https://relay.example.,iroh1:'
+                + b"d" * 64
+                + b';https://relay2.example."}]}'
             )
 
     with mock.patch("urllib.request.urlopen", return_value=_Res()):
-        anchors = fetch_swarm_anchor_dns("_ephemeral-swarm.example.com")
-    assert anchors == [("c" * 64, "https://relay.example.")]
+        entries = fetch_swarm_list_dns("_ephemeral-swarm.example.com")
+    assert entries == [
+        ("c" * 64, "https://relay.example."),
+        ("d" * 64, "https://relay2.example."),
+    ]
+
+    # Duplicate node ids across strings/answers are deduped.
+    class _Dup(_Res):
+        def read(self):
+            return (
+                b'{"Status":0,"Answer":[{"name":"x","type":16,"TTL":120,'
+                b'"data":"iroh1:'
+                + b"c" * 64
+                + b';https://r1.,iroh1:'
+                + b"c" * 64
+                + b';https://r2."}]}'
+            )
+
+    with mock.patch("urllib.request.urlopen", return_value=_Dup()):
+        assert fetch_swarm_list_dns("_ephemeral-swarm.example.com") == [
+            ("c" * 64, "https://r1.")
+        ]
 
     # Unreachable resolvers / missing record -> [] (callers retry).
     with mock.patch("urllib.request.urlopen", side_effect=OSError("no network")):
-        assert fetch_swarm_anchor_dns("_ephemeral-swarm.example.com") == []
+        assert fetch_swarm_list_dns("_ephemeral-swarm.example.com") == []
 
     class _NoAnswer(_Res):
         def read(self):
@@ -606,12 +634,12 @@ def test_fetch_swarm_anchor_dns():
                 b'"data":"v=spf1 ~all"}]}'
 
     with mock.patch("urllib.request.urlopen", return_value=_NoAnswer()):
-        assert fetch_swarm_anchor_dns("_ephemeral-swarm.example.com") == []
+        assert fetch_swarm_list_dns("_ephemeral-swarm.example.com") == []
 
     # No hostname configured -> no lookup at all.
     with mock.patch("urllib.request.urlopen", side_effect=AssertionError("must not call")):
-        assert fetch_swarm_anchor_dns("") == []
-    print("PASS: fetch_swarm_anchor_dns (DoH JSON)")
+        assert fetch_swarm_list_dns("") == []
+    print("PASS: fetch_swarm_list_dns (DoH JSON)")
 
 
 async def _run_list_bootstrap_integration() -> bool:
@@ -815,8 +843,8 @@ def main():
     test_frame_malformed()
     test_hello_frame()
     test_fetch_swarm_list()
-    test_parse_swarm_anchor_dns()
-    test_fetch_swarm_anchor_dns()
+    test_parse_swarm_list_dns()
+    test_fetch_swarm_list_dns()
     test_job_messages()
     test_sanitize_strips_unsafe_and_overrides()
     test_sanitize_rejects_unknown_language()

@@ -20,11 +20,12 @@ by default, or a self-hosted one.
   `docs/swarm.json` list — the public build ships with **no compiled-in
   seeds** (mirroring the Python tiers), and `web/config.js` only carries
   operator overrides for private swarms. If the list is unreachable it
-  falls back to the optional **DNS TXT anchor** (`BOOTSTRAP.dnsTxt`, via
-  DNS-over-HTTPS — an independent, tiered path), then the manual seed
-  field. It auto-routes jobs to the best node by id + relay and renders
-  streamed output. The built glue is committed under `web/wbg/` so the
-  SPA runs without a Rust toolchain.
+  falls back to the optional **DNS TXT mirror** (`BOOTSTRAP.dnsTxt` — a
+  TXT record mirroring the list as compact `iroh1:<node_id>;<relay>`
+  entries, resolved via DNS-over-HTTPS for an independent, tiered path),
+  then the manual seed field. It auto-routes jobs to the best node by id
+  + relay and renders streamed output. The built glue is committed under
+  `web/wbg/` so the SPA runs without a Rust toolchain.
 - `build.sh` — rebuilds the wasm module (see its header for the toolchain
   requirements: stable Rust with `wasm32-unknown-unknown`, a wasm-capable
   clang for `ring`'s C files such as wasi-sdk, and the `wasm-bindgen` CLI

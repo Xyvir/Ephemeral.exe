@@ -74,43 +74,65 @@ def parse_genesis(value: str | None) -> list[tuple[str, str]]:
     return nodes
 
 
-def pick_anchor(result: dict, genesis: list[tuple[str, str]]) -> tuple[str, str] | None:
-    """
-    The node the DNS TXT record should point at.
+# DNS TXT strings are capped at 255 chars; multi-string records are
+# concatenated by resolvers. Keep the mirror comfortably under practical
+# UDP delivery (~4 KB with EDNS0) and Cloudflare's combined-content cap
+# (8192 chars): at ~110 chars per compact entry, 3500 chars fits ~30
+# nodes — plenty for first contact (dialing ANY live member reveals the
+# whole swarm via hello).
+DNS_MIRROR_MAX_CHARS = 3500
 
-    First contact must reach a LIVE node, so prefer a member reached
-    THIS run (fastest RTT first), falling back to the genesis anchor,
-    then the first listed entry. ``None`` when the list is empty.
+
+def build_dns_mirror(nodes: list[dict]) -> str:
     """
-    nodes = result.get("nodes") or []
-    reached = [n for n in nodes if n.get("rtt_ms") is not None]
-    if reached:
-        n = reached[0]
-        return n["node_id"], n.get("relay") or DEFAULT_RELAY
-    if genesis:
-        return genesis[0]
-    if nodes:
-        n = nodes[0]
-        return n["node_id"], n.get("relay") or DEFAULT_RELAY
-    return None
+    Compact ``iroh1:<node_id>;<relay>`` mirror of the ranked node list.
+
+    Mirrors the same list ``docs/swarm.json`` carries, minus tickets
+    (they're ~200+ chars each and arrive via the hello handshake anyway;
+    current code dials by node id + relay). Capped so the record stays
+    within DNS size limits.
+    """
+    parts: list[str] = []
+    total = 0
+    for n in nodes:
+        node_id = n.get("node_id")
+        relay = n.get("relay") or DEFAULT_RELAY
+        if not node_id:
+            continue
+        entry = f"iroh1:{node_id};{relay}"
+        sep = 1 if parts else 0
+        if total + sep + len(entry) > DNS_MIRROR_MAX_CHARS:
+            break
+        parts.append(entry)
+        total += sep + len(entry)
+    return ",".join(parts)
+
+
+def _split_txt_strings(content: str, limit: int = 255) -> str:
+    """Split into <=255-char strings joined by newline (multi-string TXT)."""
+    return "\n".join(content[i : i + limit] for i in range(0, len(content), limit))
 
 
 def update_dns_txt(
-    anchor: tuple[str, str], token: str | None, hostname: str | None
+    nodes: list[dict], token: str | None, hostname: str | None
 ) -> bool:
     """
-    Point the swarm DNS TXT record at ``anchor`` (node_id, relay).
+    Mirror the live swarm list into a DNS TXT record.
 
-    The scheduled refresh keeps a TXT record (``iroh1:<node_id>;<relay>``)
-    in sync with the list so thin/first-time joiners have an independent,
-    tiered path to the swarm when GitHub itself is unreachable (see
-    ``ephemeral_net.swarm.fetch_swarm_anchor_dns``). Uses the Cloudflare
+    The scheduled refresh keeps a TXT record in sync with ``docs/swarm.json``
+    so thin/first-time joiners have an independent, tiered path to the
+    swarm when GitHub itself is unreachable (see
+    ``ephemeral_net.swarm.fetch_swarm_list_dns``). Uses the Cloudflare
     API — ``EPHEMERAL_DNS_TOKEN`` (secret), ``EPHEMERAL_DNS_TXT`` (the
     record hostname), optional ``EPHEMERAL_DNS_ZONE`` (the DNS zone name;
     auto-detected by longest suffix when unset). Returns True when the
     record was written or already current.
     """
     if not token or not hostname:
+        return False
+    content = build_dns_mirror(nodes)
+    if not content:
+        print("  DNS: no nodes to mirror — skipping TXT update", flush=True)
         return False
     zone = (os.environ.get("EPHEMERAL_DNS_ZONE") or "").strip()
     headers = {
@@ -149,10 +171,14 @@ def update_dns_txt(
             f"https://api.cloudflare.com/client/v4/zones/{zid}"
             f"/dns_records?name={hostname}&type=TXT",
         ).get("result") or []
-        content = f"iroh1:{anchor[0]};{anchor[1]}"
-        body = {"type": "TXT", "name": hostname, "content": content, "ttl": 120}
+        body = {
+            "type": "TXT",
+            "name": hostname,
+            "content": _split_txt_strings(content),
+            "ttl": 120,
+        }
         if found:
-            if found[0].get("content") == content:
+            if found[0].get("content") == body["content"]:
                 print(f"  DNS: TXT {hostname} already current", flush=True)
                 return True
             _api(
@@ -167,7 +193,10 @@ def update_dns_txt(
                 f"https://api.cloudflare.com/client/v4/zones/{zid}/dns_records",
                 body,
             )
-        print(f"  DNS: TXT {hostname} -> {content}", flush=True)
+        print(
+            f"  DNS: TXT {hostname} -> {len(content.split(','))} node(s) mirrored",
+            flush=True,
+        )
         return True
     except Exception as e:
         print(f"  DNS: update failed: {e}", flush=True)
@@ -294,18 +323,14 @@ async def main() -> None:
         flush=True,
     )
 
-    # Keep the DNS TXT anchor in sync (optional): thin/first-time joiners
+    # Keep the DNS TXT mirror in sync (optional): thin/first-time joiners
     # get an independent, tiered path to the swarm when GitHub is down.
     # Configure via repo settings: EPHEMERAL_DNS_TXT (variable) + the
     # EPHEMERAL_DNS_TOKEN secret (Cloudflare API token with DNS edit).
     dns_txt = (os.environ.get("EPHEMERAL_DNS_TXT") or "").strip()
     dns_token = (os.environ.get("EPHEMERAL_DNS_TOKEN") or "").strip()
     if dns_txt and dns_token:
-        anchor = pick_anchor(result, genesis)
-        if anchor:
-            update_dns_txt(anchor, dns_token, dns_txt)
-        else:
-            print("  DNS: swarm list empty — skipping TXT update", flush=True)
+        update_dns_txt(result.get("nodes") or [], dns_token, dns_txt)
 
 
 if __name__ == "__main__":
