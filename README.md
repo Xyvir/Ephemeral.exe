@@ -102,9 +102,10 @@ The CI workflow (`/.github/workflows/build.yml`) builds and attaches **six artif
 | `ephemeral-local-x86_64.AppImage` | local (Linux) | portable tray app |
 | `ephemeral-distributed-x86_64.AppImage` | distributed (Linux) | portable tray app, bundles `iroh` |
 | `ephemeral-wasm-library.tar.gz` | web (browser) | SPA + wasm glue + crate source to rebuild |
-| `ephemeral-self-host-distributed.tar.gz` | self-host (server) | gateway source + `Dockerfile` for Docker/Coolify |
+| `ephemeral-self-host-distributed.tar.gz` | self-host (distributed server) | cluster gateway source + `Dockerfile` for Docker/Coolify |
+| `ephemeral-self-host.tar.gz` | self-host (local API server) | plain REST gateway (`main_api.py`, no networking tier) + `Dockerfile.api` — the build bundled by Lithic-UK |
 
-Run an AppImage like any executable: `chmod +x ephemeral-distributed-x86_64.AppImage && ./ephemeral-distributed-x86_64.AppImage` (configure the cluster via `EPHEMERAL_SEEDS`/`EPHEMERAL_RELAY`/`EPHEMERAL_SECRET`/`EPHEMERAL_ALLOW_NETWORK` environment variables, as with the Windows build). For the self-host tier, `docker build -t ephemeral-self-host-distributed .` and mount the host Podman socket (`-v /run/podman/podman.sock:/run/podman/podman.sock`) so the node can execute jobs.
+Run an AppImage like any executable: `chmod +x ephemeral-distributed-x86_64.AppImage && ./ephemeral-distributed-x86_64.AppImage` (configure the cluster via `EPHEMERAL_SEEDS`/`EPHEMERAL_RELAY`/`EPHEMERAL_SECRET`/`EPHEMERAL_ALLOW_NETWORK` environment variables, as with the Windows build). For the self-host tiers, `docker build -f Dockerfile -t ephemeral-self-host-distributed .` (distributed) or `docker build -f Dockerfile.api -t ephemeral-self-host .` (local API), and mount the host Podman socket (`-v /run/podman/podman.sock:/run/podman/podman.sock`) so the node can execute jobs.
 
 ## Prerequisites
 Before running Ephemeral, you must ensure your Windows environment is ready to host Linux containers.

@@ -176,6 +176,13 @@ jobs:
           ephemeral_self_host/ main_distributed.py \
           requirements-net.txt requirements-api.txt Dockerfile .dockerignore
 
+    - name: Package self-host (non-distributed) tier
+      shell: bash
+      run: |
+        tar czf dist/ephemeral-self-host.tar.gz \
+          main_api.py ephemeral_core/ \
+          requirements-api.txt Dockerfile.api .dockerignore
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -185,6 +192,7 @@ jobs:
           dist/ephemeral-distributed-x86_64.AppImage
           dist/ephemeral-wasm-library.tar.gz
           dist/ephemeral-self-host-distributed.tar.gz
+          dist/ephemeral-self-host.tar.gz
 
   # ── Release ───────────────────────────────────────────────────
   release:
@@ -221,4 +229,5 @@ jobs:
           dist/ephemeral-distributed-x86_64.AppImage
           dist/ephemeral-wasm-library.tar.gz
           dist/ephemeral-self-host-distributed.tar.gz
+          dist/ephemeral-self-host.tar.gz
         generate_release_notes: true

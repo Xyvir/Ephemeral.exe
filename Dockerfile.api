@@ -1,0 +1,30 @@
+# ephemeral-self-host — non-distributed headless REST gateway (the plain
+# API server that Lithic-UK bundles for self-hosting).
+#
+# Local-only execution: code runs in Podman containers on this host and
+# nothing leaves the machine. Mount the host's podman socket so the bundled
+# podman CLI can run containers, e.g.
+#
+#   docker run -d -p 8000:8000 \
+#     -v /run/podman/podman.sock:/run/podman/podman.sock \
+#     ephemeral-self-host:latest
+FROM python:3.12-slim
+
+# podman CLI + CA certs (the bundled client talks to the mounted socket).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends podman ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python deps first (layer caching).
+COPY requirements-api.txt ./
+RUN pip install --no-cache-dir -r requirements-api.txt
+
+# App code.
+COPY ephemeral_core/ ./ephemeral_core/
+COPY main_api.py ./
+
+EXPOSE 8000
+
+CMD ["uvicorn", "main_api:app", "--host", "0.0.0.0", "--port", "8000"]
