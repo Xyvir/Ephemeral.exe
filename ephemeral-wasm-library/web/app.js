@@ -1,7 +1,9 @@
 // Ephemeral Web — SPA thin client on top of ephemeral_wasm_library.
-// Auto-connects to the cluster using the seed tickets compiled into
-// config.js, learns the cluster via hello handshakes, and routes jobs to
-// the best available compute node (warm image first, then latency).
+// Auto-connects to the cluster: fetches the live bootstrap list
+// (docs/swarm.json, refreshed every 6 h by a GitHub Action), dials the
+// current members by ticket, falls back to the seed tickets compiled
+// into config.js, learns the cluster via hello handshakes, and routes
+// jobs to the best available compute node (warm image first, latency).
 import init, { EphemeralClient, base64_decode } from "./wbg/ephemeral_wasm_library.js";
 import { BOOTSTRAP } from "./config.js";
 
@@ -36,6 +38,33 @@ function b64encode(str) {
 
 function shortId(id) {
   return id ? id.slice(0, 8) + "…" : "—";
+}
+
+// Fetch the live bootstrap list (docs/swarm.json) — first URL that
+// parses wins; [] when none are reachable.
+async function fetchSwarmNodes() {
+  for (const url of BOOTSTRAP.swarmJson || []) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data && Array.isArray(data.nodes)) {
+        setStatus(`swarm list: ${data.nodes.length} node(s) (${data.updated || "?"})`);
+        return data.nodes;
+      }
+    } catch (e) {
+      // unreachable / not JSON — try the next candidate URL
+    }
+  }
+  return [];
+}
+
+// Bound a wasm call so a dead/stale node can't wedge discovery.
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, rej) => setTimeout(() => rej(new Error("timed out")), ms)),
+  ]);
 }
 
 // Languages used in a Markdown doc (code fence info strings).
@@ -101,27 +130,54 @@ function renderCluster() {
 }
 
 async function refreshPeers() {
-  if (!BOOTSTRAP.seeds.length) {
+  setStatus("discovering cluster…");
+
+  // Live bootstrap list first (current members), compiled seeds as
+  // fallback — dedupe by ticket.
+  const swarmNodes = await fetchSwarmNodes();
+  const candidates = [];
+  const seen = new Set();
+  for (const n of swarmNodes) {
+    if (n && n.ticket && !seen.has(n.ticket)) {
+      seen.add(n.ticket);
+      candidates.push(n.ticket);
+    }
+  }
+  for (const seed of BOOTSTRAP.seeds || []) {
+    if (!seen.has(seed)) {
+      seen.add(seed);
+      candidates.push(seed);
+    }
+  }
+  if (!candidates.length) {
     renderCluster();
+    setStatus("no bootstrap sources", "err");
     return;
   }
-  setStatus("discovering cluster…");
-  for (const seed of BOOTSTRAP.seeds) {
+
+  // Dial every candidate concurrently; render as peers appear so the
+  // panel isn't held hostage by dead nodes' timeouts.
+  const tasks = candidates.map(async (ticket) => {
     try {
-      const res = JSON.parse(await client.discover(seed));
+      const res = JSON.parse(await withTimeout(client.discover(ticket), 15000));
+      let added = false;
       if (res.seed && res.seed.node_id) {
         peers.set(res.seed.node_id, { ...res.seed, seed: true });
+        added = true;
       }
       for (const p of res.peers || []) {
         if (p.node_id === client.node_id()) continue; // don't list ourselves
         const known = peers.get(p.node_id);
         if (known && known.seed) continue; // keep the seed's own rtt
         peers.set(p.node_id, { ...p, seed: known ? known.seed : false });
+        added = true;
       }
+      if (added) renderCluster();
     } catch (e) {
-      // seed unreachable — keep what we have and try the next
+      // node unreachable — the others continue
     }
-  }
+  });
+  await Promise.allSettled(tasks);
   renderCluster();
   setStatus(peers.size ? "ready" : "no cluster discovered", peers.size ? "" : "err");
 }

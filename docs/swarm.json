@@ -1,12 +1,14 @@
 {
-  "updated": "2026-08-10T10:16:04Z",
+  "updated": "2026-08-10T10:22:24Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
+  "max_nodes": 50,
   "nodes": [
     {
       "node_id": "154e7308b6af310df575c7c90bc8fe86146cfef036ac098662768a4f3c411ec5",
       "relay": null,
       "ticket": "endpointaaku44yiw2xtcdpvoxd4sc6i72dbi3h66a3kycmgmj3iutz4iepmkbaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs74vlacaeakyhcaagi64aybadakqaaushxag",
-      "images": []
+      "images": [],
+      "rtt_ms": 85
     },
     {
       "node_id": "4f7879c84d2a88eec99eb80d5c76a0ca56954c73cd5a0d67fe902313b5220178",
@@ -18,6 +20,12 @@
       "node_id": "5f76329eac0f021c72fbd80a45f92b6de1660ba726f3261c73bb041706e3bd16",
       "relay": null,
       "ticket": "endpointabpxmmu6vqhqehds7pmaurpzfnw6czqlu4tpgjq4oo5qifyg4o6rmaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
+      "images": []
+    },
+    {
+      "node_id": "815c7f86b482acea73d271de0d406609167d3c1c1e9e5cee8a60d088f94f6f73",
+      "relay": null,
+      "ticket": "endpointacavy74gwsbkz2tt2jy54dkamyerm7j4dqpj4xhorjqnbchzj5xxgbiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs7zzaicaeaevjzmx7z4caybacwbyqab6paqgaiaycuaafhtyebq",
       "images": []
     },
     {

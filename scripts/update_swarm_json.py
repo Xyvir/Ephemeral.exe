@@ -58,7 +58,7 @@ def _existing_targets(out_path: Path) -> list[tuple[str, str | None, str | None]
     return nodes
 
 
-async def discover(out_path: Path) -> dict:
+async def discover(out_path: Path, max_nodes: int) -> dict:
     """Join the swarm, dial known nodes, and return the refreshed list."""
     node = Node(relay="n0")
     await node.start()
@@ -72,39 +72,66 @@ async def discover(out_path: Path) -> dict:
         for node_id, relay, ticket in _existing_targets(out_path):
             targets.setdefault(node_id, (relay, ticket))
 
+        reached: dict[str, float] = {}  # node_id -> hello RTT (this run)
         for node_id, (relay, ticket) in targets.items():
             try:
                 if relay:
-                    await asyncio.wait_for(node.dial_node(node_id, relay), timeout=20)
+                    peer = await asyncio.wait_for(node.dial_node(node_id, relay), timeout=20)
                 elif ticket:
-                    await asyncio.wait_for(node.dial(ticket), timeout=20)
+                    peer = await asyncio.wait_for(node.dial(ticket), timeout=20)
+                else:
+                    continue
+                reached[node_id] = peer.rtt if peer.rtt is not None else 0.0
             except Exception as e:  # unreachable — the list keeps it for next time
                 print(f"  - {node_id[:12]}... unreachable: {e}", flush=True)
 
         my_id = node.node_id()
-        # Newly-seen nodes (seed + whatever its hello carried) ∪ previous
-        # list, deduped. Keeping un-reachable entries lets the next run try
-        # them again and keeps thin clients pointed at recovering nodes.
-        nodes: dict[str, dict] = {}
+        # Everything we know about: hello-learned nodes (seed + its peers)
+        # ∪ previous list, deduped. Keeping un-reachable entries lets the
+        # next run retry them and keeps thin clients pointed at recovering
+        # nodes — but they rank last and only fill space under the cap.
+        infos: dict[str, dict] = {}
         for info in node.table:
             if info.node_id == my_id:
                 continue
-            nodes[info.node_id] = {
+            infos[info.node_id] = {
                 "node_id": info.node_id,
                 "relay": info.relay,
                 "ticket": info.ticket,
                 "images": sorted(info.images or []),
             }
         for node_id, relay, ticket in _existing_targets(out_path):
-            nodes.setdefault(
+            infos.setdefault(
                 node_id,
                 {"node_id": node_id, "relay": relay, "ticket": ticket, "images": []},
             )
 
+        # Rank: compiled seeds first, then nodes reached this run (fastest
+        # RTT first), then hello-learned peers, then stale previous
+        # entries — capped so the address list stays small and fresh.
+        seed_ids = [nid for nid, _ in DEFAULT_SWARM_NODES]
+        known = set(node.table.known_peer_ids())
+
+        def rank_key(nid: str) -> tuple[int, float, str]:
+            if nid in seed_ids:
+                return (0, 0.0, nid)
+            if nid in reached:
+                return (1, reached[nid], nid)
+            if nid in known:
+                return (2, 0.0, nid)
+            return (3, 0.0, nid)
+
+        ordered = sorted(infos.values(), key=lambda n: rank_key(n["node_id"]))
+        for n in ordered:
+            rtt = reached.get(n["node_id"])
+            if rtt is not None:
+                n["rtt_ms"] = round(rtt * 1000)
+
         return {
             "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "relay": DEFAULT_RELAY,
-            "nodes": sorted(nodes.values(), key=lambda n: n["node_id"]),
+            "max_nodes": max_nodes,
+            "nodes": ordered[:max_nodes],
         }
     finally:
         await node.close()
@@ -113,9 +140,15 @@ async def discover(out_path: Path) -> dict:
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument(
+        "--max-nodes",
+        type=int,
+        default=50,
+        help="cap on the address list (default: 50, fastest-first)",
+    )
     args = parser.parse_args()
 
-    result = await discover(args.out)
+    result = await discover(args.out, max_nodes=args.max_nodes)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     tmp = args.out.with_name(args.out.name + ".tmp")
     tmp.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
