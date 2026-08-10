@@ -1,16 +1,17 @@
 // Ephemeral Web — SPA thin client on top of ephemeral_wasm_library.
 // Auto-connects to the cluster: fetches the live bootstrap list
 // (docs/swarm.json, refreshed every 6 h by a GitHub Action), dials the
-// current members by ticket, falls back to the seed tickets compiled
-// into config.js, learns the cluster via hello handshakes, and routes
-// jobs to the best available compute node (warm image first, latency).
+// current members by STABLE NODE ID + relay (iroh-native; tickets only
+// as a fallback for legacy nodes), learns the cluster via hello
+// handshakes, and routes jobs to the best available compute node (warm
+// image first, latency).
 import init, { EphemeralClient, base64_decode } from "./wbg/ephemeral_wasm_library.js";
 import { BOOTSTRAP } from "./config.js";
 
 const $ = (id) => document.getElementById(id);
 
 let client = null;
-// node_id -> { node_id, ticket, images: [..], rtt_ms, seed: bool }
+// node_id -> { node_id, relay, ticket, images: [..], rtt_ms, seed: bool }
 let peers = new Map();
 
 function setStatus(text, cls) {
@@ -129,25 +130,37 @@ function renderCluster() {
   $("clusterCount").textContent = `${peers.size} node${peers.size === 1 ? "" : "s"}`;
 }
 
+// A candidate to dial: { node_id, relay, ticket } — node-id + relay is
+// the iroh-native path, ticket the fallback (legacy nodes).
+function dialCandidate(client, c) {
+  if (c.node_id && c.relay) return client.discover_node(c.node_id, c.relay);
+  return client.discover(c.ticket);
+}
+
 async function refreshPeers() {
   setStatus("discovering cluster…");
 
   // Live bootstrap list first (current members), compiled seeds as
-  // fallback — dedupe by ticket.
+  // fallback — dedupe by node_id (falling back to ticket).
   const swarmNodes = await fetchSwarmNodes();
   const candidates = [];
   const seen = new Set();
+  const push = (c) => {
+    const key = c.node_id || c.ticket;
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    candidates.push(c);
+  };
   for (const n of swarmNodes) {
-    if (n && n.ticket && !seen.has(n.ticket)) {
-      seen.add(n.ticket);
-      candidates.push(n.ticket);
+    if (n && (n.node_id || n.ticket)) {
+      push({ node_id: n.node_id || null, relay: n.relay || null, ticket: n.ticket || null });
     }
   }
-  for (const seed of BOOTSTRAP.seeds || []) {
-    if (!seen.has(seed)) {
-      seen.add(seed);
-      candidates.push(seed);
-    }
+  for (const n of BOOTSTRAP.nodes || []) {
+    if (n && n.node_id) push({ node_id: n.node_id, relay: n.relay || null, ticket: null });
+  }
+  for (const t of BOOTSTRAP.seedTickets || []) {
+    push({ node_id: null, relay: null, ticket: t });
   }
   if (!candidates.length) {
     renderCluster();
@@ -157,9 +170,9 @@ async function refreshPeers() {
 
   // Dial every candidate concurrently; render as peers appear so the
   // panel isn't held hostage by dead nodes' timeouts.
-  const tasks = candidates.map(async (ticket) => {
+  const tasks = candidates.map(async (c) => {
     try {
-      const res = JSON.parse(await withTimeout(client.discover(ticket), 15000));
+      const res = JSON.parse(await withTimeout(dialCandidate(client, c), 15000));
       let added = false;
       if (res.seed && res.seed.node_id) {
         peers.set(res.seed.node_id, { ...res.seed, seed: true });
@@ -207,7 +220,7 @@ async function run() {
   const manual = $("ticket").value.trim();
   let target;
   if (manual) {
-    target = { node_id: "(manual)", ticket: manual };
+    target = { node_id: "(manual)", ticket: manual, relay: null };
   } else {
     target = pickTarget(markdown);
     if (!target) {
@@ -221,25 +234,32 @@ async function run() {
   $("output").textContent = "";
   setStatus(`running on ${shortId(target.node_id)}…`);
 
-  try {
-    await client.submit_job(target.ticket, b64encode(markdown), 300, (jsonStr) => {
-      const evt = JSON.parse(jsonStr);
-      if (evt.type === "job_log") {
-        const data = new TextDecoder().decode(base64_decode(evt.data));
-        appendOut(data, "log-" + evt.channel);
-      } else if (evt.type === "job_done") {
-        if (evt.stdout) appendOut(evt.stdout, "done");
-        if (evt.stderr) appendOut(evt.stderr, "err");
-        if (evt.artifact_file) {
-          appendOut(`[artifact: ${evt.artifact_file}${evt.artifact_ext || ""}]`, "done");
-        }
-        setStatus(evt.exit_code === 0 ? "done (exit 0)" : `failed (exit ${evt.exit_code})`,
-                  evt.exit_code === 0 ? "" : "err");
-      } else if (evt.type === "error") {
-        appendOut(evt.message, "err");
-        setStatus("rejected", "err");
+  const onEvent = (jsonStr) => {
+    const evt = JSON.parse(jsonStr);
+    if (evt.type === "job_log") {
+      const data = new TextDecoder().decode(base64_decode(evt.data));
+      appendOut(data, "log-" + evt.channel);
+    } else if (evt.type === "job_done") {
+      if (evt.stdout) appendOut(evt.stdout, "done");
+      if (evt.stderr) appendOut(evt.stderr, "err");
+      if (evt.artifact_file) {
+        appendOut(`[artifact: ${evt.artifact_file}${evt.artifact_ext || ""}]`, "done");
       }
-    });
+      setStatus(evt.exit_code === 0 ? "done (exit 0)" : `failed (exit ${evt.exit_code})`,
+                evt.exit_code === 0 ? "" : "err");
+    } else if (evt.type === "error") {
+      appendOut(evt.message, "err");
+      setStatus("rejected", "err");
+    }
+  };
+  // iroh-native dial by stable node id + relay; ticket only as a
+  // fallback for legacy nodes that don't report a relay.
+  const submit = target.node_id && target.relay
+    ? () => client.submit_job_to_node(target.node_id, target.relay, b64encode(markdown), 300, onEvent)
+    : () => client.submit_job(target.ticket, b64encode(markdown), 300, onEvent);
+
+  try {
+    await submit();
     refreshPeers(); // re-sync the peer table after each run (non-blocking)
   } catch (e) {
     setStatus("error", "err");

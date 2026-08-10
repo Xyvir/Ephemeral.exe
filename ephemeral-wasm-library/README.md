@@ -11,12 +11,16 @@ by default, or a self-hosted one.
 ## Layout
 
 - `src/lib.rs` — the wasm crate: `EphemeralClient::create()` (endpoint),
-  `discover(seed_ticket)` (learn the cluster from a seed's hello reply),
-  `submit_job(ticket, doc, timeout, on_event)` (streamed job events).
+  `discover_node(node_id, relay)` / `submit_job_to_node(node_id, relay, …)`
+  (iroh-native dial by **stable node id + relay** — the same mechanism the
+  Python tiers use), plus the legacy `discover(seed_ticket)` /
+  `submit_job(ticket, …)` as a fallback for old peers. Hello frames carry
+  the client's relay, matching `ephemeral_net`.
 - `web/` — the SPA thin client (vanilla JS): auto-connects using the seed
-  tickets in `web/config.js`, auto-routes jobs to the best node, and renders
-  streamed output. The built glue is committed under `web/wbg/` so the SPA
-  runs without a Rust toolchain.
+  nodes in `web/config.js` (id + relay) and the live `docs/swarm.json` list,
+  auto-routes jobs to the best node by id + relay, and renders streamed
+  output. The built glue is committed under `web/wbg/` so the SPA runs
+  without a Rust toolchain.
 - `build.sh` — rebuilds the wasm module (see its header for the toolchain
   requirements: stable Rust with `wasm32-unknown-unknown`, a wasm-capable
   clang for `ring`'s C files such as wasi-sdk, and the `wasm-bindgen` CLI

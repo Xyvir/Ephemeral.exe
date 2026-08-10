@@ -12,7 +12,11 @@
 //! Browsers cannot hole-punch, so every connection traverses an iroh
 //! relay (n0's public relays by default; a custom relay URL can be
 //! passed to [`EphemeralClient::create`]). The bootstrap config — relay
-//! and the seed node's `EndpointTicket` — is supplied from JavaScript.
+//! and the seed node's stable node id + relay — is supplied from
+//! JavaScript (``web/config.js``, mirrored from ``ephemeral_net/swarm.py``).
+//! Dialing is iroh-native: nodes are addressed by their stable node id
+//! through a relay, no EndpointTicket required (tickets remain supported
+//! as a fallback for legacy peers).
 //!
 //! ```js
 //! import init, { EphemeralClient } from "./wbg/ephemeral_wasm_library.js";
@@ -28,7 +32,7 @@ use std::str::FromStr;
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
-use iroh::{Endpoint, RelayMode, endpoint::presets, SecretKey};
+use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, endpoint::presets, SecretKey};
 use iroh_tickets::endpoint::EndpointTicket;
 use js_sys::Function;
 use wasm_bindgen::prelude::*;
@@ -80,16 +84,31 @@ fn emit_event(on_event: &Function, event: &serde_json::Value) -> Result<(), JsVa
     Ok(())
 }
 
+/// Build a relay-routed address from a stable node id + relay URL.
+///
+/// This is the iroh-native dial (same mechanism `ephemeral_net.dial_node`
+/// uses): the relay routes by node id, so a compiled-in id never goes
+/// stale across seed restarts — no EndpointTicket required.
+fn node_addr(node_id: &str, relay_url: &str) -> Result<EndpointAddr, JsValue> {
+    let id = EndpointId::from_str(node_id).map_err(to_js_err)?;
+    let relay = RelayUrl::from_str(relay_url).map_err(to_js_err)?;
+    Ok(EndpointAddr::new(id).with_relay_url(relay))
+}
+
 /// Run the ``hello`` handshake on a fresh connection and return the reply.
+/// `relay` is this client's relay URL (or null) — it lets peers dial us
+/// back by node id, mirroring the Python tier's hello frames.
 async fn hello_exchange(
     endpoint: &Endpoint,
     conn: &iroh::endpoint::Connection,
+    relay: Option<&str>,
 ) -> Result<serde_json::Value, JsValue> {
     let (mut hs_send, mut hs_recv) = conn.open_bi().await.map_err(to_js_err)?;
     let hello = serde_json::json!({
         "type": "hello",
         "v": PROTOCOL_VERSION,
         "node_id": endpoint.id().to_string(),
+        "relay": relay,
         "ticket": EndpointTicket::new(endpoint.addr()).to_string(),
         "peers": [],
         "images": [],
@@ -105,10 +124,14 @@ async fn hello_exchange(
 // --- Client -------------------------------------------------------------
 
 /// A browser-side ephemeral client: owns an iroh endpoint and submits
-/// jobs to cluster compute nodes by their EndpointTicket.
+/// jobs to cluster compute nodes by stable node id + relay (or by
+/// EndpointTicket as a fallback).
 #[wasm_bindgen]
 pub struct EphemeralClient {
     endpoint: Endpoint,
+    // This client's configured relay (None = n0 public relays) — sent in
+    // hello frames so peers can dial us back by node id.
+    relay: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -122,7 +145,7 @@ impl EphemeralClient {
         secret_key_hex: Option<String>,
         relay_url: Option<String>,
     ) -> Result<EphemeralClient, JsValue> {
-        let mut builder = match relay_url {
+        let mut builder = match relay_url.as_deref() {
             Some(url) => {
                 let relay = RelayMode::custom(vec![url.parse().map_err(to_js_err)?]);
                 Endpoint::builder(presets::Minimal).relay_mode(relay)
@@ -134,7 +157,10 @@ impl EphemeralClient {
             builder = builder.secret_key(SecretKey::from_str(&hex).map_err(to_js_err)?);
         }
         let endpoint = builder.bind().await.map_err(to_js_err)?;
-        Ok(EphemeralClient { endpoint })
+        Ok(EphemeralClient {
+            endpoint,
+            relay: relay_url,
+        })
     }
 
     /// This client's node id (hex).
@@ -162,42 +188,39 @@ impl EphemeralClient {
     ///
     /// Peers carry dialable EndpointTickets, so one seed is enough to
     /// learn and reach the whole cluster.
+    /// Discover the cluster around a seed node — no user-supplied ticket
+    /// needed beyond the bootstrap config.
+    ///
+    /// Dial `seed_ticket`, complete the ``hello`` handshake, and resolve
+    /// with a JSON string describing the seed itself plus any peers its
+    /// hello carried:
+    ///
+    /// ```json
+    /// {"seed":{"node_id":"…","relay":"…","ticket":"…","images":["…"],"rtt_ms":42},
+    ///  "peers":[{"node_id":"…","relay":"…","ticket":"…","images":[],"rtt_ms":42}]}
+    /// ```
+    ///
+    /// Peers carry dialable EndpointTickets (and relays when known), so
+    /// one seed is enough to learn and reach the whole cluster.
     pub fn discover(&self, seed_ticket: String) -> js_sys::Promise {
         let endpoint = self.endpoint.clone();
+        let relay = self.relay.clone();
         future_to_promise(async move {
             let ticket = EndpointTicket::from_str(&seed_ticket).map_err(to_js_err)?;
             let addr = ticket.endpoint_addr().clone();
-            let conn = endpoint.connect(addr, ALPN).await.map_err(to_js_err)?;
-            // std::time::Instant panics on wasm32-unknown-unknown — use the JS clock.
-            let started = js_sys::Date::now();
-            let reply = hello_exchange(&endpoint, &conn).await?;
-            let rtt_ms = (js_sys::Date::now() - started) as u64;
+            discover_from_addr(&endpoint, addr, relay.as_deref()).await
+        })
+    }
 
-            let entry = |v: &serde_json::Value| {
-                serde_json::json!({
-                    "node_id": v.get("node_id").cloned().unwrap_or(serde_json::Value::Null),
-                    "ticket": v.get("ticket").cloned().unwrap_or(serde_json::Value::Null),
-                    "images": v.get("images").cloned().unwrap_or(serde_json::Value::Array(vec![])),
-                    "rtt_ms": rtt_ms,
-                })
-            };
-
-            let seed = entry(&reply);
-            let mut peers: Vec<serde_json::Value> = Vec::new();
-            if let Some(list) = reply.get("peers").and_then(|p| p.as_array()) {
-                for peer in list {
-                    let has_id = peer
-                        .get("node_id")
-                        .and_then(|n| n.as_str())
-                        .map_or(false, |n| !n.is_empty());
-                    if has_id {
-                        peers.push(entry(peer));
-                    }
-                }
-            }
-            let result = serde_json::json!({ "seed": seed, "peers": peers });
-            let _ = conn.close(0u32.into(), b"done");
-            Ok(JsValue::from_str(&result.to_string()))
+    /// Discover the cluster around a seed node by its STABLE NODE ID +
+    /// relay URL — the iroh-native dial (no ticket). Same result shape
+    /// as [`EphemeralClient::discover`].
+    pub fn discover_node(&self, node_id: String, relay_url: String) -> js_sys::Promise {
+        let endpoint = self.endpoint.clone();
+        let relay = self.relay.clone();
+        future_to_promise(async move {
+            let addr = node_addr(&node_id, &relay_url)?;
+            discover_from_addr(&endpoint, addr, relay.as_deref()).await
         })
     }
 
@@ -217,25 +240,86 @@ impl EphemeralClient {
         on_event: Function,
     ) -> js_sys::Promise {
         let endpoint = self.endpoint.clone();
+        let relay = self.relay.clone();
         future_to_promise(async move {
-            run_job(&endpoint, &ticket, &document_blob, timeout, &on_event).await
+            let ticket = EndpointTicket::from_str(&ticket).map_err(to_js_err)?;
+            let addr = ticket.endpoint_addr().clone();
+            run_job(&endpoint, addr, &document_blob, timeout, &on_event, relay.as_deref()).await
+        })
+    }
+
+    /// Submit a job to a compute node by its STABLE NODE ID + relay URL
+    /// — the iroh-native dial (no ticket). Same event contract as
+    /// [`EphemeralClient::submit_job`].
+    pub fn submit_job_to_node(
+        &self,
+        node_id: String,
+        relay_url: String,
+        document_blob: String,
+        timeout: u32,
+        on_event: Function,
+    ) -> js_sys::Promise {
+        let endpoint = self.endpoint.clone();
+        let relay = self.relay.clone();
+        future_to_promise(async move {
+            let addr = node_addr(&node_id, &relay_url)?;
+            run_job(&endpoint, addr, &document_blob, timeout, &on_event, relay.as_deref()).await
         })
     }
 }
 
+/// Shared discovery body: dial `addr`, hello, and summarize seed + peers.
+async fn discover_from_addr(
+    endpoint: &Endpoint,
+    addr: EndpointAddr,
+    relay: Option<&str>,
+) -> Result<JsValue, JsValue> {
+    let conn = endpoint.connect(addr, ALPN).await.map_err(to_js_err)?;
+    // std::time::Instant panics on wasm32-unknown-unknown — use the JS clock.
+    let started = js_sys::Date::now();
+    let reply = hello_exchange(endpoint, &conn, relay).await?;
+    let rtt_ms = (js_sys::Date::now() - started) as u64;
+
+    let entry = |v: &serde_json::Value| {
+        serde_json::json!({
+            "node_id": v.get("node_id").cloned().unwrap_or(serde_json::Value::Null),
+            "relay": v.get("relay").cloned().unwrap_or(serde_json::Value::Null),
+            "ticket": v.get("ticket").cloned().unwrap_or(serde_json::Value::Null),
+            "images": v.get("images").cloned().unwrap_or(serde_json::Value::Array(vec![])),
+            "rtt_ms": rtt_ms,
+        })
+    };
+
+    let seed = entry(&reply);
+    let mut peers: Vec<serde_json::Value> = Vec::new();
+    if let Some(list) = reply.get("peers").and_then(|p| p.as_array()) {
+        for peer in list {
+            let has_id = peer
+                .get("node_id")
+                .and_then(|n| n.as_str())
+                .map_or(false, |n| !n.is_empty());
+            if has_id {
+                peers.push(entry(peer));
+            }
+        }
+    }
+    let result = serde_json::json!({ "seed": seed, "peers": peers });
+    let _ = conn.close(0u32.into(), b"done");
+    Ok(JsValue::from_str(&result.to_string()))
+}
+
 async fn run_job(
     endpoint: &Endpoint,
-    ticket_str: &str,
+    addr: EndpointAddr,
     document_blob: &str,
     timeout: u32,
     on_event: &Function,
+    relay: Option<&str>,
 ) -> Result<JsValue, JsValue> {
-    let ticket = EndpointTicket::from_str(ticket_str).map_err(to_js_err)?;
-    let addr = ticket.endpoint_addr().clone();
     let conn = endpoint.connect(addr, ALPN).await.map_err(to_js_err)?;
 
     // 1) hello handshake (same as ephemeral_net's dial path)
-    hello_exchange(endpoint, &conn).await?;
+    hello_exchange(endpoint, &conn, relay).await?;
 
     // 2) job request on a second bi-stream
     let (mut send, mut recv) = conn.open_bi().await.map_err(to_js_err)?;

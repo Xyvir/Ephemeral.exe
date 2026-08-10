@@ -10,7 +10,8 @@ export type ReadableStreamType = "bytes";
 
 /**
  * A browser-side ephemeral client: owns an iroh endpoint and submits
- * jobs to cluster compute nodes by their EndpointTicket.
+ * jobs to cluster compute nodes by stable node id + relay (or by
+ * EndpointTicket as a fallback).
  */
 export class EphemeralClient {
     private constructor();
@@ -39,8 +40,28 @@ export class EphemeralClient {
      *
      * Peers carry dialable EndpointTickets, so one seed is enough to
      * learn and reach the whole cluster.
+     * Discover the cluster around a seed node — no user-supplied ticket
+     * needed beyond the bootstrap config.
+     *
+     * Dial `seed_ticket`, complete the ``hello`` handshake, and resolve
+     * with a JSON string describing the seed itself plus any peers its
+     * hello carried:
+     *
+     * ```json
+     * {"seed":{"node_id":"…","relay":"…","ticket":"…","images":["…"],"rtt_ms":42},
+     *  "peers":[{"node_id":"…","relay":"…","ticket":"…","images":[],"rtt_ms":42}]}
+     * ```
+     *
+     * Peers carry dialable EndpointTickets (and relays when known), so
+     * one seed is enough to learn and reach the whole cluster.
      */
     discover(seed_ticket: string): Promise<any>;
+    /**
+     * Discover the cluster around a seed node by its STABLE NODE ID +
+     * relay URL — the iroh-native dial (no ticket). Same result shape
+     * as [`EphemeralClient::discover`].
+     */
+    discover_node(node_id: string, relay_url: string): Promise<any>;
     /**
      * A serialized EndpointTicket others can dial this client with.
      */
@@ -60,6 +81,12 @@ export class EphemeralClient {
      * when the job terminates and rejects if the exchange fails.
      */
     submit_job(ticket: string, document_blob: string, timeout: number, on_event: Function): Promise<any>;
+    /**
+     * Submit a job to a compute node by its STABLE NODE ID + relay URL
+     * — the iroh-native dial (no ticket). Same event contract as
+     * [`EphemeralClient::submit_job`].
+     */
+    submit_job_to_node(node_id: string, relay_url: string, document_blob: string, timeout: number, on_event: Function): Promise<any>;
 }
 
 export class IntoUnderlyingByteSource {
@@ -103,9 +130,11 @@ export interface InitOutput {
     readonly base64_decode: (a: number, b: number) => [number, number, number, number];
     readonly ephemeralclient_create: (a: number, b: number, c: number, d: number) => any;
     readonly ephemeralclient_discover: (a: number, b: number, c: number) => any;
+    readonly ephemeralclient_discover_node: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly ephemeralclient_make_ticket: (a: number) => [number, number, number, number];
     readonly ephemeralclient_node_id: (a: number) => [number, number];
     readonly ephemeralclient_submit_job: (a: number, b: number, c: number, d: number, e: number, f: number, g: any) => any;
+    readonly ephemeralclient_submit_job_to_node: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: any) => any;
     readonly __wbg_intounderlyingbytesource_free: (a: number, b: number) => void;
     readonly intounderlyingbytesource_autoAllocateChunkSize: (a: number) => number;
     readonly intounderlyingbytesource_cancel: (a: number) => void;
@@ -120,15 +149,15 @@ export interface InitOutput {
     readonly intounderlyingsource_cancel: (a: number) => void;
     readonly intounderlyingsource_pull: (a: number, b: any) => any;
     readonly ring_core_0_17_14__bn_mul_mont: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly wasm_bindgen_18c2c14b3664a5fa___convert__closures_____invoke___wasm_bindgen_18c2c14b3664a5fa___JsValue__core_9b3796e30d99ddb7___result__Result_____wasm_bindgen_18c2c14b3664a5fa___JsError___true_: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen_18c2c14b3664a5fa___convert__closures_____invoke___js_sys_9b8caca0fb7b6e5e___Function_fn_wasm_bindgen_18c2c14b3664a5fa___JsValue_____wasm_bindgen_18c2c14b3664a5fa___sys__Undefined___js_sys_9b8caca0fb7b6e5e___Function_fn_wasm_bindgen_18c2c14b3664a5fa___JsValue_____wasm_bindgen_18c2c14b3664a5fa___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
-    readonly wasm_bindgen_18c2c14b3664a5fa___convert__closures_____invoke___wasm_bindgen_18c2c14b3664a5fa___JsValue______true_: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_18c2c14b3664a5fa___convert__closures_____invoke___web_sys_da9ba819b8c2bae8___features__gen_CloseEvent__CloseEvent______true_: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_18c2c14b3664a5fa___convert__closures_____invoke___web_sys_da9ba819b8c2bae8___features__gen_MessageEvent__MessageEvent______true_: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen_18c2c14b3664a5fa___convert__closures_____invoke_______true_: (a: number, b: number) => void;
-    readonly wasm_bindgen_18c2c14b3664a5fa___convert__closures_____invoke_______true__1_: (a: number, b: number) => void;
-    readonly wasm_bindgen_18c2c14b3664a5fa___convert__closures_____invoke_______true__2_: (a: number, b: number) => void;
-    readonly wasm_bindgen_18c2c14b3664a5fa___convert__closures_____invoke_______true__3_: (a: number, b: number) => void;
+    readonly wasm_bindgen_3a107c1ccc583604___convert__closures_____invoke___wasm_bindgen_3a107c1ccc583604___JsValue__core_9b3796e30d99ddb7___result__Result_____wasm_bindgen_3a107c1ccc583604___JsError___true_: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_3a107c1ccc583604___convert__closures_____invoke___js_sys_7dd593adad8f8873___Function_fn_wasm_bindgen_3a107c1ccc583604___JsValue_____wasm_bindgen_3a107c1ccc583604___sys__Undefined___js_sys_7dd593adad8f8873___Function_fn_wasm_bindgen_3a107c1ccc583604___JsValue_____wasm_bindgen_3a107c1ccc583604___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen_3a107c1ccc583604___convert__closures_____invoke___wasm_bindgen_3a107c1ccc583604___JsValue______true_: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_3a107c1ccc583604___convert__closures_____invoke___web_sys_6624f293850374ce___features__gen_CloseEvent__CloseEvent______true_: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_3a107c1ccc583604___convert__closures_____invoke___web_sys_6624f293850374ce___features__gen_MessageEvent__MessageEvent______true_: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen_3a107c1ccc583604___convert__closures_____invoke_______true_: (a: number, b: number) => void;
+    readonly wasm_bindgen_3a107c1ccc583604___convert__closures_____invoke_______true__1_: (a: number, b: number) => void;
+    readonly wasm_bindgen_3a107c1ccc583604___convert__closures_____invoke_______true__2_: (a: number, b: number) => void;
+    readonly wasm_bindgen_3a107c1ccc583604___convert__closures_____invoke_______true__3_: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;
