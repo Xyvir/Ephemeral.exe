@@ -55,6 +55,25 @@ install.sh               ← One-shot sidecar deployment (systemd + rootless Pod
 
 
 
+### Distributed Tier & Trust Model
+
+Ephemeral is expanding into a multi-tier distributed architecture built on the [iroh](https://www.iroh.computer) peer-to-peer networking library. The distributed tiers share the same `ephemeral_core` engine and a common networking core (`ephemeral_net`) that adds a peer-to-peer job network on top:
+
+**Implemented so far:** `ephemeral_net` Phase 1 (QUIC transport, hello handshake, seed-mediated discovery, job streaming over one connection) and Phase 2 (receiver-side sandboxing — image allowlist, `unsafe` stripped, `image=`/`cmd=`/`entrypoint=` overrides ignored, `--memory 2g`/`--cpus 2`/`--pids-limit 512`/`--network none` enforced — plus nearest-neighbor offloading: when an image isn't warm locally, the job forwards to the nearest node that has it while the image pulls in the background). `ephemeral-self-host-distributed` Phase 2.5 ships as `main_distributed.py` (a REST gateway that joins the cluster as a compute node; `pip install -r requirements-api.txt -r requirements-net.txt` and run `uvicorn main_distributed:app`, configured via `EPHEMERAL_RELAY`, `EPHEMERAL_SEEDS`, `EPHEMERAL_SECRET`, `EPHEMERAL_ALLOW_NETWORK`).
+
+| Package | Role | Runtime | Trust Model |
+|---|---|---|---|
+| `ephemeral-wasm-library` | Browser client translating REST-style job requests into the distributed network | Browser (WebAssembly) | **Public** — good-faith |
+| `ephemeral-distributed.exe` | Windows tray app: local execution, compute node, and nearest-neighbor offloading | Windows (PyInstaller + iroh) | Public or private |
+| `ephemeral-self-host-distributed` | Headless compute node + REST gateway for self-hosting (Docker/Coolify) | Linux container | Public or private |
+| `main_local.py` / `main_api.py` (existing) | Local-only execution | Windows / Linux | **Private** — nothing ever leaves the machine |
+
+> **Trust Model & Privacy — please read before using the distributed tiers.**
+> The public distributed network is a *good-faith* model designed for teaching (e.g., college students and professors running code snippets). **Anything you submit to the public ephemeral cloud should be treated as public knowledge — there is no privacy guarantee.** It is not security-first or trust-first: other network participants may be able to observe submitted code and outputs, and the shared public relays carry no uptime or performance guarantees.
+> If you need privacy, **self-host instead** and use the non-distributed packages (`main_local.py` / `main_api.py`, or `ephemeral-self-host-distributed` on infrastructure you control).
+
+
+
 ## Prerequisites
 Before running Ephemeral, you must ensure your Windows environment is ready to host Linux containers.
 
@@ -463,3 +482,9 @@ chmod +x install.sh && sudo ./install.sh
 ```
 
 This creates a hardened systemd service at `127.0.0.1:8787`, ready to be reverse-proxied.
+
+## Future Plans
+
+- **Room Codes:** per-class gossip topics so a professor's students share an isolated topic and can see each other's runs. Implemented as a lightweight string in the job payload (not authentication), a topic per class.
+- **Paper-Light REST Clients:** a static-URL REST API that sends requests and responds over the ephemeral distributed network, for 'paper-light' clients (curl-friendly, no WASM required) — with rate limiting, cached responses, and the like. This is a non-trivial service with a lot of implementation surface, so it is deliberately deferred.
+- **Image-Layer Sync:** instead of pulling images from a registry after offloading, transfer warm image layers from the neighbor node over the iroh network (content-addressed, integrity-verified) so repeat jobs start instantly.

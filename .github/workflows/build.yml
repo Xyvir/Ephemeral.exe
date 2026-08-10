@@ -35,11 +35,20 @@ jobs:
     - name: Install dependencies
       run: pip install -r requirements-api.txt
 
+    - name: Install networking tier deps
+      run: pip install -r requirements-net.txt
+
     - name: Run core tests
       run: python test_core.py
 
     - name: Run API model tests
       run: python test_api.py
+
+    - name: Run networking tier tests
+      run: python test_net.py
+
+    - name: Run self-host distributed gateway tests
+      run: python test_self_host.py
 
   # ── Windows EXE Build ─────────────────────────────────────────
   build-exe:

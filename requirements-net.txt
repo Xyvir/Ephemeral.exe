@@ -1,0 +1,2 @@
+# --- Distributed Networking Tier (ephemeral_net) ---
+iroh>=1.1.0

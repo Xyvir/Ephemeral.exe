@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
 import re
 import shlex
@@ -77,6 +78,35 @@ def check_image_exists(image_name: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def list_local_images() -> list[str]:
+    """
+    List the fully-qualified names of all images cached locally, in one call.
+
+    Used by distributed nodes to advertise which images are "warm" so peers
+    can offload jobs to a node that already has the image instead of pulling.
+    Returns an empty list when Podman is unavailable or returns no names.
+    """
+    try:
+        startupinfo = get_startupinfo()
+        output = subprocess.check_output(
+            ['podman', 'images', '--format', 'json'],
+            startupinfo=startupinfo,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return []
+    try:
+        entries = json.loads(output)
+    except Exception:
+        return []
+    names: list[str] = []
+    for entry in entries if isinstance(entries, list) else []:
+        for name in entry.get('Names') or []:
+            if name and name not in names:
+                names.append(name)
+    return names
 
 
 async def ensure_podman_running() -> None:
@@ -215,7 +245,13 @@ def _build_podman_cmd(
     `network=False` applies `--network none`. When `network` is None the
     container's `allow_network` config flag decides.
     """
-    podman_cmd = ['podman', 'run', '--rm', '-i', '--memory', '2g', '-w', '/tmp']
+    podman_cmd = [
+        'podman', 'run', '--rm', '-i',
+        '--memory', '2g',
+        '--cpus', '2',
+        '--pids-limit', '512',
+        '-w', '/tmp',
+    ]
 
     if network is not None:
         if network:
