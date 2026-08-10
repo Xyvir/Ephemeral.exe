@@ -125,7 +125,9 @@ Overrides: `INSTALL_DIR` (target directory), `PORT` (default **8787** — the Li
 
 ### Dropping into a Lithic-UK deployment
 
-[Lithic-UK](https://github.com/Xyvir/Lithic-UK) does **not** bundle the Ephemeral backend — it treats it as an optional sidecar and expects it to already be running. Its generated Caddyfile contains:
+[Lithic-UK](https://github.com/Xyvir/Lithic-UK) can provision the Ephemeral backend itself: its `deploy/install-lxc.sh` honors `ENABLE_EPHEMERAL=true`, which clones this repo and runs the root `./install.sh` as part of the LXC setup. `install.sh` is the one-shot sidecar deployer: it creates a dedicated `ephemeral` system user, installs the API to `/opt/ephemeral` with its own venv, initializes rootless Podman for that user, provisions the artifact directory, and registers/starts the `ephemeral-api` systemd service bound to `127.0.0.1:8787`.
+
+Lithic's generated Caddyfile then proxies the sidecar:
 
 ```caddy
 handle /ephemeral/api/v1/* {
@@ -133,7 +135,9 @@ handle /ephemeral/api/v1/* {
 }
 ```
 
-So the contract is: serve the REST API under the `/ephemeral/api/v1` prefix on port `8787` (which `main_api.py` and `install_self_host.sh` already do), and let Caddy handle HTTPS + Basic Auth at the edge — the API itself needs no auth. Artifacts are written to `/data/ephemeral/` (`WEBDAV_PATH` in `main_api.py`), which sits inside Lithic's WebDAV root `/data`, so they're delivered back to the front end through the `/sync` WebDAV endpoints the REST response names. Run Caddy and Ephemeral on different hosts by setting `EPHEMERAL_HOST` in the Lithic service environment.
+The contract is: serve the REST API under the `/ephemeral/api/v1` prefix on port `8787` (which `main_api.py` already does), and let Caddy handle HTTPS + Basic Auth at the edge — the API itself needs no auth. Artifacts are written to `/data/ephemeral/` (`WEBDAV_PATH` in `main_api.py`, created on demand by the artifact code), which sits inside Lithic's WebDAV root `/data`, so they're delivered back to the front end through the `/sync` WebDAV endpoints the REST response names. Run Caddy and Ephemeral on different hosts by setting `EPHEMERAL_HOST` in the Lithic service environment.
+
+There are two installers, for different slots: **`install.sh`** (root, one-shot — what Lithic's `ENABLE_EPHEMERAL` flag invokes; systemd service + rootless Podman) and **`install_self_host.sh`** (no root required; user-space install to `~/ephemeral-self-host`, both local and distributed flavors, optional `SYSTEMD=1` user service).
 
 ## Prerequisites
 Before running Ephemeral, you must ensure your Windows environment is ready to host Linux containers.
