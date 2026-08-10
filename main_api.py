@@ -7,7 +7,10 @@ and returns structured JSON results with optional artifact routing to a
 local WebDAV mount at /data/ephemeral/.
 
 Usage:
-    uvicorn main_api:app --host 0.0.0.0 --port 8000
+    uvicorn main_api:app --host 0.0.0.0 --port 8787
+
+Port 8787 is the Lithic-UK sidecar slot: its generated Caddyfile proxies
+/ephemeral/api/v1/* to 127.0.0.1:8787 (see install_self_host.sh).
 """
 from __future__ import annotations
 

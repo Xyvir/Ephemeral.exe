@@ -13,11 +13,13 @@ Configuration (environment variables):
     EPHEMERAL_RELAY          "n0" (default) | "minimal" | "disabled"
     EPHEMERAL_SEEDS          comma-separated EndpointTickets to bootstrap from
     EPHEMERAL_SECRET         hex-encoded 32-byte secret for a persistent node id
-    EPHEMERAL_PORT           HTTP port (default 8000)
+    EPHEMERAL_PORT           HTTP port (default 8787 — the Lithic-UK sidecar slot)
     EPHEMERAL_ALLOW_NETWORK  "1" to let remote jobs use network access (default "0")
 
 Usage:
-    uvicorn main_distributed:app --host 0.0.0.0 --port 8000
+    uvicorn main_distributed:app --host 0.0.0.0 --port 8787
+
+Port 8787 matches the local API server and the Lithic-UK sidecar slot.
 """
 from __future__ import annotations
 

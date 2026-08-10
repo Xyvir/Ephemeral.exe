@@ -109,6 +109,32 @@ The CI workflow (`/.github/workflows/build.yml`) builds and attaches **six artif
 
 Run an AppImage like any executable: `chmod +x ephemeral-distributed-x86_64.AppImage && ./ephemeral-distributed-x86_64.AppImage` (configure the cluster via `EPHEMERAL_SEEDS`/`EPHEMERAL_RELAY`/`EPHEMERAL_SECRET`/`EPHEMERAL_ALLOW_NETWORK` environment variables, as with the Windows build). For the self-host tiers, `docker build -f Dockerfile -t ephemeral-self-host-distributed .` (distributed) or `docker build -f Dockerfile.api -t ephemeral-self-host .` (local API), and mount the host Podman socket (`-v /run/podman/podman.sock:/run/podman/podman.sock`) so the node can execute jobs.
 
+### Install the self-host server in one line
+
+Both self-host flavors install with a single curl (`install_self_host.sh` — installs into `~/ephemeral-self-host`, creates a venv, and either prints the `uvicorn` run command or installs a user systemd service with `SYSTEMD=1`):
+
+```bash
+# Non-distributed REST API — local-only execution (the Lithic-UK build)
+curl -fsSL https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/install_self_host.sh | bash -s -- local
+
+# Distributed gateway — joins the ephemeral cluster as a compute node
+curl -fsSL https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/install_self_host.sh | bash -s -- distributed
+```
+
+Overrides: `INSTALL_DIR` (target directory), `PORT` (default **8787** — the Lithic-UK sidecar slot; see below), and for the distributed flavor `EPHEMERAL_RELAY` / `EPHEMERAL_SEEDS` / `EPHEMERAL_SECRET` / `EPHEMERAL_ALLOW_NETWORK`. Example: `curl -fsSL .../install_self_host.sh | EPHEMERAL_SEEDS="..." SYSTEMD=1 bash -s -- distributed`.
+
+### Dropping into a Lithic-UK deployment
+
+[Lithic-UK](https://github.com/Xyvir/Lithic-UK) does **not** bundle the Ephemeral backend — it treats it as an optional sidecar and expects it to already be running. Its generated Caddyfile contains:
+
+```caddy
+handle /ephemeral/api/v1/* {
+    reverse_proxy ${EPHEMERAL_HOST:-127.0.0.1}:8787
+}
+```
+
+So the contract is: serve the REST API under the `/ephemeral/api/v1` prefix on port `8787` (which `main_api.py` and `install_self_host.sh` already do), and let Caddy handle HTTPS + Basic Auth at the edge — the API itself needs no auth. Artifacts are written to `/data/ephemeral/` (`WEBDAV_PATH` in `main_api.py`), which sits inside Lithic's WebDAV root `/data`, so they're delivered back to the front end through the `/sync` WebDAV endpoints the REST response names. Run Caddy and Ephemeral on different hosts by setting `EPHEMERAL_HOST` in the Lithic service environment.
+
 ## Prerequisites
 Before running Ephemeral, you must ensure your Windows environment is ready to host Linux containers.
 
@@ -499,13 +525,13 @@ For remote or programmatic execution, Ephemeral can run as a FastAPI server:
 
 ```bash
 pip install -r requirements-api.txt
-uvicorn main_api:app --host 0.0.0.0 --port 8000
+uvicorn main_api:app --host 0.0.0.0 --port 8787
 ```
 
 Send a base64-encoded Markdown document via `POST /ephemeral/api/v1/run`:
 
 ```bash
-curl -X POST http://localhost:8000/ephemeral/api/v1/run \
+curl -X POST http://localhost:8787/ephemeral/api/v1/run \
   -H "Content-Type: application/json" \
   -d '{"document_blob": "'$(echo '```python\nprint("Hello!")\n```' | base64)'", "timeout": 10}'
 ```

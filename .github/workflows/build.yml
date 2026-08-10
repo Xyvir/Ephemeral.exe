@@ -172,9 +172,12 @@ jobs:
     - name: Package self-host distributed tier
       shell: bash
       run: |
+        # main_distributed.py imports main_api (wire contract), which pulls in
+        # ephemeral_core; the gateway pulls in ephemeral_net. All four are required.
         tar czf dist/ephemeral-self-host-distributed.tar.gz \
-          ephemeral_self_host/ main_distributed.py \
-          requirements-net.txt requirements-api.txt Dockerfile .dockerignore
+          ephemeral_self_host/ ephemeral_net/ main_distributed.py main_api.py \
+          ephemeral_core/ requirements-net.txt requirements-api.txt \
+          Dockerfile .dockerignore
 
     - name: Package self-host (non-distributed) tier
       shell: bash
@@ -182,6 +185,29 @@ jobs:
         tar czf dist/ephemeral-self-host.tar.gz \
           main_api.py ephemeral_core/ \
           requirements-api.txt Dockerfile.api .dockerignore
+
+    - name: Smoke test — install script + release tarballs
+      shell: bash
+      run: |
+        set -euo pipefail
+        # EPHEMERAL_FROM_MAIN=1 makes the installer test deterministic against
+        # the current branch (the released tarball is only rebuilt on release).
+        export INSTALL_DIR="$HOME/.ephemeral-smoke-local"
+        curl -fsSL https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/install_self_host.sh | EPHEMERAL_FROM_MAIN=1 bash -s -- local
+        (cd "$INSTALL_DIR" && .venv/bin/python -c "from main_api import app; print('local API imports OK')")
+        export INSTALL_DIR="$HOME/.ephemeral-smoke-dist"
+        curl -fsSL https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/install_self_host.sh | EPHEMERAL_FROM_MAIN=1 bash -s -- distributed
+        (cd "$INSTALL_DIR" && .venv/bin/python -c "from main_distributed import app; print('distributed gateway imports OK')")
+        # Verify the tarballs that releases/installer users actually receive are
+        # complete (main_distributed imports main_api -> ephemeral_core, and the
+        # gateway pulls in ephemeral_net).
+        PY="$INSTALL_DIR/.venv/bin/python"
+        for asset in ephemeral-self-host ephemeral-self-host-distributed; do
+          rm -rf "$HOME/.tarball-check" && mkdir -p "$HOME/.tarball-check"
+          tar -xzf "dist/$asset.tar.gz" -C "$HOME/.tarball-check"
+          (cd "$HOME/.tarball-check" && "$PY" -c "import main_api")
+        done
+        (cd "$HOME/.tarball-check" && "$PY" -c "import main_distributed; print('both tarballs import OK')")
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
