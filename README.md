@@ -59,6 +59,8 @@ install.sh               ← One-shot sidecar deployment (systemd + rootless Pod
 
 Ephemeral is expanding into a multi-tier distributed architecture built on the [iroh](https://www.iroh.computer) peer-to-peer networking library. The distributed tiers share the same `ephemeral_core` engine and a common networking core (`ephemeral_net`) that adds a peer-to-peer job network on top:
 
+**Client/server thickness** (thinnest → thickest): *paper-thin* clients — the future static-URL REST API (curl-friendly, no WASM required); *thin* clients — the browser WASM SPA; *thick* clients — the desktop tray apps; *thick servers* — the self-hosted gateways.
+
 **Implemented so far:** `ephemeral_net` Phase 1 (QUIC transport, hello handshake, seed-mediated discovery, job streaming over one connection) and Phase 2 (receiver-side sandboxing — image allowlist, `unsafe` stripped, `image=`/`cmd=`/`entrypoint=` overrides ignored, `--memory 2g`/`--cpus 2`/`--pids-limit 512`/`--network none` enforced — plus nearest-neighbor offloading: when an image isn't warm locally, the job forwards to the nearest node that has it while the image pulls in the background). `ephemeral-self-host-distributed` Phase 2.5 ships as `main_distributed.py` (a REST gateway that joins the cluster as a compute node; `pip install -r requirements-api.txt -r requirements-net.txt` and run `uvicorn main_distributed:app`, configured via `EPHEMERAL_RELAY`, `EPHEMERAL_SEEDS`, `EPHEMERAL_SECRET`, `EPHEMERAL_ALLOW_NETWORK`). Phase 3 ships the browser WebAssembly client (below) and the `ephemeral-distributed` desktop tier (`main_distributed_client.py`), and both desktop tiers build for Windows (EXE) and Linux (AppImage) — see **Release artifacts**.
 
 | Package | Role | Runtime | Trust Model |
@@ -519,5 +521,5 @@ This creates a hardened systemd service at `127.0.0.1:8787`, ready to be reverse
 ## Future Plans
 
 - **Room Codes:** a short, human-friendly code that selects *which network* to join (a routing/partition field on top of the seed table — not authentication). With seed-mediated auto-discovery already handling node selection within a network, a room code becomes the user-facing way to choose the right cluster, e.g. per-class topics so a professor's students share an isolated room.
-- **Paper-Light REST Clients:** a static-URL REST API that sends requests and responds over the ephemeral distributed network, for 'paper-light' clients (curl-friendly, no WASM required) — with rate limiting, cached responses, and the like. This is a non-trivial service with a lot of implementation surface, so it is deliberately deferred.
+- **Paper-Thin REST Clients:** a static-URL REST API that sends requests and responds over the ephemeral distributed network, for 'paper-thin' clients (curl-friendly, no WASM required) — with rate limiting, cached responses, and the like. This is a non-trivial service with a lot of implementation surface, so it is deliberately deferred.
 - **Image-Layer Sync:** instead of pulling images from a registry after offloading, transfer warm image layers from the neighbor node over the iroh network (content-addressed, integrity-verified) so repeat jobs start instantly.
