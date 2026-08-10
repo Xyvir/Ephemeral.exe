@@ -171,4 +171,22 @@ assert prepared21['content'].startswith("# /// script\n")
 assert block21['content'] == 'import numpy\nprint(1)\n'  # original untouched
 print("PASS: prepare_python_block")
 
-print("\n=== ALL 21 TESTS PASSED ===")
+# --- Test 22: language-map image set (super-seed hydration) ---
+# The hydrate set must equal the receiver-side allowlist exactly, or a
+# "super-seed" node could be missing an image remote jobs may request.
+from ephemeral_core.config import LANG_MAP, mapped_images
+
+imgs = mapped_images()
+assert len(imgs) > 30, f"expected a rich language map, got {len(imgs)} images"
+assert len(imgs) == len(set(imgs)), "mapped_images must dedupe (gcc backs c/cpp/fortran)"
+assert "docker.io/tymills620/ephemeral-python-uv:latest" in imgs
+assert "docker.io/library/node:18-alpine" in imgs
+assert "docker.io/library/gcc:latest" in imgs
+
+from ephemeral_net.sandbox import default_image_allowlist
+
+assert set(imgs) == set(default_image_allowlist()), \
+    "hydrate set must match the receiver-side allowlist"
+print(f"PASS: language-map image set ({len(imgs)} unique images == allowlist)")
+
+print("\n=== ALL 22 TESTS PASSED ===")

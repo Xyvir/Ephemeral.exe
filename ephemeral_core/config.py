@@ -125,3 +125,28 @@ ESOLANGS = [
 for lang in ESOLANGS:
     if lang not in LANG_MAP:
         LANG_MAP[lang] = {'image': f'docker.io/esolang/{lang}', 'cmd': ['sh', '-c', 'cat > /tmp/code && script /tmp/code']}
+
+
+def mapped_images() -> list[str]:
+    """
+    Every distinct image the language map can resolve a block to.
+
+    Walks :data:`LANG_MAP` in definition order, taking the ``image`` of
+    each dict entry (string entries are aliases whose target is covered
+    when the map reaches it), deduped so an image backing several
+    languages (e.g. ``gcc`` for c/cpp/fortran) is pulled exactly once.
+    This is the same set the receiver-side allowlist derives from
+    (``ephemeral_net.sandbox.default_image_allowlist``), so hydrating it
+    turns a thick node into a "super-seed" for every remote job it may
+    accept.
+    """
+    images: list[str] = []
+    seen: set[str] = set()
+    for value in LANG_MAP.values():
+        if not isinstance(value, dict):
+            continue
+        image = value.get("image")
+        if image and image not in seen:
+            seen.add(image)
+            images.append(image)
+    return images
