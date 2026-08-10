@@ -74,23 +74,25 @@ def parse_genesis(value: str | None) -> list[tuple[str, str]]:
     return nodes
 
 
-# DNS TXT strings are capped at 255 chars; multi-string records are
-# concatenated by resolvers. Keep the mirror comfortably under practical
-# UDP delivery (~4 KB with EDNS0) and Cloudflare's combined-content cap
-# (8192 chars): at ~110 chars per compact entry, 3500 chars fits ~30
-# nodes — plenty for first contact (dialing ANY live member reveals the
-# whole swarm via hello).
-DNS_MIRROR_MAX_CHARS = 3500
+# DNS TXT strings are capped at 255 chars. Two compact entries fit in a
+# single 255-char string (~108 chars each with the default n0 relay) — no
+# multi-string splitting needed. Two is enough for first contact: dialing
+# ANY live entry reveals the whole swarm via hello, and the record is
+# re-ranked/re-written every 6 h. The entry-count cap is belt-and-
+# suspenders on top of the char cap (a long self-hosted relay could
+# otherwise push two entries past 255).
+DNS_MIRROR_MAX_ENTRIES = 2
+DNS_MIRROR_MAX_CHARS = 255
 
 
 def build_dns_mirror(nodes: list[dict]) -> str:
     """
-    Compact ``iroh1:<node_id>;<relay>`` mirror of the ranked node list.
+    Compact ``iroh1:<node_id>;<relay>`` mirror of the top ranked nodes.
 
-    Mirrors the same list ``docs/swarm.json`` carries, minus tickets
-    (they're ~200+ chars each and arrive via the hello handshake anyway;
-    current code dials by node id + relay). Capped so the record stays
-    within DNS size limits.
+    Mirrors the top of the same list ``docs/swarm.json`` carries, minus
+    tickets (they're ~200+ chars each and arrive via the hello handshake
+    anyway; current code dials by node id + relay). Capped to two entries
+    in one 255-char TXT string.
     """
     parts: list[str] = []
     total = 0
@@ -101,16 +103,11 @@ def build_dns_mirror(nodes: list[dict]) -> str:
             continue
         entry = f"iroh1:{node_id};{relay}"
         sep = 1 if parts else 0
-        if total + sep + len(entry) > DNS_MIRROR_MAX_CHARS:
+        if len(parts) >= DNS_MIRROR_MAX_ENTRIES or total + sep + len(entry) > DNS_MIRROR_MAX_CHARS:
             break
         parts.append(entry)
         total += sep + len(entry)
     return ",".join(parts)
-
-
-def _split_txt_strings(content: str, limit: int = 255) -> str:
-    """Split into <=255-char strings joined by newline (multi-string TXT)."""
-    return "\n".join(content[i : i + limit] for i in range(0, len(content), limit))
 
 
 def update_dns_txt(
@@ -174,7 +171,7 @@ def update_dns_txt(
         body = {
             "type": "TXT",
             "name": hostname,
-            "content": _split_txt_strings(content),
+            "content": content,  # single string, <= 255 chars by construction
             "ttl": 120,
         }
         if found:
