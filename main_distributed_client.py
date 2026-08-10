@@ -156,6 +156,10 @@ class Cluster:
             await node.bootstrap_nodes(EPHEMERAL_SEED_NODES)
         elif EPHEMERAL_SEEDS:
             await node.bootstrap(EPHEMERAL_SEEDS)
+        else:
+            # No compiled-in seeds: join the public swarm via the live
+            # bootstrap list (docs/swarm.json) — fully automatic.
+            await node.bootstrap_from_list()
         self.node = node
 
     def stop(self) -> None:

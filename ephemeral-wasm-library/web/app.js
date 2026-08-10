@@ -140,8 +140,9 @@ function dialCandidate(client, c) {
 async function refreshPeers() {
   setStatus("discovering cluster…");
 
-  // Live bootstrap list first (current members), compiled seeds as
-  // fallback — dedupe by node_id (falling back to ticket).
+  // Live bootstrap list first (current members) — no compiled seeds in
+  // the public build; operator-configured ids/tickets (private swarms)
+  // are dialed too. Dedupe by node_id (falling back to ticket).
   const swarmNodes = await fetchSwarmNodes();
   const candidates = [];
   const seen = new Set();
@@ -164,7 +165,10 @@ async function refreshPeers() {
   }
   if (!candidates.length) {
     renderCluster();
-    setStatus("no bootstrap sources", "err");
+    setStatus(
+      "bootstrap list unreachable — check connectivity or paste a seed ticket",
+      "err"
+    );
     return;
   }
 

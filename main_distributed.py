@@ -11,9 +11,10 @@ background pull) otherwise.
 Configuration (environment variables):
 
     EPHEMERAL_RELAY          "n0" (default) | "minimal" | "disabled"
-    EPHEMERAL_SEED_NODES     comma-separated node_id[@relay] to bootstrap from;
-                             unset joins the default swarm by node id
-                             (see ephemeral_net.swarm) — iroh-native, no tickets
+    EPHEMERAL_SEED_NODES     comma-separated node_id[@relay] for a PRIVATE
+                             node-id network; unset joins the public swarm via
+                             the live bootstrap list (docs/swarm.json) — no
+                             compiled-in seeds, fully automatic
     EPHEMERAL_SEEDS          comma-separated EndpointTickets (private networks /
                              backward compat; overrides SEED_NODES when set)
     EPHEMERAL_SECRET         hex-encoded 32-byte secret for a persistent node id;
@@ -26,9 +27,10 @@ Usage:
 
 Port 8787 matches the local API server and the Lithic-UK sidecar slot.
 
-On startup the node prints ``SWARM NODE_ID`` / ``SWARM RELAY`` — compile
-them into ``ephemeral_net/swarm.py`` + ``web/config.js`` to make this
-gateway the swarm's always-on seed (by stable id, no ticket).
+On startup the node prints ``SWARM NODE_ID`` / ``SWARM RELAY`` — this is
+its stable identity for the swarm list. There is nothing to compile in:
+the node bootstraps from the live ``docs/swarm.json`` list and is picked
+up by the next scheduled refresh automatically.
 """
 from __future__ import annotations
 
@@ -83,9 +85,9 @@ async def lifespan(app: FastAPI):
     print(f"SWARM RELAY {node.relay_url()}", flush=True)
     print(f"SWARM SEED TICKET {node.ticket()}", flush=True)
     print(
-        "SWARM join: this node is part of the default ephemeral swarm; "
-        "compile the NODE_ID + RELAY above into ephemeral_net/swarm.py and "
-        "ephemeral-wasm-library/web/config.js to make it the always-on seed.",
+        "SWARM join: no compiled seeds — this node bootstrapped from the "
+        "live swarm list (docs/swarm.json) and will be listed automatically "
+        "on the next refresh. NODE_ID/RELAY above are its stable identity.",
         flush=True,
     )
     yield

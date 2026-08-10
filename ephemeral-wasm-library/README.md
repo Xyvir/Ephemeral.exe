@@ -16,11 +16,12 @@ by default, or a self-hosted one.
   Python tiers use), plus the legacy `discover(seed_ticket)` /
   `submit_job(ticket, …)` as a fallback for old peers. Hello frames carry
   the client's relay, matching `ephemeral_net`.
-- `web/` — the SPA thin client (vanilla JS): auto-connects using the seed
-  nodes in `web/config.js` (id + relay) and the live `docs/swarm.json` list,
-  auto-routes jobs to the best node by id + relay, and renders streamed
-  output. The built glue is committed under `web/wbg/` so the SPA runs
-  without a Rust toolchain.
+- `web/` — the SPA thin client (vanilla JS): auto-connects using the live
+  `docs/swarm.json` list — the public build ships with **no compiled-in
+  seeds** (mirroring the Python tiers), and `web/config.js` only carries
+  operator overrides for private swarms. It auto-routes jobs to the best
+  node by id + relay and renders streamed output. The built glue is
+  committed under `web/wbg/` so the SPA runs without a Rust toolchain.
 - `build.sh` — rebuilds the wasm module (see its header for the toolchain
   requirements: stable Rust with `wasm32-unknown-unknown`, a wasm-capable
   clang for `ring`'s C files such as wasi-sdk, and the `wasm-bindgen` CLI
@@ -37,4 +38,6 @@ cd web && python -m http.server 8787
 
 The public network is a good-faith model for teaching. Anything submitted to
 the public ephemeral cloud is public knowledge — no privacy guarantee. For
-private use, self-host and point `web/config.js` at your own relay + seeds.
+private use, self-host and point `web/config.js` at your own relay + private
+seed nodes (the `nodes` / `seedTickets` arrays are intentionally empty in the
+public build).

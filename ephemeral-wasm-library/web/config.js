@@ -10,38 +10,28 @@
 // `swarmJson`: bootstrap-list URLs tried at startup — the live node
 //          list (docs/swarm.json) is refreshed every 6 h by a scheduled
 //          GitHub Action, so the SPA dials CURRENT members instead of
-//          relying on a static compiled seed. The relative path works
+//          relying on any compiled-in seed. The relative path works
 //          when the SPA is served from the GitHub Pages repo root; the
 //          raw fallback covers any other origin.
-// `nodes`: compiled seed nodes as STABLE NODE ID + relay — the
-//          iroh-native bootstrap (no tickets). Every seed's `hello`
-//          reply carries its known peers (with relays, tickets and warm
-//          images), so one seed is enough to learn the whole cluster
-//          with zero input. Used when the swarm list can't be fetched
-//          or is empty.
-// `seedTickets`: legacy EndpointTickets for the same seeds — used to
-//          dial seeds that don't report a relay (old nodes) and as a
-//          last-resort fallback.
+// `nodes` / `seedTickets`: intentionally EMPTY — the distributed binaries
+//          ship with no hard-coded seeds (one big implicit swarm joined
+//          purely through the live list). Operators running a private
+//          swarm may add stable node ids here (node_id + relay) or a
+//          legacy ticket, but the public build relies on `swarmJson`.
 //
-// One big implicit swarm: `ephemeral_net/swarm.py` (DEFAULT_SWARM_NODES)
-// holds the same seeds by node id + relay — keep them in sync.
+// There is no `ephemeral_net/swarm.py` constant to keep in sync — the
+// Python tiers bootstrap from the same docs/swarm.json list.
 export const BOOTSTRAP = {
   relay: null,
   swarmJson: [
     "../../docs/swarm.json",
     "https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/docs/swarm.json",
+    "https://xyvir.github.io/Ephemeral.exe/docs/swarm.json",
   ],
   nodes: [
-    {
-      // Placeholder: the original demo node. Swap in your always-on
-      // node's id + relay (printed at gateway startup as SWARM NODE_ID /
-      // SWARM RELAY) so the public Pages demo always has a live seed.
-      node_id:
-        "154e7308b6af310df575c7c90bc8fe86146cfef036ac098662768a4f3c411ec5",
-      relay: "https://use1-1.relay.n0.iroh.link.",
-    },
+    // { node_id: "...", relay: "https://relay.example.com." } — private swarms only
   ],
   seedTickets: [
-    "endpointaaku44yiw2xtcdpvoxd4sc6i72dbi3h66a3kycmgmj3iutz4iepmkbaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs7zd3qdaeakyhcaagi64aybadakqaaushxag",
+    // "endpoint..." — legacy tickets, private swarms only
   ],
 };

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import tempfile
 from pathlib import Path
 
@@ -513,6 +514,74 @@ async def _offload_worker_executor(request):
 _offload_worker_executor.ran = []
 
 
+def test_fetch_swarm_list():
+    """The live bootstrap list is fetched, parsed, and first-URL-wins."""
+    from ephemeral_net.swarm import fetch_swarm_list
+
+    with tempfile.TemporaryDirectory(prefix="ephemeral-list-") as d:
+        good = Path(d) / "swarm.json"
+        good.write_text(
+            json.dumps(
+                {
+                    "updated": "2026-08-10T00:00:00Z",
+                    "nodes": [
+                        {"node_id": "a" * 64, "relay": "https://relay.example.", "ticket": "t1"},
+                        {"node_id": "b" * 64, "relay": None, "ticket": "t2"},
+                        {"relay": "no-identity-entry"},  # dropped
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        bad = Path(d) / "bad.json"
+        bad.write_text("not json", encoding="utf-8")
+
+        # First URL that parses wins.
+        nodes = fetch_swarm_list([bad.as_uri(), good.as_uri()])
+        assert len(nodes) == 2, nodes
+        assert nodes[0]["node_id"] == "a" * 64
+        assert nodes[1]["ticket"] == "t2"
+
+        # No reachable/parseable URL -> [] (callers retry next cycle).
+        assert fetch_swarm_list([bad.as_uri()]) == []
+        assert fetch_swarm_list([]) == []
+    print("  fetch_swarm_list: parsing + fallback OK")
+
+
+async def _run_list_bootstrap_integration() -> bool:
+    """
+    No compiled seeds: a node bootstraps from the LIVE SWARM LIST
+    (docs/swarm.json shape) and connects to a listed member.
+    """
+    from ephemeral_net.node import Node
+
+    b = Node(relay="disabled", idle_timeout=5.0)
+    await b.start()
+    a = Node(relay="disabled", idle_timeout=5.0)
+    try:
+        with tempfile.TemporaryDirectory(prefix="ephemeral-list-boot-") as d:
+            lst = Path(d) / "swarm.json"
+            lst.write_text(
+                json.dumps(
+                    {
+                        "updated": "2026-08-10T00:00:00Z",
+                        "nodes": [
+                            {"node_id": b.node_id(), "relay": None, "ticket": b.ticket()},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            await a.start()
+            await asyncio.wait_for(a.bootstrap_from_list([lst.as_uri()]), timeout=30)
+        assert b.node_id() in a._peers, "A should have dialed B from the list"
+        print("  LIST-BOOTSTRAP OK: dialed a listed member with no compiled seed")
+        return True
+    finally:
+        await a.close()
+        await b.close()
+
+
 async def _run_dial_by_id_integration() -> bool:
     """
     iroh-native identity: dial a node by its STABLE NODE ID + relay URL
@@ -679,6 +748,7 @@ def main():
     test_frame_too_large()
     test_frame_malformed()
     test_hello_frame()
+    test_fetch_swarm_list()
     test_job_messages()
     test_sanitize_strips_unsafe_and_overrides()
     test_sanitize_rejects_unknown_language()
@@ -718,6 +788,11 @@ def main():
     ok = asyncio.run(_run_dial_by_id_integration())
     if not ok:
         print("SKIP: dial-by-id integration test — no local connectivity")
+
+    print("\n--- live-list bootstrap integration (no compiled seeds) ---")
+    ok = asyncio.run(_run_list_bootstrap_integration())
+    if not ok:
+        print("SKIP: list-bootstrap integration test — no local connectivity")
 
 
 if __name__ == "__main__":

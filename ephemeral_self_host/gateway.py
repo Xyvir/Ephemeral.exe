@@ -124,6 +124,10 @@ class Gateway:
             await node.bootstrap_nodes(self.seed_nodes)
         elif self.seeds:
             await node.bootstrap(self.seeds)
+        else:
+            # No compiled-in seeds: join the public swarm via the live
+            # bootstrap list (docs/swarm.json) — fully automatic.
+            await node.bootstrap_from_list()
         self._node = node
 
     async def close(self) -> None:

@@ -5,44 +5,78 @@ One big implicit swarm: every distributed binary — desktop client
 (``main_distributed_client.py``), self-host gateway (``main_distributed.py``),
 and the wasm thin client (``ephemeral-wasm-library/web/``) — joins the same
 public iroh network by default and discovers the rest of it through the
-compiled-in seed ticket(s) below. No configuration required: run a binary and
-you're part of the swarm.
+**live bootstrap list** (``docs/swarm.json``, served by GitHub Pages / raw
+GitHub). No configuration and no compiled-in seeds required: run a binary
+and you're part of the swarm.
 
-A seed is an always-on compute node. Its EndpointTicket is stable only because
-the node persists its secret key (see :func:`load_or_create_secret`) — a
-fresh random key every run would mint a new ticket each restart and break
-everyone who compiled the old one in. Stand one up (the self-host distributed
-gateway prints ``SWARM SEED TICKET ...`` at startup), then swap the ticket
-below into ``DEFAULT_SWARM_SEEDS`` *and* ``ephemeral-wasm-library/web/config.js``.
+Why no compiled seeds? A seed compiled into every binary is a single point
+of failure the operator has to edit code to change. Instead, the always-on
+anchor is the *list*, not a box: ``scripts/update_swarm_json.py`` (a
+scheduled GitHub Action) joins the swarm, dials the previous list's members
+plus a single genesis anchor, and commits the live node list. New nodes are
+picked up automatically — stand up any distributed flavor on an always-on
+box and the next refresh lists it. The one genesis anchor lives in the
+refresh *script* (overridable via ``SWARM_GENESIS``), never in the binaries,
+and is only needed to bootstrap the very first, empty list — afterwards the
+list regenerates from its own members.
+
+Private/offline networks opt out of the public list entirely: set
+``EPHEMERAL_SEED_NODES`` (``node_id@relay``) or ``EPHEMERAL_SEEDS``
+(EndpointTickets) explicitly.
 """
 from __future__ import annotations
 
+import json
 import os
 import secrets
+import urllib.request
 from pathlib import Path
+from typing import Sequence
 
 # The relay every swarm node uses (n0's default). Node ids are stable
 # (persisted secrets), so a (node_id, relay) pair never goes stale — the
 # relay routes by node id across restarts.
 DEFAULT_RELAY = "https://use1-1.relay.n0.iroh.link."
 
-# The compiled-in swarm seed: an always-on node on the public n0 relays,
-# identified by its STABLE NODE ID + relay (iroh-native — no tickets).
-#
-# Keep in sync with `ephemeral-wasm-library/web/config.js` (BOOTSTRAP.nodes).
-# This is currently the original demo node (id decoded from its old ticket) —
-# a placeholder. Replace it with your own always-on node's id + relay
-# (printed at gateway startup as ``SWARM NODE_ID`` / ``SWARM RELAY``) so the
-# public Pages demo always has a live seed.
-DEFAULT_SWARM_NODES: list[tuple[str, str]] = [
-    ("154e7308b6af310df575c7c90bc8fe86146cfef036ac098662768a4f3c411ec5", DEFAULT_RELAY),
+# The always-on bootstrap list: URLs where the live node list
+# (docs/swarm.json, refreshed every 6 h by .github/workflows/
+# swarm-bootstrap.yml) can be fetched. First reachable URL wins. The wasm
+# SPA uses its own relative path first (same origin on GitHub Pages) plus
+# these as fallbacks — see ephemeral-wasm-library/web/config.js.
+SWARM_LIST_URLS: list[str] = [
+    "https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/docs/swarm.json",
+    "https://xyvir.github.io/Ephemeral.exe/docs/swarm.json",
 ]
 
-# Legacy ticket form of the same seed — kept for backward compatibility
-# (``EPHEMERAL_SEEDS`` and old hello frames still carry tickets).
-DEFAULT_SWARM_SEEDS: list[str] = [
-    "endpointaaku44yiw2xtcdpvoxd4sc6i72dbi3h66a3kycmgmj3iutz4iepmkbaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs7zd3qdaeakyhcaagi64aybadakqaaushxag",
-]
+
+def fetch_swarm_list(urls: Sequence[str] | None = None) -> list[dict]:
+    """
+    Fetch the live swarm node list from the first reachable URL.
+
+    Returns a list of ``{"node_id", "relay", "ticket", "images"}``-shaped
+    dicts (entries missing both ``node_id`` and ``ticket`` are dropped).
+    ``[]`` when no URL is reachable — callers keep whatever they already
+    know and retry on the next maintenance cycle.
+    """
+    if urls is None:
+        urls = SWARM_LIST_URLS
+    for url in urls:
+        try:
+            with urllib.request.urlopen(url, timeout=10) as res:
+                data = json.loads(res.read().decode("utf-8"))
+            nodes = data.get("nodes") if isinstance(data, dict) else None
+            if not isinstance(nodes, list):
+                continue
+            cleaned = [
+                n
+                for n in nodes
+                if isinstance(n, dict) and (n.get("node_id") or n.get("ticket"))
+            ]
+            if cleaned:
+                return cleaned
+        except Exception:
+            continue
+    return []
 
 
 def default_state_dir() -> Path:
@@ -56,8 +90,9 @@ def load_or_create_secret(path: Path | None = None) -> bytes:
     A stable 32-byte node identity, created once and reused forever.
 
     A node's EndpointTicket is derived from its secret key, so persisting
-    the key is what makes a compiled-in seed ticket keep working across
-    restarts. The key file is created with 0600 permissions.
+    the key is what makes a node's id permanent across restarts — and why
+    the list's ``node_id`` + ``relay`` entries never go stale. The key file
+    is created with 0600 permissions.
     """
     p = path or (default_state_dir() / "secret_key.bin")
     if p.exists():
@@ -78,10 +113,9 @@ def parse_seeds(env_value: str | None) -> list[str]:
     """
     Parse the ``EPHEMERAL_SEEDS`` environment variable (EndpointTickets).
 
-    Unset means *no* ticket bootstrap (node-id bootstrap is the default,
-    see :func:`parse_seed_nodes`); an explicit value (including ``""``)
-    replaces the node-id default entirely. This is the private-network /
-    backward-compat path.
+    Unset means *no* ticket bootstrap (the live-list / node-id bootstrap
+    is the default, see :func:`parse_seed_nodes`); an explicit value
+    (including ``\"\"``) opts into a private ticket-based network entirely.
     """
     if env_value is None:
         return []
@@ -93,12 +127,14 @@ def parse_seed_nodes(env_value: str | None) -> list[tuple[str, str]]:
     Parse ``EPHEMERAL_SEED_NODES`` — comma-separated ``node_id@relay``
     pairs (``node_id`` alone uses :data:`DEFAULT_RELAY`).
 
-    ``None`` (unset) falls back to the compiled-in swarm nodes — the
-    implicit-join behavior. Any explicit value (including ``""``) replaces
-    them entirely.
+    ``None`` (unset) returns ``[]`` — there are **no compiled-in seeds**;
+    the caller bootstraps from the live swarm list
+    (:func:`fetch_swarm_list` / ``Node.bootstrap_from_list``). Any
+    explicit value (including ``\"\"``) replaces the list bootstrap
+    entirely with a private node-id network.
     """
     if env_value is None:
-        return list(DEFAULT_SWARM_NODES)
+        return []
     nodes: list[tuple[str, str]] = []
     for raw in env_value.split(","):
         raw = raw.strip()
@@ -114,9 +150,9 @@ def parse_seed_nodes(env_value: str | None) -> list[tuple[str, str]]:
 
 __all__ = [
     "DEFAULT_RELAY",
-    "DEFAULT_SWARM_NODES",
-    "DEFAULT_SWARM_SEEDS",
+    "SWARM_LIST_URLS",
     "default_state_dir",
+    "fetch_swarm_list",
     "load_or_create_secret",
     "parse_seed_nodes",
     "parse_seeds",

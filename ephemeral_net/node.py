@@ -24,6 +24,7 @@ from typing import AsyncIterator, Sequence
 from .discovery import PeerInfo, PeerTable
 from .errors import HandshakeError, JobError, ProtocolError
 from .jobs import JobErrorEvent, JobExecutor, JobRequest, parse_job_frame
+from .swarm import SWARM_LIST_URLS, fetch_swarm_list
 from .protocol import (
     ALPN,
     DEFAULT_MAX_FRAME_SIZE,
@@ -126,6 +127,7 @@ class Node:
         self.table = PeerTable()
         self._seed_tickets: list[str] = []
         self._seed_nodes: list[tuple[str, str | None]] = []
+        self._list_urls: list[str] = []
         self._interval: float = 60.0
         # Mesh healing: when a peer dial fails, back off for this long so
         # the maintenance loop doesn't hammer dead peers every pass.
@@ -324,6 +326,7 @@ class Node:
             if self._closed:
                 return
             await self._bootstrap_once()
+            await self._bootstrap_list_once()
             await self._mesh_heal_once()
 
     async def _bootstrap_once(self) -> None:
@@ -339,6 +342,77 @@ class Node:
                 )
             except Exception as e:
                 logger.warning("bootstrap dial (node id) failed: %s", e)
+
+    async def bootstrap_from_list(
+        self, urls: Sequence[str] | None = None, interval: float = 60.0
+    ) -> None:
+        """
+        Bootstrap from the live swarm list (``docs/swarm.json``).
+
+        There are no compiled-in seeds — the always-on list (GitHub Pages /
+        raw GitHub, refreshed every 6 h by a scheduled Action) *is* the
+        bootstrap. Fetches the list, dials the listed members by stable
+        node id + relay (ticket fallback for legacy entries), and
+        re-fetches + dials new members every ``interval`` seconds so
+        freshly-picked-up nodes are learned without a restart.
+        """
+        self._list_urls = list(urls if urls is not None else SWARM_LIST_URLS)
+        self._interval = interval
+        await self._bootstrap_list_once()
+
+    async def _bootstrap_list_once(self) -> None:
+        """Fetch the live list and dial members we aren't connected to."""
+        if not self._list_urls or self._ep is None or self._closed:
+            return
+        try:
+            entries = await asyncio.wait_for(
+                asyncio.to_thread(fetch_swarm_list, self._list_urls),
+                timeout=self._dial_timeout + 5.0,
+            )
+        except Exception as e:
+            logger.warning("swarm list fetch failed: %s", e)
+            return
+        if not entries:
+            return
+        now = time.monotonic()
+        targets: list[tuple[str, str | None, str | None]] = []
+        for entry in entries:
+            node_id = entry.get("node_id")
+            relay = entry.get("relay")
+            ticket = entry.get("ticket")
+            if relay and relay != "None":
+                pass
+            else:
+                relay = None
+            key = node_id or ticket
+            if not key or key in self._peers:
+                continue
+            if node_id and node_id == self.node_id():
+                continue
+            last = self._dial_backoff.get(key)
+            if last is not None and now - last < self._heal_cooldown:
+                continue
+            targets.append((node_id, relay, ticket))
+        if not targets:
+            return
+
+        async def _try(node_id: str | None, relay: str | None, ticket: str | None) -> None:
+            key = node_id or ticket
+            try:
+                if node_id and relay:
+                    await asyncio.wait_for(
+                        self.dial_node(node_id, relay), timeout=self._dial_timeout
+                    )
+                elif ticket:
+                    await asyncio.wait_for(self.dial(ticket), timeout=self._dial_timeout)
+                else:
+                    return
+                logger.info("swarm list: connected to %s", str(key)[:12])
+            except Exception as e:
+                self._dial_backoff[key] = time.monotonic()
+                logger.debug("swarm list dial failed for %s: %s", str(key)[:12], e)
+
+        await asyncio.gather(*(_try(nid, rel, tk) for nid, rel, tk in targets))
 
     async def _mesh_heal_once(self) -> None:
         """

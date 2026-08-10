@@ -31,7 +31,15 @@ jobs:
     - name: Install networking tier deps
       run: pip install -r requirements-net.txt
 
+    # The genesis anchor is config, not code: set the SWARM_GENESIS repo
+    # variable (Settings -> Secrets and variables -> Actions -> Variables,
+    # comma-separated node_id@relay) to point at your own always-on node.
+    # Unset, the script uses its built-in default. This only matters for
+    # the very first, empty list — afterwards the list regenerates from
+    # its own members.
     - name: Discover the live swarm
+      env:
+        SWARM_GENESIS: ${{ vars.SWARM_GENESIS }}
       run: python scripts/update_swarm_json.py
 
     - name: Commit and push the refreshed list

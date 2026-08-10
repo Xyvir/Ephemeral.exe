@@ -21,11 +21,11 @@
   <p class="hint">
     This client <strong>auto-connects</strong> to the cluster: it fetches the
     live swarm list (<code>docs/swarm.json</code>, refreshed every 6 hours)
-    and dials current members, falling back to the seed tickets compiled
-    into <code>config.js</code> — no user input needed. Nodes are discovered
-    automatically and jobs route to the best available compute node (warm
-    image first, then lowest latency). All traffic goes through an iroh
-    relay — the public n0 relays by default, or a self-hosted one below.
+    and dials current members — the public build ships with no compiled-in
+    seeds — no user input needed. Nodes are discovered automatically and
+    jobs route to the best available compute node (warm image first, then
+    lowest latency). All traffic goes through an iroh relay — the public n0
+    relays by default, or a self-hosted one below.
   </p>
   <label>Manual seed ticket (optional — overrides auto-discovery)
     <input id="ticket" type="text" placeholder="EndpointTicket of a cluster node" autocomplete="off" />
