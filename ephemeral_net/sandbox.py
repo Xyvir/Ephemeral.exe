@@ -12,7 +12,11 @@ document reaches ``ephemeral_core``, :class:`CoreJobExecutor` sanitizes it:
 * the resolved image must be on the node's allowlist (default: the
   images defined in ``ephemeral_core.config.LANG_MAP``)
 * ``--memory``, ``--cpus``, ``--pids-limit``, and ``--network none``
-  are always enforced by the underlying container builder
+  are enforced by the underlying container builder. ``--network none``
+  is unconditional; the cgroup resource limits are applied whenever the
+  host can enforce them and skipped (with a one-time warning) on hosts
+  that cannot — e.g. a stock WSL2 + ``podman machine`` setup, which
+  doesn't delegate the cgroup controllers to rootless containers
 
 The sanitizer re-serializes the parsed blocks back to Markdown so the
 existing ``ephemeral_core`` pipeline (language grouping, dependency

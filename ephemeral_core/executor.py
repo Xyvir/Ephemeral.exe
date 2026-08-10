@@ -109,6 +109,84 @@ def list_local_images() -> list[str]:
     return names
 
 
+# --- Cgroup resource-limit capability ------------------------------------
+#
+# A stock WSL2 + `podman machine` setup does NOT delegate the cgroup
+# controllers (cpu/pids/memory) into the rootless user slice, so crun
+# rejects `--memory`/`--cpus`/`--pids-limit` ("controller `cpu` is not
+# available" / "open `memory.max` for writing"). Rather than asking
+# Windows users to customize their WSL/Linux setup, Ephemeral probes the
+# host once and skips only the limits it genuinely cannot enforce,
+# keeping `--network none` and the markdown-level sandbox intact.
+
+_limits_supported: bool | None = None
+_limits_warning_emitted = False
+
+
+def podman_supports_cgroup_limits() -> bool:
+    """
+    Whether this host's Podman can enforce cgroup resource limits.
+
+    Probed once per process with a throwaway limited container; the
+    result is cached. Returns ``True`` when the probe can't run (no
+    images, Podman down) so behavior only changes when we *know* limits
+    are unsupported.
+    """
+    global _limits_supported
+    if _limits_supported is None:
+        _limits_supported = _probe_cgroup_limits()
+    return _limits_supported
+
+
+def _probe_cgroup_limits() -> bool:
+    """Run a tiny limited container against a warm image."""
+    images = list_local_images()
+    if not images:
+        return True  # nothing runs anyway — keep prior behavior
+    probe = [
+        'podman', 'run', '--rm', '-i',
+        '--memory', '64m', '--cpus', '1', '--pids-limit', '100',
+        images[0], 'true',
+    ]
+    try:
+        startupinfo = get_startupinfo()
+        result = subprocess.run(
+            probe,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            startupinfo=startupinfo,
+            timeout=30,
+        )
+    except Exception:
+        return True
+    if result.returncode == 0:
+        return True
+    err = (result.stderr or b"").decode("utf-8", "replace").lower()
+    # Only the cgroup-delegation failure modes disable limits; anything
+    # else keeps prior behavior.
+    markers = ("memory.max", "controller `", "is not available", "cgroup.controllers")
+    return not any(m in err for m in markers)
+
+
+def _limits_warning_line() -> str:
+    """
+    A one-time stderr note when the host can't enforce cgroup limits.
+
+    Emitted on the first job so the user sees *why* the sandbox flags are
+    missing; suppressed afterwards.
+    """
+    global _limits_warning_emitted
+    if _limits_warning_emitted or podman_supports_cgroup_limits():
+        return ""
+    _limits_warning_emitted = True
+    return (
+        "echo '[ephemeral] host podman cannot enforce resource limits "
+        "(--memory/--cpus/--pids-limit): cgroup controllers are not "
+        "delegated on this WSL2 default setup - running without them' >&2"
+    )
+
+
 async def ensure_podman_running() -> None:
     """
     Ensure the Podman machine is running. Start it if needed.
@@ -245,13 +323,11 @@ def _build_podman_cmd(
     `network=False` applies `--network none`. When `network` is None the
     container's `allow_network` config flag decides.
     """
-    podman_cmd = [
-        'podman', 'run', '--rm', '-i',
-        '--memory', '2g',
-        '--cpus', '2',
-        '--pids-limit', '512',
-        '-w', '/tmp',
-    ]
+    podman_cmd = ['podman', 'run', '--rm', '-i', '-w', '/tmp']
+    if podman_supports_cgroup_limits():
+        # Hard container limits — skipped (with a one-time warning) only
+        # when the host genuinely can't enforce them (stock WSL2).
+        podman_cmd.extend(['--memory', '2g', '--cpus', '2', '--pids-limit', '512'])
 
     if network is not None:
         if network:
@@ -288,6 +364,9 @@ def _build_wrapper_script(
     of ``(step_index, marker, language)`` tuples used to demultiplex stdout.
     """
     wrapper_script = ["mkdir -p /output 2>/dev/null || true"]
+    _warning = _limits_warning_line()
+    if _warning:
+        wrapper_script.insert(1, _warning)
     block_markers = []
     step_index = 1
     cmd_str = _shlex_join(cmd)

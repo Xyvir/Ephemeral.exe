@@ -16,12 +16,20 @@ Public API:
 """
 
 from .models import ExecutionResult, GroupResult, BlockResult
-from .executor import parse_and_execute, check_podman_alive, ensure_podman_running
+from .executor import (
+    parse_and_execute,
+    check_podman_alive,
+    check_image_exists,
+    list_local_images,
+    ensure_podman_running,
+)
 from .parser import parse_codeblocks
 
 __all__ = [
     "parse_and_execute",
     "check_podman_alive",
+    "check_image_exists",
+    "list_local_images",
     "ensure_podman_running",
     "parse_codeblocks",
     "ExecutionResult",
