@@ -112,7 +112,9 @@ class Node:
         else:
             raise ValueError(f"unknown relay mode: {relay!r}")
         if secret_key is not None:
-            builder.secret_key(iroh.SecretKey.from_bytes(secret_key))
+            # The Python FFI takes the raw 32 bytes (unlike the Rust API,
+            # which takes a SecretKey value).
+            builder.secret_key(secret_key)
         self._builder = builder
 
         self._ep = None

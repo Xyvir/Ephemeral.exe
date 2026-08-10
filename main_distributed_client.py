@@ -16,8 +16,10 @@ code with intelligent nearest-neighbor offloading:
 Cluster configuration (environment variables):
 
     EPHEMERAL_RELAY          "n0" (default) | "minimal" | "disabled"
-    EPHEMERAL_SEEDS          comma-separated EndpointTickets to bootstrap from
-    EPHEMERAL_SECRET         hex-encoded 32-byte secret for a persistent node id
+    EPHEMERAL_SEEDS          comma-separated EndpointTickets to bootstrap from;
+                             unset joins the default swarm (see ephemeral_net.swarm)
+    EPHEMERAL_SECRET         hex-encoded 32-byte secret for a persistent node id;
+                             unset, a stable identity is auto-persisted to disk
     EPHEMERAL_ALLOW_NETWORK  "1" to let remote jobs use network access (default "0")
 
 Usage:
@@ -63,6 +65,7 @@ except ImportError:
 
 import ephemeral_core
 from ephemeral_net.jobs import JobDoneEvent, JobErrorEvent, JobRequest
+from ephemeral_net.swarm import load_or_create_secret, parse_seeds
 
 # Reuse the local client's platform plumbing (icon, clipboard, language
 # prompt, artifact routing) so behavior stays identical between tiers.
@@ -83,11 +86,11 @@ CONVERT_HOTKEY = 'ctrl+win+x'
 CLI_MODE = False
 
 EPHEMERAL_RELAY = os.getenv("EPHEMERAL_RELAY", "n0")
-EPHEMERAL_SEEDS = [
-    s.strip() for s in os.getenv("EPHEMERAL_SEEDS", "").split(",") if s.strip()
-]
+EPHEMERAL_SEEDS = parse_seeds(os.getenv("EPHEMERAL_SEEDS"))
 _hex_secret = os.getenv("EPHEMERAL_SECRET", "")
-EPHEMERAL_SECRET = bytes.fromhex(_hex_secret) if _hex_secret else None
+EPHEMERAL_SECRET = (
+    bytes.fromhex(_hex_secret) if _hex_secret else load_or_create_secret()
+)
 EPHEMERAL_ALLOW_NETWORK = os.getenv("EPHEMERAL_ALLOW_NETWORK", "0") == "1"
 
 

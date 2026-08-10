@@ -11,11 +11,19 @@
 //          to on load. Every seed's `hello` reply carries its known
 //          peers (with dialable tickets + warm images), so one seed is
 //          enough to learn the whole cluster with zero user input.
+//
+// One big implicit swarm: keep this list in sync with
+// `ephemeral_net/swarm.py` (DEFAULT_SWARM_SEEDS) — every distributed
+// binary joins the same public network by default and discovers it
+// through this seed. The seed must be an ALWAYS-ON node with a
+// persisted identity (run the self-host distributed gateway; its
+// startup log prints "SWARM SEED TICKET ...").
 export const BOOTSTRAP = {
   relay: null,
   seeds: [
-    // Demo compute node on the public n0 relay. Replace with your own
-    // cluster's seed tickets for a private deployment.
+    // Placeholder: the original demo node's ticket. Swap in your
+    // always-on node's ticket (printed at gateway startup) so the
+    // public Pages demo always has a live seed.
     "endpointaaku44yiw2xtcdpvoxd4sc6i72dbi3h66a3kycmgmj3iutz4iepmkbaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs7zd3qdaeakyhcaagi64aybadakqaaushxag",
   ],
 };

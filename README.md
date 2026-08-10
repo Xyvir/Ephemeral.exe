@@ -480,6 +480,15 @@ Ephemeral expands into a multi-tier distributed architecture built on the [iroh]
 > The public distributed network is a *good-faith* model designed for teaching (e.g., college students and professors running code snippets). **Anything you submit to the public ephemeral cloud should be treated as public knowledge — there is no privacy guarantee.** It is not security-first or trust-first: other network participants may be able to observe submitted code and outputs, and the shared public relays carry no uptime or performance guarantees.
 > If you need privacy, **self-host instead** and use the non-distributed packages (`main_local.py` / `main_api.py`, or `ephemeral-self-host-distributed` on infrastructure you control).
 
+### The default swarm (one big implicit network)
+
+Every distributed binary joins the **same public swarm by default** — no configuration required. Run `Ephemeral-Distributed.exe`, the distributed AppImage, or `install_self_host.sh distributed` and your node is part of the network, discoverable by the web SPA and every other member. The mechanism:
+
+- **Bootstrap** — a compiled-in seed ticket (`ephemeral_net/swarm.py` → `DEFAULT_SWARM_SEEDS`, mirrored in `web/config.js`) is dialed when `EPHEMERAL_SEEDS` is unset. The seed's `hello` reply carries its peer table, so one seed reveals the whole swarm.
+- **Stable identity** — a node's ticket is derived from its secret key, so every distributed binary persists a 32-byte identity to `~/.ephemeral/secret_key.bin` (or `EPHEMERAL_STATE_DIR`) and reuses it across restarts. Without this, a compiled-in seed ticket would go stale the moment the seed restarted.
+- **The seed is the lynchpin** — for the swarm to always be reachable (including from the public GitHub Pages demo), at least one node must be *always on*: run the self-host distributed gateway on any always-on box, and its startup log prints `SWARM SEED TICKET ...`. Take that ticket, swap it into `DEFAULT_SWARM_SEEDS` *and* `web/config.js`, and the public demo always finds a live node.
+- **Opt out** — set `EPHEMERAL_SEEDS` explicitly to bootstrap a private cluster instead; set `EPHEMERAL_SECRET` to pin an identity without touching disk.
+
 ### Web thin client (`ephemeral-wasm-library`)
 
 The browser-side WebAssembly client speaks the **same wire protocol** as the Python tiers (`hello` handshake + `job_request` → `job_log`/`job_done`/`error` over iroh QUIC bi-streams), so it interoperates with Python compute nodes with zero translation. Browsers cannot hole-punch, so all browser↔cluster traffic traverses an iroh relay — n0's public relays by default, or a self-hosted one via the Relay URL field.
