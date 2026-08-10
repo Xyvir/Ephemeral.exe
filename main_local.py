@@ -35,7 +35,10 @@ try:
     import pyperclip
     import keyboard
     HAS_GUI = True
-except ImportError:
+except Exception:
+    # pystray's Xorg backend raises Xlib.error.DisplayNameError (not
+    # ImportError) when no display is available — treat any GUI import
+    # failure as headless so the app can fall back to CLI mode.
     HAS_GUI = False
 
 # Windows-only — kept out of the GUI import chain so Linux builds stay

@@ -43,7 +43,10 @@ try:
     import pystray
     from pystray import MenuItem as item
     HAS_GUI = True
-except ImportError:
+except Exception:
+    # pystray's Xorg backend raises Xlib.error.DisplayNameError (not
+    # ImportError) when no display is available — treat any GUI import
+    # failure as headless so the app can fall back to CLI mode.
     HAS_GUI = False
 
 import ephemeral_core
