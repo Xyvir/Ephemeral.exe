@@ -1,5 +1,5 @@
 {
-  "updated": "2026-08-10T10:22:24Z",
+  "updated": "2026-08-10T13:21:55Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
@@ -7,8 +7,7 @@
       "node_id": "154e7308b6af310df575c7c90bc8fe86146cfef036ac098662768a4f3c411ec5",
       "relay": null,
       "ticket": "endpointaaku44yiw2xtcdpvoxd4sc6i72dbi3h66a3kycmgmj3iutz4iepmkbaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs74vlacaeakyhcaagi64aybadakqaaushxag",
-      "images": [],
-      "rtt_ms": 85
+      "images": []
     },
     {
       "node_id": "4f7879c84d2a88eec99eb80d5c76a0ca56954c73cd5a0d67fe902313b5220178",
