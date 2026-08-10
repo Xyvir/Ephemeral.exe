@@ -1,0 +1,11 @@
+.git
+.freebuff
+dist
+build
+*.pyc
+__pycache__
+.pytest_cache
+.appimage-venv
+.appimage-tool
+ephemeral-wasm-library/target
+ephemeral-wasm-library/web/wbg

@@ -1,5 +1,8 @@
-# --- Windows Tray Client ---
+# --- Desktop Tray Client (Windows + Linux AppImage) ---
 pystray
 Pillow
 pyperclip
 keyboard
+# Linux-only backend support: pystray's Xorg backend and keyboard's X11
+# path both use python-xlib. Harmless on Windows (pure Python).
+python-xlib

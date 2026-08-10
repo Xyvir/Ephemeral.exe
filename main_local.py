@@ -20,6 +20,7 @@ import base64
 import ctypes
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -33,10 +34,17 @@ try:
     from PIL import Image, ImageDraw, ImageGrab
     import pyperclip
     import keyboard
-    import winreg
     HAS_GUI = True
 except ImportError:
     HAS_GUI = False
+
+# Windows-only — kept out of the GUI import chain so Linux builds stay
+# GUI-capable (winreg does not exist on Linux).
+try:
+    import winreg
+    HAS_WINREG = True
+except ImportError:
+    HAS_WINREG = False
 
 import ephemeral_core
 from ephemeral_core.parser import strip_shebang, resolve_runtime_config
@@ -78,37 +86,66 @@ def get_clipboard():
 
 
 def copy_image_to_clipboard(image_path):
-    """Copy an image file to the Windows clipboard via Win32 API."""
+    """Copy an image file to the platform clipboard (Win32 on Windows, xclip/wl-copy on Linux)."""
+    if sys.platform == 'win32':
+        try:
+            from io import BytesIO
+            img = Image.open(image_path)
+            output = BytesIO()
+            img.convert("RGB").save(output, "BMP")
+            data = output.getvalue()[14:]
+            output.close()
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            OpenClipboard = user32.OpenClipboard
+            EmptyClipboard = user32.EmptyClipboard
+            SetClipboardData = user32.SetClipboardData
+            CloseClipboard = user32.CloseClipboard
+            GlobalAlloc = kernel32.GlobalAlloc
+            GlobalLock = kernel32.GlobalLock
+            GlobalUnlock = kernel32.GlobalUnlock
+            GMEM_MOVEABLE = 0x0002
+            CF_DIB = 8
+            OpenClipboard(0)
+            EmptyClipboard()
+            hCd = GlobalAlloc(GMEM_MOVEABLE, len(data))
+            pchData = GlobalLock(hCd)
+            ctypes.memmove(pchData, data, len(data))
+            GlobalUnlock(hCd)
+            SetClipboardData(CF_DIB, hCd)
+            CloseClipboard()
+            return True
+        except Exception as e:
+            print(f"Image copy failed: {e}")
+            return False
+    return copy_image_to_clipboard_linux(image_path)
+
+
+def copy_image_to_clipboard_linux(image_path):
+    """Copy an image to the Wayland/X11 clipboard via wl-copy or xclip (as PNG)."""
     try:
-        from io import BytesIO
-        img = Image.open(image_path)
-        output = BytesIO()
-        img.convert("RGB").save(output, "BMP")
-        data = output.getvalue()[14:]
-        output.close()
-        user32 = ctypes.windll.user32
-        kernel32 = ctypes.windll.kernel32
-        OpenClipboard = user32.OpenClipboard
-        EmptyClipboard = user32.EmptyClipboard
-        SetClipboardData = user32.SetClipboardData
-        CloseClipboard = user32.CloseClipboard
-        GlobalAlloc = kernel32.GlobalAlloc
-        GlobalLock = kernel32.GlobalLock
-        GlobalUnlock = kernel32.GlobalUnlock
-        GMEM_MOVEABLE = 0x0002
-        CF_DIB = 8
-        OpenClipboard(0)
-        EmptyClipboard()
-        hCd = GlobalAlloc(GMEM_MOVEABLE, len(data))
-        pchData = GlobalLock(hCd)
-        ctypes.memmove(pchData, data, len(data))
-        GlobalUnlock(hCd)
-        SetClipboardData(CF_DIB, hCd)
-        CloseClipboard()
-        return True
+        fd, tmp_path = tempfile.mkstemp(suffix='.png')
+        os.close(fd)
+        try:
+            with Image.open(image_path) as img:
+                img.convert("RGB").save(tmp_path, "PNG")
+            if shutil.which("wl-copy"):
+                subprocess.run(["wl-copy", "--type", "image/png", tmp_path], check=True)
+                return True
+            if shutil.which("xclip"):
+                subprocess.run(
+                    ["xclip", "-selection", "clipboard", "-t", "image/png", "-i", tmp_path],
+                    check=True,
+                )
+                return True
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
     except Exception as e:
         print(f"Image copy failed: {e}")
-        return False
+    return False
 
 
 # --- Windows-Specific Helpers ---
@@ -122,7 +159,9 @@ def get_startupinfo():
 
 
 def prompt_user_for_language(default_lang, code_preview=""):
-    """Show a cmd.exe prompt asking the user to specify a runtime language."""
+    """Ask the user to specify a runtime language (cmd.exe on Windows, a dialog on Linux)."""
+    if sys.platform != 'win32':
+        return _prompt_user_for_language_linux(default_lang, code_preview)
     fd_out, path_out = tempfile.mkstemp(suffix='.txt')
     os.close(fd_out)
     fd_bat, path_bat = tempfile.mkstemp(suffix='.bat')
@@ -169,6 +208,47 @@ def prompt_user_for_language(default_lang, code_preview=""):
     return detected_lang
 
 
+def _prompt_user_for_language_linux(default_lang, code_preview=""):
+    """Linux language prompt: zenity -> kdialog -> tkinter -> stdin."""
+    try:
+        if shutil.which("zenity"):
+            out = subprocess.run(
+                ["zenity", "--entry", "--title=Ephemeral",
+                 "--text=No language detected. Enter a runtime language:",
+                 f"--entry-text={default_lang}"],
+                capture_output=True, text=True, timeout=60,
+            )
+            if out.returncode == 0 and out.stdout.strip():
+                return out.stdout.strip()
+        if shutil.which("kdialog"):
+            out = subprocess.run(
+                ["kdialog", "--inputbox",
+                 "No language detected. Enter a runtime language:", default_lang],
+                capture_output=True, text=True, timeout=60,
+            )
+            if out.returncode == 0 and out.stdout.strip():
+                return out.stdout.strip()
+        try:
+            import tkinter as _tk
+            from tkinter import simpledialog
+            root = _tk.Tk()
+            root.withdraw()
+            val = simpledialog.askstring(
+                "Ephemeral", "No language detected. Enter a runtime language:",
+                initialvalue=default_lang,
+            )
+            root.destroy()
+            if val and val.strip():
+                return val.strip()
+        except Exception:
+            pass
+        val = input(f"Enter Language [Default: {default_lang}]: ").strip()
+        return val or default_lang
+    except Exception as e:
+        print(f"Input error: {e}")
+        return None
+
+
 def show_post_mortem_error(error_text):
     """Open a persistent cmd.exe window showing an error message."""
     try:
@@ -204,10 +284,19 @@ def ensure_podman_running_local(icon):
     icon.notify("Podman is not running. Attempting to start...", title="Ephemeral Init")
     startupinfo = get_startupinfo()
     try:
-        subprocess.check_call(['podman', 'machine', 'start'], startupinfo=startupinfo,
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        icon.notify("Podman machine started successfully.", title="Ephemeral Init")
+        if sys.platform == 'win32':
+            subprocess.check_call(['podman', 'machine', 'start'], startupinfo=startupinfo,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            # Linux: podman runs natively — start the rootless socket when systemd is present.
+            subprocess.check_call(['systemctl', '--user', 'start', 'podman.socket'],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        icon.notify("Podman started successfully.", title="Ephemeral Init")
     except subprocess.CalledProcessError:
+        if sys.platform != 'win32':
+            icon.notify("Podman is not running and could not be started. Is podman installed?",
+                        title="Ephemeral Fatal Error")
+            return
         icon.notify("Start failed. Initializing new machine...", title="Ephemeral Init")
         try:
             subprocess.check_call(['podman', 'machine', 'init'], startupinfo=startupinfo)
@@ -218,6 +307,8 @@ def ensure_podman_running_local(icon):
 
 
 def stop_podman_machine(icon):
+    if sys.platform not in ('win32', 'darwin'):
+        return  # Podman runs natively on Linux — nothing to stop
     icon.notify("Stopping Podman machine...", title="Ephemeral Shutdown")
     startupinfo = get_startupinfo()
     try:
@@ -264,6 +355,19 @@ def force_stop_all(icon, item_unused):
 
 # --- Local Artifact Routing ---
 
+def _save_artifact_to_downloads(downloads_dir, safe_lang, filepath, icon):
+    """Move an artifact into Downloads with an Ephemeral_ prefix (deduped)."""
+    target_name = f"Ephemeral_{safe_lang}_{os.path.basename(filepath)}"
+    target_path = os.path.join(downloads_dir, target_name)
+    base_name, ext = os.path.splitext(target_path)
+    counter = 1
+    while os.path.exists(target_path):
+        target_path = f"{base_name}_{counter}{ext}"
+        counter += 1
+    shutil.move(filepath, target_path)
+    icon.notify(f"File saved to Downloads:\n{os.path.basename(target_path)}", title="Ephemeral")
+
+
 def route_artifacts_local(result, lang, icon):
     """
     Route artifacts from an ExecutionResult to the user's Downloads folder.
@@ -298,20 +402,13 @@ def route_artifacts_local(result, lang, icon):
             if copy_image_to_clipboard(filepath):
                 icon.notify("Image generated and copied to clipboard!", title="Ephemeral")
                 image_copied = True
-            else:
+            elif sys.platform == 'win32':
                 icon.notify("Failed to copy image. Check debug.", title="Ephemeral Error")
+            else:
+                # Linux without xclip/wl-copy: save like a regular file.
+                _save_artifact_to_downloads(downloads_dir, safe_lang, filepath, icon)
         else:
-            target_name = f"Ephemeral_{safe_lang}_{filename}"
-            target_path = os.path.join(downloads_dir, target_name)
-
-            base_name, ext = os.path.splitext(target_path)
-            counter = 1
-            while os.path.exists(target_path):
-                target_path = f"{base_name}_{counter}{ext}"
-                counter += 1
-
-            shutil.move(filepath, target_path)
-            icon.notify(f"File saved to Downloads:\n{os.path.basename(target_path)}", title="Ephemeral")
+            _save_artifact_to_downloads(downloads_dir, safe_lang, filepath, icon)
 
     elif len(files) > 1:
         timestamp = int(time.time())
@@ -583,6 +680,8 @@ def get_install_path():
 
 
 def set_startup(enable, icon=None):
+    if sys.platform != 'win32':
+        return _set_startup_linux(enable, icon)
     app_path = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(__file__)
     install_path = get_install_path()
 
@@ -629,7 +728,41 @@ def set_startup(enable, icon=None):
             icon.notify(f"Failed to configure startup: {e}", title="Ephemeral Error")
 
 
+def _autostart_desktop_path():
+    return os.path.join(os.path.expanduser("~"), ".config", "autostart", "ephemeral.desktop")
+
+
+def _set_startup_linux(enable, icon=None):
+    """Enable/disable login autostart via a freedesktop .desktop entry."""
+    path = _autostart_desktop_path()
+    try:
+        if enable:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            exe = os.path.realpath(
+                sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(__file__)
+            )
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("[Desktop Entry]\n")
+                f.write("Type=Application\n")
+                f.write("Name=Ephemeral\n")
+                f.write(f"Exec={shlex.quote(exe)}\n")
+                f.write("X-GNOME-Autostart-enabled=true\n")
+            if icon:
+                icon.notify(f"Set to run on login: {path}", title="Ephemeral Setup")
+        else:
+            if os.path.exists(path):
+                os.remove(path)
+            if icon:
+                icon.notify("Disabled start on login.", title="Ephemeral Setup")
+    except Exception as e:
+        print(f"Failed to set startup: {e}")
+        if icon:
+            icon.notify(f"Failed to configure startup: {e}", title="Ephemeral Error")
+
+
 def check_startup():
+    if sys.platform != 'win32':
+        return os.path.exists(_autostart_desktop_path())
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                              r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
@@ -733,6 +866,13 @@ def setup_headless_mode(file_path):
 
 
 if __name__ == '__main__':
+    # SELF-CHECK: verify the install (imports, parser, podman) without a GUI.
+    if "--self-check" in sys.argv:
+        blocks = ephemeral_core.parse_codeblocks("```python\nprint(1)\n```")
+        assert blocks and blocks[0]["type"] == "code", "parser round-trip failed"
+        print(f"SELF-CHECK OK parser_ok podman_alive={ephemeral_core.check_podman_alive()}")
+        sys.exit(0)
+
     # DETECT MODE
     if len(sys.argv) > 1 and os.path.exists(sys.argv[-1]):
         file_target = sys.argv[-1]
