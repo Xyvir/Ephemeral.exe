@@ -71,6 +71,7 @@ A few design principles underpin every tier:
 | **Podman needed** | Yes (WSL2 on Windows, rootless on Linux) | Yes on compute nodes; **thin clients (browser) need none** |
 | **Offloading** | None | Automatic nearest-neighbor offload + background image pull |
 | **Network flag** | `unsafe` opt-in per block (local) | `unsafe` stripped receiver-side — network is a node-operator setting (`EPHEMERAL_ALLOW_NETWORK`), never the requester's |
+| **Custom images** | Any Podman/Docker image via the `image=`/`cmd=` header (Declarative Image Mode) | **Disabled** — `image=`/`cmd=`/`entrypoint=` overrides are dropped receiver-side; only the node's allowlisted images (default: the built-in language map) run |
 | **Config** | None | `EPHEMERAL_SEEDS` / `EPHEMERAL_RELAY` / `EPHEMERAL_SECRET` / `EPHEMERAL_ALLOW_NETWORK` |
 | **Best for** | Private/sensitive work, offline, Lithic-UK sidecar | Teaching, shared clusters, browser access, heterogeneous images |
 
@@ -403,6 +404,8 @@ print("Successfully connected to the internet!")
 
 You are not limited to the built-in languages. You can run *any* Docker/Podman image by defining the `image` and `cmd` parameters directly in the markdown header.
 
+> **Distributed tiers only:** this is a **local-only** feature. Receiver-side sandboxing drops `image=`/`cmd=`/`entrypoint=` overrides from network jobs and enforces an image allowlist (default: the built-in language map), so a remote requester can never dictate what image runs — only the node operator's allowlist decides. Use the built-in languages on the distributed network, or extend the allowlist on your own nodes.
+
 **Example: Running COBOL via a custom declarative header:**
 
 ````text
@@ -600,7 +603,7 @@ The official build pipeline runs on every push (`.github/workflows/build.yml`) a
 
 ## Future Plans
 
-- **Room Codes:** a short, human-friendly code that selects *which network* to join (a routing/partition field on top of the seed table — not authentication). With seed-mediated auto-discovery already handling node selection within a network, a room code becomes the user-facing way to choose the right cluster, e.g. per-class topics so a professor's students share an isolated room.
+- **Neighborhoods:** a short, human-friendly code that selects *which network* to join (a routing/partition field on top of the seed table — not authentication). With seed-mediated auto-discovery already handling node selection within a network, a neighborhood code becomes the user-facing way to choose the right cluster, e.g. per-class topics so a professor's students share an isolated neighborhood. If a neighborhood has no reachable seeds or peers, clients **fall back to the default iroh distributed peergroup** — joining a neighborhood never strands you, worst case you land on the shared default network.
 - **Paper-Thin REST Clients:** a static-URL REST API that sends requests and responds over the ephemeral distributed network, for 'paper-thin' clients (curl-friendly, no WASM required) — with rate limiting, cached responses, and the like. This is a non-trivial service with a lot of implementation surface, so it is deliberately deferred.
 - **Image-Layer Sync:** instead of pulling images from a registry after offloading, transfer warm image layers from the neighbor node over the iroh network (content-addressed, integrity-verified) so repeat jobs start instantly.
 

@@ -8,8 +8,9 @@ sender's dial-back ticket plus the peer entries it already knows, and
 each side merges what it learns. Peers discovered this way can
 subsequently be dialed directly by ticket.
 
-Room codes (from the roadmap) become a routing/partition field on top of
-this table in a later phase.
+Neighborhoods (from the roadmap) become a routing/partition field on top
+of this table in a later phase; a client falls back to the default iroh
+distributed peergroup when its neighborhood has no reachable members.
 """
 from __future__ import annotations
 
