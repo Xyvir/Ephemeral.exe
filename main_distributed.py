@@ -11,8 +11,11 @@ background pull) otherwise.
 Configuration (environment variables):
 
     EPHEMERAL_RELAY          "n0" (default) | "minimal" | "disabled"
-    EPHEMERAL_SEEDS          comma-separated EndpointTickets to bootstrap from;
-                             unset joins the default swarm (see ephemeral_net.swarm)
+    EPHEMERAL_SEED_NODES     comma-separated node_id[@relay] to bootstrap from;
+                             unset joins the default swarm by node id
+                             (see ephemeral_net.swarm) — iroh-native, no tickets
+    EPHEMERAL_SEEDS          comma-separated EndpointTickets (private networks /
+                             backward compat; overrides SEED_NODES when set)
     EPHEMERAL_SECRET         hex-encoded 32-byte secret for a persistent node id;
                              unset, a stable identity is auto-persisted to disk
     EPHEMERAL_PORT           HTTP port (default 8787 — the Lithic-UK sidecar slot)
@@ -23,9 +26,9 @@ Usage:
 
 Port 8787 matches the local API server and the Lithic-UK sidecar slot.
 
-On startup the node prints ``SWARM SEED TICKET ...`` — grab that ticket and
-compile it into ``ephemeral_net/swarm.py`` + ``web/config.js`` to make this
-gateway the swarm's always-on seed.
+On startup the node prints ``SWARM NODE_ID`` / ``SWARM RELAY`` — compile
+them into ``ephemeral_net/swarm.py`` + ``web/config.js`` to make this
+gateway the swarm's always-on seed (by stable id, no ticket).
 """
 from __future__ import annotations
 
@@ -35,13 +38,17 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from main_api import RunResponse  # same wire contract as the local API server
 
-from ephemeral_net.swarm import load_or_create_secret, parse_seeds
+from ephemeral_net.swarm import load_or_create_secret, parse_seed_nodes, parse_seeds
 from ephemeral_self_host import Gateway, GatewayError, RunRequest
 
 # --- Configuration -------------------------------------------------------
 
 EPHEMERAL_RELAY = os.getenv("EPHEMERAL_RELAY", "n0")
+EPHEMERAL_SEED_NODES = parse_seed_nodes(os.getenv("EPHEMERAL_SEED_NODES"))
 EPHEMERAL_SEEDS = parse_seeds(os.getenv("EPHEMERAL_SEEDS"))
+if EPHEMERAL_SEEDS:
+    # Explicit tickets (private network) replace the default swarm nodes.
+    EPHEMERAL_SEED_NODES = []
 _hex_secret = os.getenv("EPHEMERAL_SECRET", "")
 EPHEMERAL_SECRET = (
     bytes.fromhex(_hex_secret) if _hex_secret else load_or_create_secret()
@@ -56,6 +63,7 @@ async def lifespan(app: FastAPI):
     gateway = Gateway(
         secret_key=EPHEMERAL_SECRET,
         relay=EPHEMERAL_RELAY,
+        seed_nodes=EPHEMERAL_SEED_NODES,
         seeds=EPHEMERAL_SEEDS,
         allow_network=EPHEMERAL_ALLOW_NETWORK,
     )
@@ -72,10 +80,11 @@ async def lifespan(app: FastAPI):
     app.state.gateway = gateway
     node = gateway.node
     print(f"SWARM NODE_ID {node.node_id()}", flush=True)
+    print(f"SWARM RELAY {node.relay_url()}", flush=True)
     print(f"SWARM SEED TICKET {node.ticket()}", flush=True)
     print(
         "SWARM join: this node is part of the default ephemeral swarm; "
-        "compile the ticket above into ephemeral_net/swarm.py and "
+        "compile the NODE_ID + RELAY above into ephemeral_net/swarm.py and "
         "ephemeral-wasm-library/web/config.js to make it the always-on seed.",
         flush=True,
     )

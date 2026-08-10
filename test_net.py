@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import tempfile
+from pathlib import Path
 
 from ephemeral_net.protocol import (
     ALPN,
@@ -366,12 +368,16 @@ def test_frame_malformed():
 
 
 def test_hello_frame():
-    f = hello_frame("node-a", "ticket-a", [{"node_id": "node-b", "ticket": "ticket-b"}])
+    f = hello_frame(
+        "node-a", "ticket-a", [{"node_id": "node-b", "ticket": "ticket-b"}],
+        relay="https://relay.example.com.",
+    )
     assert f["type"] == "hello"
     assert f["node_id"] == "node-a"
+    assert f["relay"] == "https://relay.example.com."
     assert f["peers"][0]["node_id"] == "node-b"
     assert error_frame("boom", job_id="j1")["job_id"] == "j1"
-    print("PASS: hello/error frame helpers")
+    print("PASS: hello/error frame helpers (incl. relay)")
 
 
 def test_job_messages():
@@ -505,6 +511,43 @@ async def _offload_worker_executor(request):
 
 
 _offload_worker_executor.ran = []
+
+
+async def _run_dial_by_id_integration() -> bool:
+    """
+    iroh-native identity: dial a node by its STABLE NODE ID + relay URL
+    (no ticket), across a restart of the target. The relay routes by
+    node id, so a compiled-in id never goes stale.
+    """
+    from ephemeral_net.node import Node
+    from ephemeral_net.swarm import load_or_create_secret
+
+    state_dir = tempfile.mkdtemp(prefix="ephemeral-dialbyid-")
+    secret = load_or_create_secret(Path(state_dir) / "secret.bin")
+
+    async def _spawn() -> Node:
+        node = Node(secret_key=secret, relay="n0")
+        await node.start()
+        return node
+
+    b = await _spawn()
+    b_id = b.node_id()
+    b_relay = b.relay_url()
+    print(f"  B id={b_id[:12]}... relay={b_relay}")
+    await b.close()
+
+    # B restarts (same secret -> same id, new ports). A dials by id + relay.
+    b2 = await _spawn()
+    a = Node(relay="n0")
+    await a.start()
+    try:
+        peer = await asyncio.wait_for(a.dial_node(b_id, b_relay), timeout=30)
+        assert peer.node_id == b_id
+        print("  DIAL-BY-ID OK: dialed restarted node by node id + relay, no ticket")
+        return True
+    finally:
+        await a.close()
+        await b2.close()
 
 
 async def _run_mesh_heal_integration() -> bool:
@@ -670,6 +713,11 @@ def main():
     ok = asyncio.run(_run_mesh_heal_integration())
     if not ok:
         print("SKIP: mesh-heal integration test — no local connectivity")
+
+    print("\n--- dial-by-node-id integration (iroh-native identity) ---")
+    ok = asyncio.run(_run_dial_by_id_integration())
+    if not ok:
+        print("SKIP: dial-by-id integration test — no local connectivity")
 
 
 if __name__ == "__main__":

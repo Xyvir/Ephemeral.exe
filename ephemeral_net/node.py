@@ -44,7 +44,8 @@ class PeerConnection:
         self.node = node
         self.connection = conn
         self.node_id = node_id
-        self.ticket: str | None = None      # dial-back ticket from hello
+        self.ticket: str | None = None      # dial-back ticket from hello (fallback)
+        self.relay: str | None = None       # peer's relay URL — dial by id + relay
         self.hello: dict | None = None      # raw hello frame received
         self.images: set[str] | None = None  # warm images advertised in hello
         self.rtt: float | None = None       # hello round-trip seconds (dial side)
@@ -124,6 +125,7 @@ class Node:
         self._peers_lock = asyncio.Lock()
         self.table = PeerTable()
         self._seed_tickets: list[str] = []
+        self._seed_nodes: list[tuple[str, str | None]] = []
         self._interval: float = 60.0
         # Mesh healing: when a peer dial fails, back off for this long so
         # the maintenance loop doesn't hammer dead peers every pass.
@@ -154,6 +156,19 @@ class Node:
             raise RuntimeError("node not started")
         addr = self._ep.addr()
         return str(self._iroh.EndpointTicket.from_addr(addr))
+
+    def relay_url(self) -> str | None:
+        """This node's current relay URL (None when relays are disabled)."""
+        if self._ep is None:
+            raise RuntimeError("node not started")
+        try:
+            value = str(self._ep.addr().relay_url())
+        except Exception:
+            return None
+        # The FFI stringifies a missing relay to "None".
+        if not value or value == "None":
+            return None
+        return value
 
     def warm_images(self) -> list[str]:
         """Locally-cached image names, refreshed at most every ``warm_cache_ttl``."""
@@ -215,15 +230,10 @@ class Node:
 
     # --- dialing / discovery ---------------------------------------------
 
-    async def dial(self, ticket: str) -> PeerConnection:
-        """
-        Dial a peer by its EndpointTicket string and complete the hello
-        handshake. The resulting connection is held in the registry.
-        """
+    async def _dial_addr(self, addr) -> PeerConnection:
+        """Connect to an EndpointAddr and complete the hello handshake."""
         if self._ep is None:
             raise RuntimeError("node not started")
-        ticket_obj = self._iroh.EndpointTicket.from_string(ticket)
-        addr = ticket_obj.endpoint_addr()
         conn = await self._ep.connect(addr, ALPN)
         peer = PeerConnection(self, conn, str(conn.remote_id()))
         async with self._peers_lock:
@@ -238,6 +248,7 @@ class Node:
                     self.ticket(),
                     self.table.snapshot(),
                     self.warm_images(),
+                    self.relay_url(),
                 ),
             )
             reply = await asyncio.wait_for(
@@ -253,17 +264,57 @@ class Node:
             raise HandshakeError(f"peer replied {reply.get('type')!r}, expected hello")
         peer.hello = reply
         peer.ticket = reply.get("ticket")
+        peer.relay = reply.get("relay")
         peer.images = set(reply.get("images") or [])
         self._merge_hello(reply)
         return peer
 
+    async def dial(self, ticket: str) -> PeerConnection:
+        """
+        Dial a peer by its EndpointTicket string and complete the hello
+        handshake. The resulting connection is held in the registry.
+        """
+        if self._ep is None:
+            raise RuntimeError("node not started")
+        ticket_obj = self._iroh.EndpointTicket.from_string(ticket)
+        return await self._dial_addr(ticket_obj.endpoint_addr())
+
+    async def dial_node(self, node_id: str, relay_url: str | None = None) -> PeerConnection:
+        """
+        Dial a peer by its stable node id + relay URL — iroh-native
+        identity, no ticket. The relay routes by node id, so this works
+        across the peer's restarts. ``relay_url`` defaults to this node's
+        own relay; pass it explicitly when dialing a peer on another relay.
+        """
+        if self._ep is None:
+            raise RuntimeError("node not started")
+        relay = relay_url or self.relay_url()
+        if not relay:
+            raise ValueError("dial_node needs a relay URL (pass relay_url=...)")
+        addr = self._iroh.EndpointAddr(
+            self._iroh.EndpointId.from_string(node_id), relay, []
+        )
+        return await self._dial_addr(addr)
+
     async def bootstrap(self, seed_tickets: Sequence[str], interval: float = 60.0) -> None:
         """
-        Dial the given seed nodes to discover peers immediately. The
-        maintenance loop (started in :meth:`start`) then re-dials the
-        seeds and heals the mesh every ``interval`` seconds.
+        Dial the given seed nodes (by EndpointTicket) to discover peers
+        immediately. The maintenance loop (started in :meth:`start`) then
+        re-dials the seeds and heals the mesh every ``interval`` seconds.
         """
         self._seed_tickets = list(seed_tickets)
+        self._interval = interval
+        await self._bootstrap_once()
+
+    async def bootstrap_nodes(
+        self, seed_nodes: Sequence[tuple[str, str | None]], interval: float = 60.0
+    ) -> None:
+        """
+        Dial seed nodes by ``(node_id, relay_url)`` — iroh-native
+        bootstrap with no tickets. The maintenance loop re-dials them
+        every ``interval`` seconds.
+        """
+        self._seed_nodes = [(nid, relay) for nid, relay in seed_nodes]
         self._interval = interval
         await self._bootstrap_once()
 
@@ -281,6 +332,13 @@ class Node:
                 await asyncio.wait_for(self.dial(ticket), timeout=self._dial_timeout)
             except Exception as e:
                 logger.warning("bootstrap dial failed: %s", e)
+        for node_id, relay in self._seed_nodes:
+            try:
+                await asyncio.wait_for(
+                    self.dial_node(node_id, relay), timeout=self._dial_timeout
+                )
+            except Exception as e:
+                logger.warning("bootstrap dial (node id) failed: %s", e)
 
     async def _mesh_heal_once(self) -> None:
         """
@@ -294,28 +352,35 @@ class Node:
             return
         my_id = self.node_id()
         now = time.monotonic()
-        targets: list[tuple[str, str]] = []
+        targets: list[tuple[str, str | None, str | None]] = []
         for info in self.table:
             if info.node_id == my_id:
                 continue  # never dial ourselves
             if info.node_id in self._peers:
                 continue  # already connected
-            if not info.ticket:
+            relay = info.relay if (info.relay and info.relay != "None") else None
+            if not info.ticket and not relay:
                 continue
             last = self._dial_backoff.get(info.node_id)
             if last is not None and now - last < self._heal_cooldown:
                 continue
-            targets.append((info.node_id, info.ticket))
+            targets.append((info.node_id, info.ticket, relay))
         if not targets:
             return
 
-        async def _try(node_id: str, ticket: str) -> None:
+        async def _try(node_id: str, ticket: str | None, relay: str | None) -> None:
             try:
-                await asyncio.wait_for(self.dial(ticket), timeout=self._dial_timeout)
+                if relay:
+                    # iroh-native: re-dial by stable id + relay, no ticket.
+                    await asyncio.wait_for(
+                        self.dial_node(node_id, relay), timeout=self._dial_timeout
+                    )
+                else:
+                    await asyncio.wait_for(self.dial(ticket), timeout=self._dial_timeout)
             except Exception:
                 self._dial_backoff[node_id] = time.monotonic()
 
-        await asyncio.gather(*(_try(nid, tk) for nid, tk in targets))
+        await asyncio.gather(*(_try(nid, tk, rl) for nid, tk, rl in targets))
 
     # --- internals -------------------------------------------------------
 
@@ -327,6 +392,7 @@ class Node:
                 PeerInfo(
                     node_id=entry["node_id"],
                     ticket=entry.get("ticket"),
+                    relay=entry.get("relay"),
                     images=set(entry.get("images") or []),
                     last_seen=now,
                 )
@@ -395,6 +461,7 @@ class Node:
     async def _handle_hello(self, peer: PeerConnection, frame: dict, bs) -> None:
         peer.hello = frame
         peer.ticket = frame.get("ticket")
+        peer.relay = frame.get("relay")
         peer.images = set(frame.get("images") or [])
         self._merge_hello(frame)
         send = bs.send()
@@ -406,6 +473,7 @@ class Node:
                     self.ticket(),
                     self.table.snapshot(),
                     self.warm_images(),
+                    self.relay_url(),
                 ),
             )
         finally:

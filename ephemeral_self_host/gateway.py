@@ -65,13 +65,16 @@ class Gateway:
             (hex-encoded on the command line / env).
         relay: ``"n0"`` (public relays), ``"minimal"``, or ``"disabled"``
             (direct connections only).
-        seeds: EndpointTicket strings of seed nodes to bootstrap from.
+        seeds: EndpointTicket strings of seed nodes to bootstrap from
+            (private networks / backward compat).
+        seed_nodes: ``(node_id, relay_url)`` pairs to bootstrap from by
+            stable node id — iroh-native, no tickets (default).
         allow_network: whether remote jobs may use network access.
         image_allowlist: allowed images for remote jobs; defaults to the
             ``ephemeral_core`` language map.
         node_factory: injectable for tests — callable returning a
             ``Node``-like object (``start``, ``close``, ``executor``,
-            ``bootstrap``, ``node_id``).
+            ``bootstrap``, ``bootstrap_nodes``, ``node_id``).
     """
 
     def __init__(
@@ -80,6 +83,7 @@ class Gateway:
         secret_key: bytes | None = None,
         relay: str = "n0",
         seeds: Sequence[str] = (),
+        seed_nodes: Sequence[tuple[str, str]] = (),
         allow_network: bool = False,
         image_allowlist: Sequence[str] | None = None,
         node_factory: Callable[..., object] | None = None,
@@ -87,6 +91,7 @@ class Gateway:
         self.secret_key = secret_key
         self.relay = relay
         self.seeds = list(seeds)
+        self.seed_nodes = list(seed_nodes)
         self.allow_network = allow_network
         self.image_allowlist = image_allowlist
         self.node_factory = node_factory
@@ -115,7 +120,9 @@ class Gateway:
         )
         node.executor = OffloadingExecutor(node, local)
         await node.start()
-        if self.seeds:
+        if self.seed_nodes:
+            await node.bootstrap_nodes(self.seed_nodes)
+        elif self.seeds:
             await node.bootstrap(self.seeds)
         self._node = node
 

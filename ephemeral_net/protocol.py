@@ -92,6 +92,7 @@ def hello_frame(
     ticket: str | None,
     peers: list[dict],
     images: list[str] | None = None,
+    relay: str | None = None,
 ) -> dict:
     """
     Build a ``hello`` frame.
@@ -100,12 +101,15 @@ def hello_frame(
     the sender knows about, used for seed-mediated discovery.
     ``images`` is the sender's list of locally-cached container images
     ("warm" images), used for nearest-neighbor offloading.
+    ``relay`` is the sender's current relay URL, so peers can re-dial by
+    stable node id + relay (iroh-native identity) without tickets.
     """
     return {
         "type": "hello",
         "v": PROTOCOL_VERSION,
         "node_id": node_id,
         "ticket": ticket,
+        "relay": relay,
         "peers": peers,
         "images": list(images or []),
     }
@@ -118,6 +122,7 @@ def peer_entries_from_hello(frame: dict) -> list[dict]:
         {
             "node_id": frame.get("node_id"),
             "ticket": frame.get("ticket"),
+            "relay": frame.get("relay"),
             "images": frame.get("images"),
         }
     )

@@ -24,7 +24,8 @@ class PeerInfo:
     """A peer known to this node."""
 
     node_id: str
-    ticket: str | None = None      # EndpointTicket to dial this peer
+    ticket: str | None = None      # EndpointTicket to dial this peer (fallback)
+    relay: str | None = None       # the peer's relay URL — dial by id + relay
     images: set[str] | None = None  # warm container images (for routing)
     last_seen: float = 0.0         # time.monotonic() of last contact
 
@@ -50,6 +51,7 @@ class PeerTable:
                 self._peers[info.node_id] = PeerInfo(
                     node_id=info.node_id,
                     ticket=info.ticket,
+                    relay=info.relay,
                     images=set(info.images) if info.images else None,
                     last_seen=info.last_seen or now,
                 )
@@ -57,6 +59,8 @@ class PeerTable:
             else:
                 if info.ticket:
                     existing.ticket = info.ticket
+                if info.relay:
+                    existing.relay = info.relay
                 if info.images:
                     existing.images = set(info.images)
                 existing.last_seen = info.last_seen or now
@@ -68,6 +72,7 @@ class PeerTable:
             {
                 "node_id": info.node_id,
                 "ticket": info.ticket,
+                "relay": info.relay,
                 "images": sorted(info.images or []),
             }
             for info in self._peers.values()
@@ -79,6 +84,10 @@ class PeerTable:
     def ticket_for(self, node_id: str) -> str | None:
         info = self._peers.get(node_id)
         return info.ticket if info else None
+
+    def relay_for(self, node_id: str) -> str | None:
+        info = self._peers.get(node_id)
+        return info.relay if info else None
 
     def info_for(self, node_id: str) -> PeerInfo | None:
         return self._peers.get(node_id)

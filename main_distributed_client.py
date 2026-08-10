@@ -16,8 +16,11 @@ code with intelligent nearest-neighbor offloading:
 Cluster configuration (environment variables):
 
     EPHEMERAL_RELAY          "n0" (default) | "minimal" | "disabled"
-    EPHEMERAL_SEEDS          comma-separated EndpointTickets to bootstrap from;
-                             unset joins the default swarm (see ephemeral_net.swarm)
+    EPHEMERAL_SEED_NODES     comma-separated node_id[@relay] to bootstrap from;
+                             unset joins the default swarm by node id
+                             (see ephemeral_net.swarm) — iroh-native, no tickets
+    EPHEMERAL_SEEDS          comma-separated EndpointTickets (private networks /
+                             backward compat; overrides SEED_NODES when set)
     EPHEMERAL_SECRET         hex-encoded 32-byte secret for a persistent node id;
                              unset, a stable identity is auto-persisted to disk
     EPHEMERAL_ALLOW_NETWORK  "1" to let remote jobs use network access (default "0")
@@ -65,7 +68,7 @@ except ImportError:
 
 import ephemeral_core
 from ephemeral_net.jobs import JobDoneEvent, JobErrorEvent, JobRequest
-from ephemeral_net.swarm import load_or_create_secret, parse_seeds
+from ephemeral_net.swarm import load_or_create_secret, parse_seed_nodes, parse_seeds
 
 # Reuse the local client's platform plumbing (icon, clipboard, language
 # prompt, artifact routing) so behavior stays identical between tiers.
@@ -86,7 +89,11 @@ CONVERT_HOTKEY = 'ctrl+win+x'
 CLI_MODE = False
 
 EPHEMERAL_RELAY = os.getenv("EPHEMERAL_RELAY", "n0")
+EPHEMERAL_SEED_NODES = parse_seed_nodes(os.getenv("EPHEMERAL_SEED_NODES"))
 EPHEMERAL_SEEDS = parse_seeds(os.getenv("EPHEMERAL_SEEDS"))
+if EPHEMERAL_SEEDS:
+    # Explicit tickets (private network) replace the default swarm nodes.
+    EPHEMERAL_SEED_NODES = []
 _hex_secret = os.getenv("EPHEMERAL_SECRET", "")
 EPHEMERAL_SECRET = (
     bytes.fromhex(_hex_secret) if _hex_secret else load_or_create_secret()
@@ -145,7 +152,9 @@ class Cluster:
         )
         node.executor = OffloadingExecutor(node, local)
         await node.start()
-        if EPHEMERAL_SEEDS:
+        if EPHEMERAL_SEED_NODES:
+            await node.bootstrap_nodes(EPHEMERAL_SEED_NODES)
+        elif EPHEMERAL_SEEDS:
             await node.bootstrap(EPHEMERAL_SEEDS)
         self.node = node
 
