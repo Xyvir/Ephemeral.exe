@@ -1,0 +1,49 @@
+name: Refresh Swarm Bootstrap List
+
+# Keeps docs/swarm.json fresh so thin/first-time joiners (the wasm SPA,
+# paper-thin REST clients, other nodes) always have a current list of
+# live swarm members to dial — no always-on discovery box required.
+#
+# The bot's own commit (docs/swarm.json) is excluded from the main
+# Build & Release pipeline via paths-ignore, so it never spawns full
+# artifact builds.
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # every 6 hours
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install networking tier deps
+      run: pip install -r requirements-net.txt
+
+    - name: Discover the live swarm
+      run: python scripts/update_swarm_json.py
+
+    - name: Commit and push the refreshed list
+      shell: bash
+      run: |
+        git config user.name "ephemeral-swarm-bot"
+        git config user.email "actions@github.com"
+        git add docs/swarm.json
+        if git diff --cached --quiet; then
+          echo "swarm.json unchanged — nothing to commit"
+        else
+          git commit -m "swarm: refresh bootstrap list (scheduled)"
+          git pull --rebase --autostash origin main
+          git push origin main
+        fi

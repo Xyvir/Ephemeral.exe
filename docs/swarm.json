@@ -1,0 +1,36 @@
+{
+  "updated": "2026-08-10T10:16:04Z",
+  "relay": "https://use1-1.relay.n0.iroh.link.",
+  "nodes": [
+    {
+      "node_id": "154e7308b6af310df575c7c90bc8fe86146cfef036ac098662768a4f3c411ec5",
+      "relay": null,
+      "ticket": "endpointaaku44yiw2xtcdpvoxd4sc6i72dbi3h66a3kycmgmj3iutz4iepmkbaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs74vlacaeakyhcaagi64aybadakqaaushxag",
+      "images": []
+    },
+    {
+      "node_id": "4f7879c84d2a88eec99eb80d5c76a0ca56954c73cd5a0d67fe902313b5220178",
+      "relay": null,
+      "ticket": "endpointabhxq6oijuvir3wjt24a2xdwudffnfkmopgvudlh72icge5veiaxqaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
+      "images": []
+    },
+    {
+      "node_id": "5f76329eac0f021c72fbd80a45f92b6de1660ba726f3261c73bb041706e3bd16",
+      "relay": null,
+      "ticket": "endpointabpxmmu6vqhqehds7pmaurpzfnw6czqlu4tpgjq4oo5qifyg4o6rmaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
+      "images": []
+    },
+    {
+      "node_id": "9b0e95bcb507c81e234a235a083a8c6b342a6c657419d203796442b87fcc3f0f",
+      "relay": null,
+      "ticket": "endpointacnq5fn4wud4qhrdjirvucb2rrvtiktmmv2btuqdpfsefod7zq7q6baaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs7znfydaeakyhcaagljoaybadakqaaus2lqg",
+      "images": []
+    },
+    {
+      "node_id": "e00f379acf93036c80b8ee4184c8c883254da6aaf5d71f645064ca8cd494f217",
+      "relay": null,
+      "ticket": "endpointadqa6n42z6jqg3eaxdxedbgizcbsktngvl25oh3ekbsmvdgustzboaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
+      "images": []
+    }
+  ]
+}

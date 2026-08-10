@@ -3,6 +3,9 @@ name: Build & Release
 on:
   push:
     branches: [ "main" ]
+    # The scheduled swarm-bootstrap bot only touches docs/swarm.json —
+    # don't run the whole pipeline (and artifacts) for that.
+    paths-ignore: [ "docs/swarm.json" ]
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
