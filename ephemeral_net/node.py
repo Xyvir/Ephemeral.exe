@@ -18,13 +18,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import AsyncIterator, Sequence
 
 from .discovery import PeerInfo, PeerTable
 from .errors import HandshakeError, JobError, ProtocolError
 from .jobs import JobErrorEvent, JobExecutor, JobRequest, parse_job_frame
-from .swarm import SWARM_LIST_URLS, fetch_swarm_list
+from .swarm import (
+    SWARM_DNS_TXT,
+    SWARM_LIST_URLS,
+    fetch_swarm_anchor_dns,
+    fetch_swarm_list,
+)
 from .protocol import (
     ALPN,
     DEFAULT_MAX_FRAME_SIZE,
@@ -128,6 +134,7 @@ class Node:
         self._seed_tickets: list[str] = []
         self._seed_nodes: list[tuple[str, str | None]] = []
         self._list_urls: list[str] = []
+        self._dns_txt: str = ""
         self._interval: float = 60.0
         # Mesh healing: when a peer dial fails, back off for this long so
         # the maintenance loop doesn't hammer dead peers every pass.
@@ -344,7 +351,10 @@ class Node:
                 logger.warning("bootstrap dial (node id) failed: %s", e)
 
     async def bootstrap_from_list(
-        self, urls: Sequence[str] | None = None, interval: float = 60.0
+        self,
+        urls: Sequence[str] | None = None,
+        interval: float = 60.0,
+        dns_txt: str | None = None,
     ) -> None:
         """
         Bootstrap from the live swarm list (``docs/swarm.json``).
@@ -355,44 +365,77 @@ class Node:
         node id + relay (ticket fallback for legacy entries), and
         re-fetches + dials new members every ``interval`` seconds so
         freshly-picked-up nodes are learned without a restart.
+
+        ``dns_txt``: when the list is unreachable (e.g. GitHub is down),
+        resolve this hostname's TXT record via DNS-over-HTTPS and dial
+        the anchor node it points at — DNS is tiered/cached
+        infrastructure, an independent path to first contact. ``None``
+        (default) uses ``EPHEMERAL_DNS_TXT`` or :data:`SWARM_DNS_TXT`;
+        empty disables the fallback.
         """
         self._list_urls = list(urls if urls is not None else SWARM_LIST_URLS)
+        self._dns_txt = (
+            dns_txt
+            if dns_txt is not None
+            else (os.environ.get("EPHEMERAL_DNS_TXT") or SWARM_DNS_TXT)
+        )
         self._interval = interval
         await self._bootstrap_list_once()
 
     async def _bootstrap_list_once(self) -> None:
-        """Fetch the live list and dial members we aren't connected to."""
-        if not self._list_urls or self._ep is None or self._closed:
+        """Fetch the live list (or DNS anchor) and dial unknown members."""
+        if (not self._list_urls and not self._dns_txt) or self._ep is None or self._closed:
             return
-        try:
-            entries = await asyncio.wait_for(
-                asyncio.to_thread(fetch_swarm_list, self._list_urls),
-                timeout=self._dial_timeout + 5.0,
-            )
-        except Exception as e:
-            logger.warning("swarm list fetch failed: %s", e)
-            return
-        if not entries:
-            return
+        entries: list[dict] = []
+        if self._list_urls:
+            try:
+                entries = await asyncio.wait_for(
+                    asyncio.to_thread(fetch_swarm_list, self._list_urls),
+                    timeout=self._dial_timeout + 5.0,
+                )
+            except Exception as e:
+                logger.warning("swarm list fetch failed: %s", e)
         now = time.monotonic()
-        targets: list[tuple[str, str | None, str | None]] = []
-        for entry in entries:
-            node_id = entry.get("node_id")
-            relay = entry.get("relay")
-            ticket = entry.get("ticket")
-            if relay and relay != "None":
-                pass
-            else:
-                relay = None
-            key = node_id or ticket
-            if not key or key in self._peers:
-                continue
-            if node_id and node_id == self.node_id():
-                continue
-            last = self._dial_backoff.get(key)
-            if last is not None and now - last < self._heal_cooldown:
-                continue
-            targets.append((node_id, relay, ticket))
+        targets: list[tuple[str | None, str | None, str | None]] = []
+        if entries:
+            for entry in entries:
+                node_id = entry.get("node_id")
+                relay = entry.get("relay")
+                ticket = entry.get("ticket")
+                if relay and relay != "None":
+                    pass
+                else:
+                    relay = None
+                key = node_id or ticket
+                if not key or key in self._peers:
+                    continue
+                if node_id and node_id == self.node_id():
+                    continue
+                last = self._dial_backoff.get(key)
+                if last is not None and now - last < self._heal_cooldown:
+                    continue
+                targets.append((node_id, relay, ticket))
+        elif self._dns_txt:
+            # GitHub unreachable — DNS TXT fallback: the refresh Action
+            # keeps a single anchor record pointing at the always-on node,
+            # and the hello handshake expands it into the whole swarm.
+            try:
+                anchors = await asyncio.wait_for(
+                    asyncio.to_thread(fetch_swarm_anchor_dns, self._dns_txt),
+                    timeout=self._dial_timeout,
+                )
+            except Exception as e:
+                logger.warning("swarm DNS anchor fetch failed: %s", e)
+                anchors = []
+            for node_id, relay in anchors:
+                if node_id == self.node_id():
+                    continue
+                if node_id in self._peers:
+                    continue
+                last = self._dial_backoff.get(node_id)
+                if last is not None and now - last < self._heal_cooldown:
+                    continue
+                targets.append((node_id, relay, None))
         if not targets:
             return
 

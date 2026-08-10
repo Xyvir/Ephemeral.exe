@@ -37,9 +37,19 @@ jobs:
     # Unset, the script uses its built-in default. This only matters for
     # the very first, empty list — afterwards the list regenerates from
     # its own members.
+    #
+    # DNS TXT redundancy (optional): set EPHEMERAL_DNS_TXT (variable, the
+    # TXT record hostname) and EPHEMERAL_DNS_TOKEN (secret, a Cloudflare
+    # API token with DNS edit) to also keep a `iroh1:<node_id>;<relay>`
+    # TXT record pointing at the current anchor — an independent, tiered
+    # path to the swarm when GitHub is unreachable. EPHEMERAL_DNS_ZONE
+    # (variable) is optional; the zone is auto-detected when unset.
     - name: Discover the live swarm
       env:
         SWARM_GENESIS: ${{ vars.SWARM_GENESIS }}
+        EPHEMERAL_DNS_TXT: ${{ vars.EPHEMERAL_DNS_TXT }}
+        EPHEMERAL_DNS_ZONE: ${{ vars.EPHEMERAL_DNS_ZONE }}
+        EPHEMERAL_DNS_TOKEN: ${{ secrets.EPHEMERAL_DNS_TOKEN }}
       run: python scripts/update_swarm_json.py
 
     - name: Commit and push the refreshed list

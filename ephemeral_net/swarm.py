@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Sequence
@@ -46,6 +47,25 @@ DEFAULT_RELAY = "https://use1-1.relay.n0.iroh.link."
 SWARM_LIST_URLS: list[str] = [
     "https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/docs/swarm.json",
     "https://xyvir.github.io/Ephemeral.exe/docs/swarm.json",
+]
+
+# DNS TXT fallback for first contact. When the live list (GitHub) is
+# unreachable, a node can still find the swarm through a DNS TXT record
+# the operator keeps updated (the scheduled refresh Action writes it):
+# DNS is tiered, cached infrastructure, so it is an independent path to
+# the swarm. Empty (default) disables the fallback; set the
+# EPHEMERAL_DNS_TXT environment variable (or edit this constant) to the
+# hostname owning a TXT record whose content is the anchor format
+# documented on :func:`parse_swarm_anchor_dns`.
+SWARM_DNS_TXT: str = ""
+
+# DNS-over-HTTPS (RFC 8484 JSON) endpoints used for the TXT lookup — no
+# system-resolver parsing needed (works on Windows and in the browser),
+# and the anycast providers are themselves tiered DNS infrastructure.
+# Two independent providers; first reachable one wins.
+DOH_ENDPOINTS: list[str] = [
+    "https://cloudflare-dns.com/dns-query?name={name}&type=TXT",
+    "https://dns.google/resolve?name={name}&type=TXT",
 ]
 
 
@@ -122,6 +142,63 @@ def parse_seeds(env_value: str | None) -> list[str]:
     return [s.strip() for s in env_value.split(",") if s.strip()]
 
 
+def parse_swarm_anchor_dns(content: str) -> list[tuple[str, str]]:
+    """
+    Parse the swarm anchor out of a DNS TXT record value.
+
+    Format: ``iroh1:<node_id>;<relay_url>`` — one entry per record,
+    comma-separated for multiple anchors. The relay may be omitted
+    (``iroh1:<node_id>``) and :data:`DEFAULT_RELAY` is used. Surrounding
+    quotes (how some resolvers render TXT) are tolerated; non-``iroh1``
+    values and malformed entries are skipped.
+    """
+    anchors: list[tuple[str, str]] = []
+    for part in content.split(","):
+        part = part.strip().strip('"').strip()
+        if not part.startswith("iroh1:"):
+            continue
+        body = part[len("iroh1:") :].strip()
+        node_id, sep, relay = body.partition(";")
+        node_id = node_id.strip()
+        if len(node_id) != 64 or any(c not in "0123456789abcdef" for c in node_id):
+            continue
+        anchors.append((node_id, relay.strip() or DEFAULT_RELAY))
+    return anchors
+
+
+def fetch_swarm_anchor_dns(
+    hostname: str, urls: Sequence[str] | None = None
+) -> list[tuple[str, str]]:
+    """
+    Resolve the swarm anchor TXT record for ``hostname`` via DNS-over-HTTPS.
+
+    Returns ``[(node_id, relay_url), ...]`` — the operator's always-on
+    anchor, which the hello handshake expands into the whole swarm.
+    ``[]`` when the record is missing, malformed, or no resolver is
+    reachable (callers keep retrying on the next maintenance cycle).
+    """
+    if not hostname:
+        return []
+    if urls is None:
+        quoted = urllib.parse.quote(hostname, safe=".-_")
+        urls = [u.format(name=quoted) for u in DOH_ENDPOINTS]
+    for url in urls:
+        try:
+            req = urllib.request.Request(
+                url, headers={"Accept": "application/dns-json"}
+            )
+            with urllib.request.urlopen(req, timeout=8) as res:
+                data = json.loads(res.read().decode("utf-8"))
+            for answer in data.get("Answer") or []:
+                if answer.get("type") == 16:  # TXT
+                    anchors = parse_swarm_anchor_dns(answer.get("data") or "")
+                    if anchors:
+                        return anchors
+        except Exception:
+            continue
+    return []
+
+
 def parse_seed_nodes(env_value: str | None) -> list[tuple[str, str]]:
     """
     Parse ``EPHEMERAL_SEED_NODES`` — comma-separated ``node_id@relay``
@@ -150,10 +227,14 @@ def parse_seed_nodes(env_value: str | None) -> list[tuple[str, str]]:
 
 __all__ = [
     "DEFAULT_RELAY",
+    "DOH_ENDPOINTS",
+    "SWARM_DNS_TXT",
     "SWARM_LIST_URLS",
     "default_state_dir",
+    "fetch_swarm_anchor_dns",
     "fetch_swarm_list",
     "load_or_create_secret",
     "parse_seed_nodes",
     "parse_seeds",
+    "parse_swarm_anchor_dns",
 ]

@@ -13,6 +13,11 @@
 //          relying on any compiled-in seed. The relative path works
 //          when the SPA is served from the GitHub Pages repo root; the
 //          raw fallback covers any other origin.
+// `dnsTxt`: hostname of a DNS TXT record kept in sync by the same
+//          scheduled Action (content: `iroh1:<node_id>;<relay>`, the
+//          always-on anchor). Used only when every `swarmJson` URL is
+//          unreachable — DNS is tiered/cached infrastructure, so it is
+//          an independent path to first contact. Empty = disabled.
 // `nodes` / `seedTickets`: intentionally EMPTY — the distributed binaries
 //          ship with no hard-coded seeds (one big implicit swarm joined
 //          purely through the live list). Operators running a private
@@ -28,6 +33,7 @@ export const BOOTSTRAP = {
     "https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/docs/swarm.json",
     "https://xyvir.github.io/Ephemeral.exe/docs/swarm.json",
   ],
+  dnsTxt: "", // e.g. "_ephemeral-swarm.example.com" — TXT: `iroh1:<node_id>;<relay>`
   nodes: [
     // { node_id: "...", relay: "https://relay.example.com." } — private swarms only
   ],

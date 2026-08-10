@@ -34,6 +34,7 @@ import json
 import os
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 # ``python scripts/update_swarm_json.py`` puts ``scripts/`` on sys.path,
@@ -71,6 +72,106 @@ def parse_genesis(value: str | None) -> list[tuple[str, str]]:
         else:
             nodes.append((raw, DEFAULT_RELAY))
     return nodes
+
+
+def pick_anchor(result: dict, genesis: list[tuple[str, str]]) -> tuple[str, str] | None:
+    """
+    The node the DNS TXT record should point at.
+
+    First contact must reach a LIVE node, so prefer a member reached
+    THIS run (fastest RTT first), falling back to the genesis anchor,
+    then the first listed entry. ``None`` when the list is empty.
+    """
+    nodes = result.get("nodes") or []
+    reached = [n for n in nodes if n.get("rtt_ms") is not None]
+    if reached:
+        n = reached[0]
+        return n["node_id"], n.get("relay") or DEFAULT_RELAY
+    if genesis:
+        return genesis[0]
+    if nodes:
+        n = nodes[0]
+        return n["node_id"], n.get("relay") or DEFAULT_RELAY
+    return None
+
+
+def update_dns_txt(
+    anchor: tuple[str, str], token: str | None, hostname: str | None
+) -> bool:
+    """
+    Point the swarm DNS TXT record at ``anchor`` (node_id, relay).
+
+    The scheduled refresh keeps a TXT record (``iroh1:<node_id>;<relay>``)
+    in sync with the list so thin/first-time joiners have an independent,
+    tiered path to the swarm when GitHub itself is unreachable (see
+    ``ephemeral_net.swarm.fetch_swarm_anchor_dns``). Uses the Cloudflare
+    API — ``EPHEMERAL_DNS_TOKEN`` (secret), ``EPHEMERAL_DNS_TXT`` (the
+    record hostname), optional ``EPHEMERAL_DNS_ZONE`` (the DNS zone name;
+    auto-detected by longest suffix when unset). Returns True when the
+    record was written or already current.
+    """
+    if not token or not hostname:
+        return False
+    zone = (os.environ.get("EPHEMERAL_DNS_ZONE") or "").strip()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    def _api(method: str, url: str, body: dict | None = None) -> dict:
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        with urllib.request.urlopen(req, timeout=15) as res:
+            return json.loads(res.read().decode("utf-8"))
+
+    try:
+        if zone:
+            zones = _api(
+                "GET",
+                f"https://api.cloudflare.com/client/v4/zones?name={zone}",
+            ).get("result") or []
+        else:
+            zones = _api("GET", "https://api.cloudflare.com/client/v4/zones").get(
+                "result"
+            ) or []
+            zones = [
+                z
+                for z in zones
+                if hostname == z.get("name")
+                or hostname.endswith("." + (z.get("name") or ""))
+            ]
+        if not zones:
+            print(f"  DNS: no zone found for {hostname}", flush=True)
+            return False
+        zid = max(zones, key=lambda z: len(z.get("name") or ""))["id"]
+        found = _api(
+            "GET",
+            f"https://api.cloudflare.com/client/v4/zones/{zid}"
+            f"/dns_records?name={hostname}&type=TXT",
+        ).get("result") or []
+        content = f"iroh1:{anchor[0]};{anchor[1]}"
+        body = {"type": "TXT", "name": hostname, "content": content, "ttl": 120}
+        if found:
+            if found[0].get("content") == content:
+                print(f"  DNS: TXT {hostname} already current", flush=True)
+                return True
+            _api(
+                "PUT",
+                f"https://api.cloudflare.com/client/v4/zones/{zid}"
+                f"/dns_records/{found[0]['id']}",
+                body,
+            )
+        else:
+            _api(
+                "POST",
+                f"https://api.cloudflare.com/client/v4/zones/{zid}/dns_records",
+                body,
+            )
+        print(f"  DNS: TXT {hostname} -> {content}", flush=True)
+        return True
+    except Exception as e:
+        print(f"  DNS: update failed: {e}", flush=True)
+        return False
 
 
 def _existing_targets(out_path: Path) -> list[tuple[str, str | None, str | None]]:
@@ -192,6 +293,19 @@ async def main() -> None:
         f"swarm.json updated: {len(result['nodes'])} node(s) -> {args.out}",
         flush=True,
     )
+
+    # Keep the DNS TXT anchor in sync (optional): thin/first-time joiners
+    # get an independent, tiered path to the swarm when GitHub is down.
+    # Configure via repo settings: EPHEMERAL_DNS_TXT (variable) + the
+    # EPHEMERAL_DNS_TOKEN secret (Cloudflare API token with DNS edit).
+    dns_txt = (os.environ.get("EPHEMERAL_DNS_TXT") or "").strip()
+    dns_token = (os.environ.get("EPHEMERAL_DNS_TOKEN") or "").strip()
+    if dns_txt and dns_token:
+        anchor = pick_anchor(result, genesis)
+        if anchor:
+            update_dns_txt(anchor, dns_token, dns_txt)
+        else:
+            print("  DNS: swarm list empty — skipping TXT update", flush=True)
 
 
 if __name__ == "__main__":
