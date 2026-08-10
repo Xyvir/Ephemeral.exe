@@ -391,9 +391,10 @@ def test_job_messages():
     assert back.channel == "stdout" and back.data == b"hello\n"
 
     done = JobDoneEvent(exit_code=0, stdout="ok", stderr="", artifact_file="a.zip",
-                        artifact_ext=".zip", job_id="j1")
+                        artifact_ext=".zip", artifact_path="C:/tmp/a.zip", job_id="j1")
     back = parse_job_frame(done.to_frame())
     assert back.exit_code == 0 and back.artifact_file == "a.zip"
+    assert back.artifact_path == "C:/tmp/a.zip"
 
     err = JobErrorEvent(message="boom", job_id="j1")
     back = parse_job_frame(err.to_frame())

@@ -1,0 +1,13 @@
+# Build configuration for the wasm32-unknown-unknown target.
+#
+# 1) This machine has no MSVC/mingw installed, so host build-scripts and
+#    proc-macros (wasm-bindgen derives) are linked with the mingw gcc stub
+#    bundled inside the rustup GNU toolchain (self-contained linking, no
+#    external installs). Adjust this absolute path to your rustup home; on
+#    a machine with a normal toolchain this section is ignored.
+# 2) Official iroh wasm config flag: getrandom must use the wasm_js backend.
+[target.x86_64-pc-windows-gnu]
+linker = "C:/Users/temp/AppData/Local/Temp/rust_home/rustup/toolchains/stable-x86_64-pc-windows-gnu/lib/rustlib/x86_64-pc-windows-gnu/bin/self-contained/x86_64-w64-mingw32-gcc.exe"
+
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']

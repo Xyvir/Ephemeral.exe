@@ -276,6 +276,7 @@ class Node:
                 PeerInfo(
                     node_id=entry["node_id"],
                     ticket=entry.get("ticket"),
+                    images=set(entry.get("images") or []),
                     last_seen=now,
                 )
             )

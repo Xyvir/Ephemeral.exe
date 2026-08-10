@@ -1,0 +1,26 @@
+[package]
+name = "ephemeral-wasm-library"
+version = "0.1.0"
+edition = "2021"
+description = "Browser-side WebAssembly thin client for the ephemeral distributed cluster"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+iroh = { version = "1", default-features = false, features = ["tls-ring"] }
+iroh-tickets = "1"
+noq = { version = "1", default-features = false, features = ["rustls-ring"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+# Pinned to match the wasm-bindgen CLI (0.2.127) used by build.sh — the
+# CLI must exactly match the crate version or it refuses to run.
+wasm-bindgen = "=0.2.127"
+wasm-bindgen-futures = "=0.4.77"
+js-sys = "=0.3.104"
+
+[profile.release]
+opt-level = "s"
+lto = true

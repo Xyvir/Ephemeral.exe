@@ -24,6 +24,7 @@ class PeerInfo:
 
     node_id: str
     ticket: str | None = None      # EndpointTicket to dial this peer
+    images: set[str] | None = None  # warm container images (for routing)
     last_seen: float = 0.0         # time.monotonic() of last contact
 
 
@@ -48,19 +49,26 @@ class PeerTable:
                 self._peers[info.node_id] = PeerInfo(
                     node_id=info.node_id,
                     ticket=info.ticket,
+                    images=set(info.images) if info.images else None,
                     last_seen=info.last_seen or now,
                 )
                 new_count += 1
             else:
                 if info.ticket:
                     existing.ticket = info.ticket
+                if info.images:
+                    existing.images = set(info.images)
                 existing.last_seen = info.last_seen or now
         return new_count
 
     def snapshot(self) -> list[dict]:
         """Peer entries for embedding in a ``hello`` frame."""
         return [
-            {"node_id": info.node_id, "ticket": info.ticket}
+            {
+                "node_id": info.node_id,
+                "ticket": info.ticket,
+                "images": sorted(info.images or []),
+            }
             for info in self._peers.values()
         ]
 

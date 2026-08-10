@@ -21,3 +21,6 @@ Thumbs.db
 
 # Test artifacts
 test_ephemeral.py
+
+# Rust / wasm build output
+target/

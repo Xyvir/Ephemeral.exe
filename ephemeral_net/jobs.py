@@ -93,6 +93,9 @@ class JobDoneEvent(JobEvent):
     stderr: str
     artifact_file: str | None = None
     artifact_ext: str | None = None
+    #: Absolute path to the artifact on the executing node (local consumers
+    #: can route it; remote consumers only see the basename via artifact_file).
+    artifact_path: str | None = None
     job_id: str = ""
 
     def to_frame(self) -> dict:
@@ -104,6 +107,7 @@ class JobDoneEvent(JobEvent):
             "stderr": self.stderr,
             "artifact_file": self.artifact_file,
             "artifact_ext": self.artifact_ext,
+            "artifact_path": self.artifact_path,
         }
 
     @classmethod
@@ -116,6 +120,7 @@ class JobDoneEvent(JobEvent):
             stderr=str(frame.get("stderr", "")),
             artifact_file=frame.get("artifact_file"),
             artifact_ext=frame.get("artifact_ext"),
+            artifact_path=frame.get("artifact_path"),
             job_id=str(frame.get("job_id", "")),
         )
 

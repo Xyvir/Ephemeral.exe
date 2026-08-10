@@ -114,5 +114,11 @@ def hello_frame(
 def peer_entries_from_hello(frame: dict) -> list[dict]:
     """Extract the peer entries a hello frame carries (excluding the sender)."""
     entries = list(frame.get("peers") or [])
-    entries.append({"node_id": frame.get("node_id"), "ticket": frame.get("ticket")})
+    entries.append(
+        {
+            "node_id": frame.get("node_id"),
+            "ticket": frame.get("ticket"),
+            "images": frame.get("images"),
+        }
+    )
     return [e for e in entries if e and e.get("node_id")]

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ephemeral Web — distributed code runner</title>
+<link rel="stylesheet" href="app.css" />
+</head>
+<body>
+<header>
+  <h1>Ephemeral <span>Web</span></h1>
+  <div class="meta">
+    <span id="nodeLabel">node:</span>
+    <code id="nodeId">—</code>
+    <span id="status" class="status">starting…</span>
+  </div>
+</header>
+
+<section class="bootstrap">
+  <h2>Connect</h2>
+  <p class="hint">
+    This client <strong>auto-connects</strong> to the cluster using the seed
+    tickets compiled into <code>config.js</code> — no user input needed.
+    Nodes are discovered automatically and jobs route to the best available
+    compute node (warm image first, then lowest latency). All traffic goes
+    through an iroh relay — the public n0 relays by default, or a
+    self-hosted one below.
+  </p>
+  <label>Manual seed ticket (optional — overrides auto-discovery)
+    <input id="ticket" type="text" placeholder="EndpointTicket of a cluster node" autocomplete="off" />
+  </label>
+  <label>Relay URL (optional, default: n0 public relays)
+    <input id="relay" type="text" placeholder="https://relay.example.com." autocomplete="off" />
+  </label>
+</section>
+
+<section class="cluster">
+  <h2>Cluster <span id="clusterCount" class="count">—</span></h2>
+  <ul id="clusterList" class="cluster-list"></ul>
+  <button id="refresh" class="secondary">Refresh peers</button>
+</section>
+
+<section class="run">
+  <h2>Run code</h2>
+  <textarea id="input" spellcheck="false" placeholder="```python&#10;print(&quot;hello from the cluster&quot;)&#10;```"></textarea>
+  <div class="actions">
+    <button id="run">Run in Cluster</button>
+    <button id="sample">Load sample</button>
+  </div>
+</section>
+
+<section class="output-wrap">
+  <h2>Output</h2>
+  <div id="output" class="output"></div>
+</section>
+
+<footer>
+  Public network — anything you submit is <strong>public knowledge</strong>.
+  No privacy guarantee. For private use, self-host.
+</footer>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

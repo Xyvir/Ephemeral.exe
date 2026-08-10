@@ -246,6 +246,7 @@ class CoreJobExecutor:
             artifact_ext=(
                 os.path.splitext(artifact_file)[1] if artifact_file else None
             ),
+            artifact_path=artifact_file,
             job_id=request.job_id,
         )
 
