@@ -507,6 +507,46 @@ async def _offload_worker_executor(request):
 _offload_worker_executor.ran = []
 
 
+async def _run_mesh_heal_integration() -> bool:
+    """
+    Mesh healing: after a peer connection drops, the node re-dials the
+    peer straight from its peer table (no seed involved) and repairs the
+    mesh — the swarm should heal around a dead seed.
+    """
+    from ephemeral_net.node import Node
+
+    a = Node(relay="disabled", idle_timeout=5.0)
+    b = Node(relay="disabled", idle_timeout=5.0)
+    try:
+        await a.start()
+        await b.start()
+
+        # B dials A directly; both learn each other's ticket via hello.
+        await asyncio.wait_for(b.dial(a.ticket()), timeout=30)
+        b_id = b.node_id()
+        assert b_id in a._peers, "A holds B's connection"
+        assert a.table.ticket_for(b_id), "A learned B's dial-back ticket"
+        print("  A + B connected; A learned B's ticket via hello")
+
+        # Simulate a dropped connection.
+        a._peers[b_id].connection.close(0, b"test drop")
+        for _ in range(50):
+            if b_id not in a._peers:
+                break
+            await asyncio.sleep(0.1)
+        assert b_id not in a._peers, "A's registry dropped the dead connection"
+        print("  connection dropped; A's registry cleaned up")
+
+        # Heal: A re-dials B straight from its peer table.
+        await a._mesh_heal_once()
+        assert b_id in a._peers, "A reconnected to B via mesh healing"
+        print("  MESH HEAL OK: A re-dialed dropped peer B from its table")
+        return True
+    finally:
+        await a.close()
+        await b.close()
+
+
 async def _run_offload_integration() -> bool:
     """
     Three-node offloading test: requester -> offloader (image not warm)
@@ -625,6 +665,11 @@ def main():
     ok = asyncio.run(_run_offload_integration())
     if not ok:
         print("SKIP: offload integration test — no local connectivity")
+
+    print("\n--- mesh-heal integration ---")
+    ok = asyncio.run(_run_mesh_heal_integration())
+    if not ok:
+        print("SKIP: mesh-heal integration test — no local connectivity")
 
 
 if __name__ == "__main__":

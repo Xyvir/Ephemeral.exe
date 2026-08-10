@@ -487,6 +487,7 @@ Every distributed binary joins the **same public swarm by default** — no confi
 - **Bootstrap** — a compiled-in seed ticket (`ephemeral_net/swarm.py` → `DEFAULT_SWARM_SEEDS`, mirrored in `web/config.js`) is dialed when `EPHEMERAL_SEEDS` is unset. The seed's `hello` reply carries its peer table, so one seed reveals the whole swarm.
 - **Stable identity** — a node's ticket is derived from its secret key, so every distributed binary persists a 32-byte identity to `~/.ephemeral/secret_key.bin` (or `EPHEMERAL_STATE_DIR`) and reuses it across restarts. Without this, a compiled-in seed ticket would go stale the moment the seed restarted.
 - **The seed is the lynchpin** — for the swarm to always be reachable (including from the public GitHub Pages demo), at least one node must be *always on*: run the self-host distributed gateway on any always-on box, and its startup log prints `SWARM SEED TICKET ...`. Take that ticket, swap it into `DEFAULT_SWARM_SEEDS` *and* `web/config.js`, and the public demo always finds a live node.
+- **Mesh healing** — every node periodically re-dials known peers from its peer table (with backoff for dead peers), so the swarm repairs itself around a dead seed. Existing members reconnect to each other directly; only the *very first contact* for brand-new nodes ever needs a live seed.
 - **Opt out** — set `EPHEMERAL_SEEDS` explicitly to bootstrap a private cluster instead; set `EPHEMERAL_SECRET` to pin an identity without touching disk.
 
 ### Web thin client (`ephemeral-wasm-library`)

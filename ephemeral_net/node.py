@@ -119,10 +119,17 @@ class Node:
 
         self._ep = None
         self._accept_task: asyncio.Task | None = None
-        self._bootstrap_task: asyncio.Task | None = None
+        self._maintenance_task: asyncio.Task | None = None
         self._peers: dict[str, PeerConnection] = {}
         self._peers_lock = asyncio.Lock()
         self.table = PeerTable()
+        self._seed_tickets: list[str] = []
+        self._interval: float = 60.0
+        # Mesh healing: when a peer dial fails, back off for this long so
+        # the maintenance loop doesn't hammer dead peers every pass.
+        self._heal_cooldown: float = 180.0
+        self._dial_timeout: float = 20.0
+        self._dial_backoff: dict[str, float] = {}
         self._closed = False
 
     # --- identity --------------------------------------------------------
@@ -176,16 +183,19 @@ class Node:
             return
         self._ep = await self._builder.bind()
         self._accept_task = asyncio.create_task(self._accept_loop())
+        # One background loop handles both seed refresh and mesh healing
+        # (re-dialing known peers whose connections dropped).
+        self._maintenance_task = asyncio.create_task(self._maintenance_loop())
         # Let the network report settle so tickets carry usable addresses.
         await asyncio.sleep(1.0)
 
     async def close(self) -> None:
         """Stop accepting, drop peers, and release the endpoint."""
         self._closed = True
-        for task in (self._accept_task, self._bootstrap_task):
+        for task in (self._accept_task, self._maintenance_task):
             if task is not None:
                 task.cancel()
-        for task in (self._accept_task, self._bootstrap_task):
+        for task in (self._accept_task, self._maintenance_task):
             if task is not None:
                 try:
                     await task
@@ -249,24 +259,63 @@ class Node:
 
     async def bootstrap(self, seed_tickets: Sequence[str], interval: float = 60.0) -> None:
         """
-        Dial the given seed nodes to discover peers, then refresh every
-        ``interval`` seconds in the background.
+        Dial the given seed nodes to discover peers immediately. The
+        maintenance loop (started in :meth:`start`) then re-dials the
+        seeds and heals the mesh every ``interval`` seconds.
         """
         self._seed_tickets = list(seed_tickets)
+        self._interval = interval
         await self._bootstrap_once()
-        self._bootstrap_task = asyncio.create_task(self._bootstrap_loop(interval))
 
-    async def _bootstrap_loop(self, interval: float) -> None:
+    async def _maintenance_loop(self) -> None:
         while not self._closed:
-            await asyncio.sleep(interval)
+            await asyncio.sleep(self._interval)
+            if self._closed:
+                return
             await self._bootstrap_once()
+            await self._mesh_heal_once()
 
     async def _bootstrap_once(self) -> None:
-        for ticket in getattr(self, "_seed_tickets", []):
+        for ticket in self._seed_tickets:
             try:
-                await self.dial(ticket)
+                await asyncio.wait_for(self.dial(ticket), timeout=self._dial_timeout)
             except Exception as e:
                 logger.warning("bootstrap dial failed: %s", e)
+
+    async def _mesh_heal_once(self) -> None:
+        """
+        Re-dial known peers we are not currently connected to.
+
+        The mesh heals around a dead seed: members re-establish dropped
+        connections directly from their peer table, so only the very
+        first contact for brand-new nodes ever needs a live seed.
+        """
+        if self._ep is None or self._closed:
+            return
+        my_id = self.node_id()
+        now = time.monotonic()
+        targets: list[tuple[str, str]] = []
+        for info in self.table:
+            if info.node_id == my_id:
+                continue  # never dial ourselves
+            if info.node_id in self._peers:
+                continue  # already connected
+            if not info.ticket:
+                continue
+            last = self._dial_backoff.get(info.node_id)
+            if last is not None and now - last < self._heal_cooldown:
+                continue
+            targets.append((info.node_id, info.ticket))
+        if not targets:
+            return
+
+        async def _try(node_id: str, ticket: str) -> None:
+            try:
+                await asyncio.wait_for(self.dial(ticket), timeout=self._dial_timeout)
+            except Exception:
+                self._dial_backoff[node_id] = time.monotonic()
+
+        await asyncio.gather(*(_try(nid, tk) for nid, tk in targets))
 
     # --- internals -------------------------------------------------------
 
