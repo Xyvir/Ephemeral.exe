@@ -9,22 +9,38 @@ single genesis anchor *plus* whatever the previous list knew (so the
 list survives a dead genesis and regenerates from its own members), and
 commits the refreshed list.
 
+Liveness probe: a successful dial + hello handshake proves a node speaks
+the ephemeral wire protocol, but not that it is a live compute node. So
+every node that answers is additionally sent a real job — a tiny Python
+script that prints a fresh per-node nonce — and is only recorded as
+verified when it executes the payload and echoes the nonce back. Nodes
+that cannot be reached keep their entry for a few runs (they may be
+temporarily offline), then age out; nodes that are reachable but never
+run the probe job (a bot that merely answers hello, a broken executor)
+are evicted after a few failed probes. The genesis anchor is exempt from
+eviction. See ``ephemeral_net.probe`` for the bookkeeping.
+
 File shape:
 
     {
       "updated": "2026-08-10T12:00:00Z",
       "relay": "https://use1-1.relay.n0.iroh.link.",
       "nodes": [
-        {"node_id": "…", "relay": "…", "ticket": "…", "images": ["…"]},
+        {"node_id": "…", "relay": "…", "ticket": "…", "images": ["…"],
+         "probe": "ok", "probe_at": "…", "probe_detail": "…",
+         "probe_fails": 0, "misses": 0},
         ...
       ]
     }
 
 ``node_id`` + ``relay`` are the stable, iroh-native dial target; ``ticket``
-is kept as a fallback for clients that still dial by EndpointTicket.
+is kept as a fallback for clients that still dial by EndpointTicket. The
+``probe*``/``misses`` fields are diagnostic, written by this script, and
+ignored by all consumers.
 
 Usage:
     python scripts/update_swarm_json.py [--out docs/swarm.json]
+        [--no-probe] [--probe-timeout 180] [--probe-concurrency 8]
 """
 from __future__ import annotations
 
@@ -42,6 +58,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ephemeral_net.node import Node
+from ephemeral_net.probe import (
+    DEFAULT_PROBE_TIMEOUT,
+    PROBE_MAX_FAILS,
+    UNREACHABLE_MAX_MISSES,
+    mark_probe,
+    run_probe,
+    should_evict,
+)
 from ephemeral_net.swarm import DEFAULT_RELAY
 
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "docs" / "swarm.json"
@@ -55,6 +79,9 @@ DEFAULT_OUT = Path(__file__).resolve().parent.parent / "docs" / "swarm.json"
 GENESIS_DEFAULT: list[tuple[str, str]] = [
     ("154e7308b6af310df575c7c90bc8fe86146cfef036ac098662768a4f3c411ec5", DEFAULT_RELAY),
 ]
+
+# How long each dial attempt may take (matches Node._dial_timeout).
+DIAL_TIMEOUT = 20.0
 
 
 def parse_genesis(value: str | None) -> list[tuple[str, str]]:
@@ -200,52 +227,105 @@ def update_dns_txt(
         return False
 
 
-def _existing_targets(out_path: Path) -> list[tuple[str, str | None, str | None]]:
-    """``(node_id, relay, ticket)`` entries the previous list knew about."""
+def _existing_nodes(out_path: Path) -> dict[str, dict]:
+    """
+    Previous list entries keyed by node id.
+
+    Carries the staleness bookkeeping (``probe_fails`` / ``misses``)
+    forward so counters survive across runs. Missing/malformed file
+    returns {}.
+    """
     try:
         data = json.loads(out_path.read_text(encoding="utf-8"))
     except Exception:
-        return []
-    nodes: list[tuple[str, str | None, str | None]] = []
+        return {}
+    nodes: dict[str, dict] = {}
     for entry in data.get("nodes") or []:
         node_id = entry.get("node_id")
-        if node_id:
-            nodes.append((node_id, entry.get("relay"), entry.get("ticket")))
+        if not node_id:
+            continue
+        nodes[node_id] = {
+            "node_id": node_id,
+            "relay": entry.get("relay"),
+            "ticket": entry.get("ticket"),
+            "images": entry.get("images") or [],
+            "probe_fails": entry.get("probe_fails") or 0,
+            "misses": entry.get("misses") or 0,
+        }
     return nodes
 
 
-async def discover(out_path: Path, max_nodes: int, genesis: list[tuple[str, str]]) -> dict:
-    """Join the swarm, dial known nodes, and return the refreshed list."""
+async def discover(
+    out_path: Path,
+    max_nodes: int,
+    genesis: list[tuple[str, str]],
+    *,
+    probe: bool = True,
+    probe_timeout: float = DEFAULT_PROBE_TIMEOUT,
+    probe_concurrency: int = 8,
+) -> dict:
+    """
+    Join the swarm, dial every candidate, probe the reachable ones, and
+    return the refreshed list.
+
+    Candidates are the genesis anchor plus whatever the previous list
+    knew, plus any peers learned via hello — every entry that ends up in
+    the list is dialed this run, and (with ``probe``) every node that
+    answers is sent a real job and must echo a fresh nonce to be listed
+    as verified.
+    """
     node = Node(relay="n0")
     await node.start()
     try:
-        # The genesis anchor (first-ever list only), plus whatever the
-        # previous list knew — the list keeps regenerating from its own
-        # members, so a dead genesis node doesn't matter after the first run.
+        prev = _existing_nodes(out_path)
+
+        # Dial targets: the genesis anchor (first-ever list only), plus
+        # whatever the previous list knew — the list keeps regenerating
+        # from its own members, so a dead genesis node doesn't matter
+        # after the first run.
         targets: dict[str, tuple[str | None, str | None]] = {}
         for node_id, relay in genesis:
             targets[node_id] = (relay, None)
-        for node_id, relay, ticket in _existing_targets(out_path):
-            targets.setdefault(node_id, (relay, ticket))
+        for entry in prev.values():
+            targets.setdefault(entry["node_id"], (entry.get("relay"), entry.get("ticket")))
 
+        sem = asyncio.Semaphore(probe_concurrency)
         reached: dict[str, float] = {}  # node_id -> hello RTT (this run)
-        for node_id, (relay, ticket) in targets.items():
-            try:
-                if relay:
-                    peer = await asyncio.wait_for(node.dial_node(node_id, relay), timeout=20)
-                elif ticket:
-                    peer = await asyncio.wait_for(node.dial(ticket), timeout=20)
-                else:
-                    continue
+        peers: dict[str, object] = {}   # node_id -> live PeerConnection
+
+        async def _dial_one(node_id: str, relay: str | None, ticket: str | None) -> None:
+            """Dial one node (by id+relay, then ticket) and register the peer."""
+            async with sem:
+                try:
+                    if relay:
+                        peer = await asyncio.wait_for(
+                            node.dial_node(node_id, relay), timeout=DIAL_TIMEOUT
+                        )
+                    elif ticket:
+                        peer = await asyncio.wait_for(node.dial(ticket), timeout=DIAL_TIMEOUT)
+                    else:
+                        return
+                except Exception as e:  # unreachable — the list keeps it for a few runs
+                    # Show the exception type: a bare TimeoutError stringifies
+                    # to "" which tells nobody anything.
+                    print(
+                        f"  - {node_id[:12]}... unreachable: {type(e).__name__}: {e}",
+                        flush=True,
+                    )
+                    return
+                peers[node_id] = peer
                 reached[node_id] = peer.rtt if peer.rtt is not None else 0.0
-            except Exception as e:  # unreachable — the list keeps it for next time
-                print(f"  - {node_id[:12]}... unreachable: {e}", flush=True)
+
+        await asyncio.gather(
+            *(_dial_one(nid, relay, ticket) for nid, (relay, ticket) in targets.items())
+        )
 
         my_id = node.node_id()
         # Everything we know about: hello-learned nodes (seed + its peers)
-        # ∪ previous list, deduped. Keeping un-reachable entries lets the
-        # next run retry them and keeps thin clients pointed at recovering
-        # nodes — but they rank last and only fill space under the cap.
+        # ∪ previous list, deduped. Keeping un-reachable entries for a few
+        # runs lets the next run retry them and keeps thin clients pointed
+        # at recovering nodes — but they rank last, fill space under the
+        # cap only, and age out after UNREACHABLE_MAX_MISSES.
         infos: dict[str, dict] = {}
         for info in node.table:
             if info.node_id == my_id:
@@ -256,35 +336,131 @@ async def discover(out_path: Path, max_nodes: int, genesis: list[tuple[str, str]
                 "ticket": info.ticket,
                 "images": sorted(info.images or []),
             }
-        for node_id, relay, ticket in _existing_targets(out_path):
-            infos.setdefault(
+        for entry in prev.values():
+            nid = entry["node_id"]
+            if nid in infos:
+                # Live hello data wins; carry the staleness bookkeeping over.
+                for key in ("probe_fails", "misses"):
+                    if entry.get(key):
+                        infos[nid][key] = entry[key]
+            else:
+                infos[nid] = dict(entry)
+
+        # Dial hello-learned nodes too (they were never targets of the
+        # previous list), so every entry in the list gets a live dial —
+        # and, with probe enabled, a live job — this run.
+        await asyncio.gather(
+            *(
+                _dial_one(nid, entry.get("relay"), entry.get("ticket"))
+                for nid, entry in infos.items()
+                if nid not in peers and (entry.get("relay") or entry.get("ticket"))
+            )
+        )
+
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+        async def _probe_one(node_id: str, entry: dict) -> None:
+            """Submit a real job to one reachable node and record the verdict."""
+            result = await run_probe(
+                lambda request: node.submit_job(peers[node_id], request),
                 node_id,
-                {"node_id": node_id, "relay": relay, "ticket": ticket, "images": []},
+                timeout=probe_timeout,
+            )
+            entry["probe"] = "ok" if result["ok"] else "failed"
+            entry["probe_at"] = now_iso
+            entry["probe_detail"] = result["detail"]
+            entry["probe_ms"] = result["ms"]
+            mark_probe(entry, prev.get(node_id), status="ok" if result["ok"] else "failed")
+            tag = "probe ok" if result["ok"] else "probe FAILED"
+            print(f"  {tag:14} {node_id[:12]}... {result['detail']} ({result['ms']} ms)", flush=True)
+
+        if probe:
+            await asyncio.gather(
+                *(
+                    _probe_one(nid, entry)
+                    for nid, entry in infos.items()
+                    if nid in peers
+                )
             )
 
-        # Rank: genesis anchor first, then nodes reached this run (fastest
-        # RTT first), then hello-learned peers, then stale previous
-        # entries — capped so the address list stays small and fresh.
-        seed_ids = [nid for nid, _ in genesis]
+        # Nodes we could not dial: record the miss (and that we tried).
+        for node_id, entry in infos.items():
+            if node_id in peers:
+                continue
+            if not (entry.get("relay") or entry.get("ticket")):
+                entry["probe"] = "skipped"  # nothing to dial — leave untouched
+                continue
+            mark_probe(entry, prev.get(node_id), status="unreachable")
+            entry["probe"] = "unreachable"
+            entry["probe_at"] = now_iso
+            print(f"  unreachable    {node_id[:12]}...", flush=True)
+
+        # Evict entries that are no longer live: reachable nodes that
+        # never run the probe job (PROBE_MAX_FAILS), and silent nodes
+        # (UNREACHABLE_MAX_MISSES ≈ 36 h offline). The genesis anchor is
+        # exempt — it is operator configuration, not a discovered member.
+        seed_ids = {nid for nid, _ in genesis}
+        kept: list[dict] = []
+        for node_id, entry in infos.items():
+            if should_evict(entry, seed_ids=seed_ids):
+                if (entry.get("probe_fails") or 0) >= PROBE_MAX_FAILS:
+                    reason = f"{entry.get('probe_fails')} failed probes"
+                else:
+                    reason = f"{entry.get('misses')} unreachable runs"
+                print(f"  evicting       {node_id[:12]}... ({reason})", flush=True)
+                continue
+            kept.append(entry)
+
+        # Rank: genesis anchor first, then verified nodes (fastest probe /
+        # hello RTT first), then reachable-but-unverified, then hello-
+        # learned peers, then stale entries — capped so the address list
+        # stays small and fresh.
         known = set(node.table.known_peer_ids())
 
         def rank_key(nid: str) -> tuple[int, float, str]:
             if nid in seed_ids:
                 return (0, 0.0, nid)
+            status = infos[nid].get("probe")
+            rtt = reached.get(nid) if reached.get(nid) is not None else float("inf")
+            if status == "ok":
+                return (1, rtt, nid)
+            if status == "failed":
+                return (2, rtt, nid)
             if nid in reached:
-                return (1, reached[nid], nid)
-            if nid in known:
-                return (2, 0.0, nid)
-            return (3, 0.0, nid)
+                return (2, rtt, nid)  # dialed this run; no probe ran
+            if status == "unreachable" or nid in known:
+                return (3, 0.0, nid)
+            return (4, 0.0, nid)
 
-        ordered = sorted(infos.values(), key=lambda n: rank_key(n["node_id"]))
+        ordered = sorted(kept, key=lambda n: rank_key(n["node_id"]))
         for n in ordered:
             rtt = reached.get(n["node_id"])
             if rtt is not None:
                 n["rtt_ms"] = round(rtt * 1000)
 
+        if probe:
+            ok_n = sum(1 for n in infos.values() if n.get("probe") == "ok")
+            fail_n = sum(1 for n in infos.values() if n.get("probe") == "failed")
+            unreach_n = sum(1 for n in infos.values() if n.get("probe") == "unreachable")
+            print(
+                f"probe: {ok_n} verified alive, {fail_n} reachable but not running "
+                f"jobs, {unreach_n} unreachable",
+                flush=True,
+            )
+            if len(reached) and ok_n == 0:
+                print(
+                    "WARNING: every reachable node failed the probe — the swarm may "
+                    "be down, or the probe payload itself is broken",
+                    flush=True,
+                )
+        else:
+            print(
+                f"dial: {len(reached)} reached, {len(infos) - len(reached)} unreachable",
+                flush=True,
+            )
+
         return {
-            "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "updated": now_iso,
             "relay": DEFAULT_RELAY,
             "max_nodes": max_nodes,
             "nodes": ordered[:max_nodes],
@@ -307,10 +483,34 @@ async def main() -> None:
         default=None,
         help="genesis node_id@relay list (default: SWARM_GENESIS env or GENESIS_DEFAULT)",
     )
+    parser.add_argument(
+        "--no-probe",
+        action="store_true",
+        help="dial candidates but skip the real-job liveness probe (diagnostic runs)",
+    )
+    parser.add_argument(
+        "--probe-timeout",
+        type=float,
+        default=DEFAULT_PROBE_TIMEOUT,
+        help=f"per-node probe job timeout in seconds (default: {DEFAULT_PROBE_TIMEOUT})",
+    )
+    parser.add_argument(
+        "--probe-concurrency",
+        type=int,
+        default=8,
+        help="max simultaneous dials/probes (default: 8)",
+    )
     args = parser.parse_args()
 
     genesis = parse_genesis(args.genesis or os.environ.get("SWARM_GENESIS"))
-    result = await discover(args.out, max_nodes=args.max_nodes, genesis=genesis)
+    result = await discover(
+        args.out,
+        max_nodes=args.max_nodes,
+        genesis=genesis,
+        probe=not args.no_probe,
+        probe_timeout=args.probe_timeout,
+        probe_concurrency=max(1, args.probe_concurrency),
+    )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     tmp = args.out.with_name(args.out.name + ".tmp")
     tmp.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

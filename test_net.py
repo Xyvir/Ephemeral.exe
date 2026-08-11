@@ -812,6 +812,64 @@ def test_fetch_swarm_list_dns():
     print("PASS: fetch_swarm_list_dns (DoH JSON)")
 
 
+def test_probe_helpers():
+    """Liveness-probe payload, verdict, and staleness bookkeeping are pure."""
+    from ephemeral_net.probe import (
+        PROBE_MAX_FAILS,
+        UNREACHABLE_MAX_MISSES,
+        build_probe_document,
+        mark_probe,
+        probe_nonce,
+        probe_verdict,
+        should_evict,
+    )
+    from ephemeral_net.sandbox import sanitize_markdown
+
+    # The probe document is a minimal python run that passes sanitization
+    # on a real node (image resolves to the allowlisted python image).
+    nonce = probe_nonce("a" * 64)
+    assert nonce.startswith("ephemeral-alive-") and "a" * 10 in nonce
+    assert probe_nonce("a" * 64) != nonce, "nonces must be unpredictable"
+    doc = build_probe_document(nonce)
+    assert f"print({nonce!r})" in doc
+    clean, images = sanitize_markdown(doc)
+    assert images == [PY_IMG], f"probe must run on the python image, got {images}"
+    assert nonce in clean
+
+    # Verdict: exit 0 AND the exact nonce in stdout — a canned/captured
+    # answer or a crash must fail.
+    ok, detail = probe_verdict(0, f"## Result\n{nonce}\n", nonce)
+    assert ok and detail == "ok"
+    assert probe_verdict(0, "alive\n", nonce)[0] is False
+    assert probe_verdict(0, "", nonce)[0] is False
+    assert probe_verdict(1, nonce, nonce)[0] is False
+    assert probe_verdict(0, nonce, "other-nonce")[0] is False
+
+    # Bookkeeping: counters carry over from the previous list entry.
+    prev = {"node_id": "x", "probe_fails": 2, "misses": 3}
+    assert mark_probe({}, prev, status="ok") == {"probe_fails": 0, "misses": 0}
+    failed = mark_probe({}, prev, status="failed")
+    assert failed == {"probe_fails": 3, "misses": 0}
+    reached = mark_probe({}, prev, status="reached")
+    assert reached["misses"] == 0 and reached["probe_fails"] == 2
+    unreach = mark_probe({}, prev, status="unreachable")
+    assert unreach == {"probe_fails": 2, "misses": 4}
+    assert mark_probe({}, None, status="failed")["probe_fails"] == 1
+
+    # Eviction: only when a counter crosses its threshold, and the
+    # genesis anchor is always exempt.
+    assert should_evict({"node_id": "x", "probe_fails": PROBE_MAX_FAILS})
+    assert not should_evict({"node_id": "x", "probe_fails": PROBE_MAX_FAILS - 1})
+    assert should_evict({"node_id": "x", "misses": UNREACHABLE_MAX_MISSES})
+    assert not should_evict({"node_id": "x", "misses": UNREACHABLE_MAX_MISSES - 1})
+    assert not should_evict({"node_id": "x"})
+    assert not should_evict(
+        {"node_id": "genesis", "probe_fails": 99, "misses": 99},
+        seed_ids={"genesis"},
+    )
+    print("PASS: probe helpers (payload, verdict, counters, eviction)")
+
+
 async def _run_list_bootstrap_integration() -> bool:
     """
     No compiled seeds: a node bootstraps from the LIVE SWARM LIST
@@ -1005,6 +1063,67 @@ async def _run_offload_integration() -> bool:
         await requester.close()
 
 
+async def _run_probe_integration() -> bool:
+    """
+    Liveness probe over a real connection: a worker that executes the
+    payload verifies; a hello-only node (no executor) must fail it — the
+    exact bot-detection the refresh workflow relies on.
+    """
+    import re
+
+    from ephemeral_net.node import Node
+    from ephemeral_net.probe import run_probe
+    from ephemeral_net.sandbox import CoreJobExecutor
+
+    async def _echo_runner(markdown_text, timeout, server_mode):
+        """Simulate a real node: run the python payload, echo its print."""
+        m = re.search(r"print\('([^']+)'\)", markdown_text)
+        class _Result:
+            stdout = (m.group(1) + "\n") if m else ""
+            stderr = ""
+            exit_code = 0
+            artifact_paths = []
+        return _Result()
+
+    worker = Node(relay="disabled", idle_timeout=5.0)
+    worker.executor = CoreJobExecutor(runner=_echo_runner)
+    # A plain node that speaks hello but has no executor — a bot that
+    # merely answers the handshake looks exactly like this.
+    hollow = Node(relay="disabled", idle_timeout=5.0)
+    probe = Node(relay="disabled", idle_timeout=5.0)
+    try:
+        await worker.start()
+        await hollow.start()
+        await probe.start()
+
+        wpeer = await asyncio.wait_for(probe.dial(worker.ticket()), timeout=30)
+        result = await asyncio.wait_for(
+            run_probe(lambda req: probe.submit_job(wpeer, req), worker.node_id(),
+                      timeout=30),
+            timeout=70,
+        )
+        assert result["ok"], f"worker should verify, got {result}"
+        assert result["detail"] == "ok"
+        print(f"  probe ok against a real worker ({result['ms']} ms)")
+
+        hpeer = await asyncio.wait_for(probe.dial(hollow.ticket()), timeout=30)
+        result = await asyncio.wait_for(
+            run_probe(lambda req: probe.submit_job(hpeer, req), hollow.node_id(),
+                      timeout=30),
+            timeout=70,
+        )
+        assert not result["ok"], f"hello-only node must fail the probe, got {result}"
+        assert "does not run jobs" in result["detail"]
+        print(f"  probe FAILED against hello-only node as expected: {result['detail']}")
+
+        print("  PROBE INTEGRATION OK")
+        return True
+    finally:
+        await worker.close()
+        await hollow.close()
+        await probe.close()
+
+
 def main():
     # Layer 1
     test_frame_roundtrip()
@@ -1015,6 +1134,7 @@ def main():
     test_fetch_swarm_list()
     test_parse_swarm_list_dns()
     test_fetch_swarm_list_dns()
+    test_probe_helpers()
     test_job_messages()
     test_sanitize_strips_unsafe_and_overrides()
     test_sanitize_rejects_unknown_language()
@@ -1049,6 +1169,11 @@ def main():
     ok = asyncio.run(_run_offload_integration())
     if not ok:
         print("SKIP: offload integration test — no local connectivity")
+
+    print("\n--- liveness-probe integration (worker vs hello-only node) ---")
+    ok = asyncio.run(_run_probe_integration())
+    if not ok:
+        print("SKIP: probe integration test — no local connectivity")
 
     print("\n--- mesh-heal integration ---")
     ok = asyncio.run(_run_mesh_heal_integration())
