@@ -44,6 +44,47 @@ from .protocol import (
 logger = logging.getLogger(__name__)
 
 
+def _peer_load_factor(peer) -> float:
+    """
+    A peer's normalized load factor (lower is better).
+
+    Peers advertising a concurrency ceiling report active/max; peers
+    without one are ranked by raw active-job count, so an idle peer (0)
+    is always preferred over a busy one regardless of advertisement.
+    """
+    active = getattr(peer, "active_jobs", 0) or 0
+    max_jobs = getattr(peer, "max_jobs", None)
+    if max_jobs and max_jobs > 0:
+        return active / max_jobs
+    return float(active)
+
+
+def select_peer_for_images(peers, images: Sequence[str]):
+    """
+    Best peer advertising any of ``images`` — idle-first, then RTT.
+
+    Pure (no iroh) so routing is unit-testable: takes any iterable of
+    objects exposing ``images``/``rtt``/``active_jobs``/``max_jobs``.
+    Returns None when no peer advertises a required image.
+    """
+    wanted = set(images)
+    best = None
+    best_key = None
+    for peer in peers:
+        if peer.images is None:
+            continue  # unknown warm state treated as "not warm"
+        if not (wanted & peer.images):
+            continue
+        max_jobs = getattr(peer, "max_jobs", None)
+        active = getattr(peer, "active_jobs", 0) or 0
+        if max_jobs and max_jobs > 0 and active >= max_jobs:
+            continue  # saturated — never route a new job here
+        key = (_peer_load_factor(peer), peer.rtt if peer.rtt is not None else float("inf"))
+        if best_key is None or key < best_key:
+            best, best_key = peer, key
+    return best
+
+
 class PeerConnection:
     """A live, registry-held connection to another ephemeral node."""
 
@@ -55,6 +96,8 @@ class PeerConnection:
         self.relay: str | None = None       # peer's relay URL — dial by id + relay
         self.hello: dict | None = None      # raw hello frame received
         self.images: set[str] | None = None  # warm images advertised in hello
+        self.active_jobs: int = 0           # jobs the peer is currently running
+        self.max_jobs: int | None = None    # peer's concurrency ceiling (None = unknown)
         self.rtt: float | None = None       # hello round-trip seconds (dial side)
         self.connected_at: float = time.monotonic()
 
@@ -93,6 +136,7 @@ class Node:
         max_frame_size: int = DEFAULT_MAX_FRAME_SIZE,
         list_images=None,
         warm_cache_ttl: float = 30.0,
+        max_jobs: int | None = None,
     ) -> None:
         import iroh  # deferred so non-net code paths don't require the wheel
 
@@ -104,6 +148,11 @@ class Node:
         self._list_images = list_images
         self._warm_cache_ttl = warm_cache_ttl
         self._warm_cache: tuple[float, list[str]] | None = None
+        # Busy/idle tracking: jobs currently running on this node and the
+        # concurrency ceiling advertised to peers (None = no cap). Both are
+        # only touched from the node's own event loop.
+        self._max_jobs = max_jobs
+        self._active_jobs = 0
 
         builder = iroh.EndpointBuilder()
         builder.alpns([ALPN])
@@ -178,6 +227,10 @@ class Node:
         if not value or value == "None":
             return None
         return value
+
+    def load_info(self) -> dict:
+        """This node's current load, advertised in hello frames."""
+        return {"active_jobs": self._active_jobs, "max_jobs": self._max_jobs}
 
     def warm_images(self) -> list[str]:
         """Locally-cached image names, refreshed at most every ``warm_cache_ttl``."""
@@ -258,6 +311,8 @@ class Node:
                     self.table.snapshot(),
                     self.warm_images(),
                     self.relay_url(),
+                    self._active_jobs,
+                    self._max_jobs,
                 ),
             )
             reply = await asyncio.wait_for(
@@ -275,6 +330,8 @@ class Node:
         peer.ticket = reply.get("ticket")
         peer.relay = reply.get("relay")
         peer.images = set(reply.get("images") or [])
+        peer.active_jobs = int(reply.get("active_jobs") or 0)
+        peer.max_jobs = reply.get("max_jobs")
         self._merge_hello(reply)
         return peer
 
@@ -512,6 +569,8 @@ class Node:
                     ticket=entry.get("ticket"),
                     relay=entry.get("relay"),
                     images=set(entry.get("images") or []),
+                    active_jobs=int(entry.get("active_jobs") or 0),
+                    max_jobs=entry.get("max_jobs"),
                     last_seen=now,
                 )
             )
@@ -581,6 +640,8 @@ class Node:
         peer.ticket = frame.get("ticket")
         peer.relay = frame.get("relay")
         peer.images = set(frame.get("images") or [])
+        peer.active_jobs = int(frame.get("active_jobs") or 0)
+        peer.max_jobs = frame.get("max_jobs")
         self._merge_hello(frame)
         send = bs.send()
         try:
@@ -592,6 +653,8 @@ class Node:
                     self.table.snapshot(),
                     self.warm_images(),
                     self.relay_url(),
+                    self._active_jobs,
+                    self._max_jobs,
                 ),
             )
         finally:
@@ -609,6 +672,8 @@ class Node:
             await write_frame(send, error_frame(f"bad request: {e}"))
             await send.finish()
             return
+        # Busy/idle: count this job so hello frames advertise current load.
+        self._active_jobs += 1
         try:
             async for event in self.executor(request):
                 await write_frame(send, event.to_frame())
@@ -618,29 +683,23 @@ class Node:
             logger.exception("job %s failed", request.job_id)
             await write_frame(send, error_frame(f"job failed: {e}", job_id=request.job_id))
         finally:
+            self._active_jobs -= 1
             await send.finish()
 
     # --- nearest-neighbor offloading -------------------------------------
 
     def peer_for_images(self, images: Sequence[str]) -> PeerConnection | None:
         """
-        The warmest registered peer advertising any of ``images``.
+        The best registered peer advertising any of ``images``.
 
-        "Nearest" is the peer with the lowest measured hello RTT; peers
+        Idle-first: saturated peers are never chosen, then the lowest
+        load factor wins (active/max jobs; peers without a max are ranked
+        by raw active count), then the lowest measured hello RTT. Peers
         that did not advertise an image list are never chosen (unknown
         warm state is treated as "not warm"). Returns None when no peer
         advertises any of the required images.
         """
-        wanted = set(images)
-        best: PeerConnection | None = None
-        for peer in self._peers.values():
-            if peer.images is None:
-                continue
-            if not (wanted & peer.images):
-                continue
-            if best is None or (peer.rtt is not None and (best.rtt is None or peer.rtt < best.rtt)):
-                best = peer
-        return best
+        return select_peer_for_images(self._peers.values(), images)
 
     # --- client-side job submission --------------------------------------
 

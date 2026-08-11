@@ -106,6 +106,7 @@ class Gateway:
 
     async def start(self) -> None:
         """Build the node with the sandboxed + offloading executor and join."""
+        from ephemeral_net.fanout import FanoutExecutor
         from ephemeral_net.node import Node
         from ephemeral_net.offload import OffloadingExecutor
         from ephemeral_net.sandbox import CoreJobExecutor
@@ -118,7 +119,10 @@ class Gateway:
             allow_network=self.allow_network,
             image_allowlist=self.image_allowlist,
         )
-        node.executor = OffloadingExecutor(node, local)
+        # Fan-out splits multi-run documents across idle warm peers; the
+        # offloading stack underneath handles warmest-neighbor routing,
+        # background pulls, and local execution.
+        node.executor = FanoutExecutor(node, OffloadingExecutor(node, local))
         await node.start()
         if self.seed_nodes:
             await node.bootstrap_nodes(self.seed_nodes)

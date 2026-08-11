@@ -12,7 +12,15 @@ APP_NAME = "Ephemeral"
 # Only this specific keyword enables network access
 NETWORK_FLAGS = {'unsafe'}
 
-# Keywords that prevent piping /output to the root of the next container
+# Keywords that enable artifact chaining (/output of one run piped into the
+# next). Chaining is OFF by default; declaring it anywhere in a request makes
+# the whole request execute strictly in-order (sequential) so artifacts flow
+# run-to-run. Without it, multi-block requests run concurrently.
+CHAIN_FLAGS = {'chain', 'piping', 'pipe'}
+
+# Keywords that prevent piping /output to the root of the next container.
+# Kept for backward compatibility — with chaining off-by-default these are
+# redundant, and `nopipe` still overrides `chain` when both appear.
 NO_CHAIN_FLAGS = {'nopipe', 'nopiping'}
 
 # Map languages to the 'Clean Slate' Image on Docker Hub

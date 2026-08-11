@@ -93,6 +93,8 @@ def hello_frame(
     peers: list[dict],
     images: list[str] | None = None,
     relay: str | None = None,
+    active_jobs: int = 0,
+    max_jobs: int | None = None,
 ) -> dict:
     """
     Build a ``hello`` frame.
@@ -103,6 +105,8 @@ def hello_frame(
     ("warm" images), used for nearest-neighbor offloading.
     ``relay`` is the sender's current relay URL, so peers can re-dial by
     stable node id + relay (iroh-native identity) without tickets.
+    ``active_jobs`` / ``max_jobs`` advertise the sender's current load
+    so peers can route new jobs to idle nodes first.
     """
     return {
         "type": "hello",
@@ -112,6 +116,8 @@ def hello_frame(
         "relay": relay,
         "peers": peers,
         "images": list(images or []),
+        "active_jobs": int(active_jobs or 0),
+        "max_jobs": max_jobs,
     }
 
 
@@ -124,6 +130,8 @@ def peer_entries_from_hello(frame: dict) -> list[dict]:
             "ticket": frame.get("ticket"),
             "relay": frame.get("relay"),
             "images": frame.get("images"),
+            "active_jobs": frame.get("active_jobs", 0),
+            "max_jobs": frame.get("max_jobs"),
         }
     )
     return [e for e in entries if e and e.get("node_id")]

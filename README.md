@@ -68,9 +68,11 @@ A few design principles underpin every tier:
 | | Local-only (`ephemeral-local`, `main_api.py`) | Distributed (`ephemeral-distributed`, `ephemeral-self-host-distributed`, wasm SPA) |
 |---|---|---|
 | **Execution** | Always on your machine/server | Local, or offloaded to the nearest neighbor with a warm image |
+| **Multi-block requests** | Runs execute in parallel (up to 4) unless chaining is declared | Parallel locally *and* fanned out across idle cluster nodes unless chaining is declared |
 | **Privacy** | **Nothing ever leaves the machine** | Public relays: treat submissions as public knowledge — no privacy guarantee |
 | **Podman needed** | Yes (WSL2 on Windows, rootless on Linux) | Yes on compute nodes; **thin clients (browser) need none** |
 | **Offloading** | None | Automatic nearest-neighbor offload + background image pull |
+| **Node routing** | n/a | Idle-first: hello frames advertise each node's load (`active_jobs`/`max_jobs`); saturated nodes are skipped and the least-loaded warm node wins |
 | **Network flag** | `unsafe` opt-in per block (local) | `unsafe` stripped receiver-side — network is a node-operator setting (`EPHEMERAL_ALLOW_NETWORK`), never the requester's |
 | **Custom images** | Any Podman/Docker image via the `image=`/`cmd=` header (Declarative Image Mode) | **Disabled** — `image=`/`cmd=`/`entrypoint=` overrides are dropped receiver-side; only the node's allowlisted images (default: the built-in language map) run |
 | **Config** | None | `EPHEMERAL_SEEDS` / `EPHEMERAL_RELAY` / `EPHEMERAL_SECRET` / `EPHEMERAL_ALLOW_NETWORK` |
@@ -228,7 +230,9 @@ plt.savefig('/output/plot.png')
 
 #### Multi-Block Execution
 
-Ephemeral supports running multiple sequential codeblocks from a single clipboard copy. If multiple codeblocks use the same language and configuration, Ephemeral automatically groups them into a single container run. Since they execute in the same container, filesystem state is preserved between the blocks.
+Ephemeral supports running multiple codeblocks from a single clipboard copy. If multiple codeblocks use the same language and configuration, Ephemeral automatically groups them into a single container run. Since they execute in the same container, filesystem state is preserved between the blocks.
+
+When a request spans **multiple languages/configs and no block declares chaining**, the runs are independent and execute **concurrently** (up to 4 parallel runs locally; distributed tiers additionally fan runs out across idle cluster nodes). Only a block that opts into chaining (see below) forces the whole request back onto the sequential, in-order path.
 
 **Example:**
 ````text
@@ -276,13 +280,15 @@ This runs in a completely separate, fresh environment.
 
 #### Container Chaining (Piping)
 
-By default, in multi-container executions (e.g., executing a Python block, followed by a Node.js block), any artifacts written to the `/output` directory in one container are automatically passed down to the root directory of the **following container**. This makes it incredibly easy to pipe data across entirely different language environments.
+Artifact chaining is **off by default**: in multi-container executions (e.g., a Python block followed by a Node.js block), each container runs in isolation — artifacts written to the previous container's `/output` directory do **not** leak into the next one, which is what makes parallel execution safe.
 
-If you wish to prevent this behavior (for example, to isolate containers completely), you can append the `nopiping` or `nopipe` parameter to your block header.
+To opt in, append `chain` (or `piping` / `pipe`) to a block header: any artifacts that block writes to `/output` are passed down to the root directory of the **following container**. This makes it incredibly easy to pipe data across entirely different language environments — and because the runs depend on each other, declaring chaining anywhere in a request switches the whole request to sequential, in-order execution.
+
+The legacy `nopiping` / `nopipe` tokens are still recognized (and still override `chain` if both appear), but they are redundant now that chaining is opt-in.
 
 **Example: Passing data from Python to Node.js**
 ````text
-```python
+```python chain
 # Container 1 (Python)
 import json
 
@@ -466,7 +472,8 @@ Ephemeral expands into a multi-tier distributed architecture built on the [iroh]
 **Implemented so far:**
 
 * **Phase 1 — `ephemeral_net`:** QUIC transport, hello handshake, seed-mediated discovery, job streaming over a single connection.
-* **Phase 2 — receiver-side sandboxing & offloading:** incoming jobs are sanitized before execution — image allowlist, `unsafe` stripped (network is gated behind a node-operator flag), `image=`/`cmd=`/`entrypoint=` overrides ignored, and `--memory 2g`/`--cpus 2`/`--pids-limit 512`/`--network none` enforced. Nearest-neighbor offloading: when an image isn't warm locally, the job forwards to the nearest node that has it while the image pulls in the background.
+* **Phase 2 — receiver-side sandboxing & offloading:** incoming jobs are sanitized before execution — image allowlist, `unsafe` stripped (network is gated behind a node-operator flag), `image=`/`cmd=`/`entrypoint=` overrides ignored, and `--memory 2g`/`--cpus 2`/`--pids-limit 512`/`--network none` enforced. Nearest-neighbor offloading: when an image isn't warm locally, the job forwards to the nearest node that has it while the image pulls in the background. **Idle-first routing:** hello frames advertise each node's current load (`active_jobs`/`max_jobs`); saturated nodes are never chosen and the least-loaded warm node wins (RTT breaks ties).
+* **Phase 2 — parallel multi-block execution:** artifact chaining is now **off by default** (`chain`/`piping`/`pipe` opts in). Without it, multi-language runs execute concurrently — up to 4 runs in parallel per host, and `FanoutExecutor` (wired into every distributed entry point) additionally splits multi-run documents across idle warm peers, merging the event streams back into a single response. Declaring chaining anywhere restores the sequential in-order path so artifacts keep flowing run-to-run.
 * **Phase 2.5 — `ephemeral-self-host-distributed`:** `main_distributed.py`, a REST gateway that joins the cluster as a compute node.
 * **Phase 3 — browser client & desktop tier:** the WebAssembly thin client (below) and the `ephemeral-distributed` desktop tier (`main_distributed_client.py`). Both desktop tiers build for Windows (EXE) and Linux (AppImage).
 
@@ -507,7 +514,7 @@ cd ephemeral-wasm-library/web && python -m http.server 8787
 # open http://localhost:8787 and run code — no ticket pasting needed.
 ```
 
-**Discovery is automagic.** On load the client fetches the **live swarm list** (`docs/swarm.json`, refreshed every 6 h by a scheduled GitHub Action) and dials the current members by **stable node id + relay** (iroh-native — tickets only as a fallback for legacy peers). The public build ships with **no compiled-in seeds** (mirroring the Python tiers — nothing to keep in sync); if the list is unreachable the client falls back to the optional **DNS TXT mirror** (`BOOTSTRAP.dnsTxt` — the top two nodes in one 255-char TXT string, resolved via DNS-over-HTTPS as an independent, tiered path) and otherwise says so and offers the manual seed-ticket field as an operator override. This is configuration, not a job-routing dependency, so the execution path still runs entirely over the iroh network with no HTTP endpoint. Each dial completes the `hello` handshake and learns the whole cluster from the peer table (ids, relays, tickets and warm images); discovery runs concurrently so a few dead nodes can't stall it. Jobs then route automatically to the best available compute node — a peer whose warm images cover the document's languages first, then lowest RTT — submitted by node id + relay through the same `submit_job_to_node` path as the Python tiers. A manual seed-ticket field remains as an override for operators, and the *Cluster* panel lists discovered nodes with their images and latency.
+**Discovery is automagic.** On load the client fetches the **live swarm list** (`docs/swarm.json`, refreshed every 6 h by a scheduled GitHub Action) and dials the current members by **stable node id + relay** (iroh-native — tickets only as a fallback for legacy peers). The public build ships with **no compiled-in seeds** (mirroring the Python tiers — nothing to keep in sync); if the list is unreachable the client falls back to the optional **DNS TXT mirror** (`BOOTSTRAP.dnsTxt` — the top two nodes in one 255-char TXT string, resolved via DNS-over-HTTPS as an independent, tiered path) and otherwise says so and offers the manual seed-ticket field as an operator override. This is configuration, not a job-routing dependency, so the execution path still runs entirely over the iroh network with no HTTP endpoint. Each dial completes the `hello` handshake and learns the whole cluster from the peer table (ids, relays, tickets and warm images); discovery runs concurrently so a few dead nodes can't stall it. Jobs then route automatically to the best available compute node — a peer whose warm images cover the document's languages first, then **idle-first** (nodes advertise their current load in hello frames; saturated nodes are skipped, the least-loaded warm node wins, RTT breaks ties) — submitted by node id + relay through the same `submit_job_to_node` path as the Python tiers. Multi-language documents without a `chain` flag are additionally fanned out across several idle nodes and the results merged. A manual seed-ticket field remains as an override for operators, and the *Cluster* panel lists discovered nodes with their images and latency.
 
 To rebuild the wasm module: `cd ephemeral-wasm-library && bash build.sh` (see `build.sh` for the toolchain requirements — a stable Rust toolchain with the `wasm32-unknown-unknown` target, a wasm-capable clang for `ring`'s C files such as wasi-sdk, and the `wasm-bindgen` CLI pinned to 0.2.127). The built glue is committed under `web/wbg/` so the SPA works without a Rust toolchain.
 

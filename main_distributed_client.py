@@ -138,6 +138,7 @@ class Cluster:
         self.loop.run_forever()
 
     async def _start_node(self) -> None:
+        from ephemeral_net.fanout import FanoutExecutor
         from ephemeral_net.node import Node
         from ephemeral_net.offload import OffloadingExecutor
         from ephemeral_net.sandbox import CoreJobExecutor
@@ -150,7 +151,10 @@ class Cluster:
             allow_network=EPHEMERAL_ALLOW_NETWORK,
             image_allowlist=None,
         )
-        node.executor = OffloadingExecutor(node, local)
+        # Fan-out splits multi-run documents across idle warm peers; the
+        # offloading stack underneath handles warmest-neighbor routing,
+        # background pulls, and local execution.
+        node.executor = FanoutExecutor(node, OffloadingExecutor(node, local))
         await node.start()
         if EPHEMERAL_SEED_NODES:
             await node.bootstrap_nodes(EPHEMERAL_SEED_NODES)

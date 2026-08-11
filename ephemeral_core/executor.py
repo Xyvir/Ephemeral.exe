@@ -32,6 +32,11 @@ from .parser import (
 
 _active_pulls = set()
 
+#: Maximum number of runs executed concurrently on one host. Multi-block
+#: requests whose runs are independent (no chaining declared) run in
+#: parallel up to this guardrail; chained requests always run in-order.
+MAX_PARALLEL_RUNS = 4
+
 
 # --- Subprocess Helpers ---
 
@@ -663,6 +668,125 @@ async def run_container_group(
     )
 
 
+# --- Run grouping ---
+
+def group_into_runs(blocks: list[dict]) -> list[list[dict]]:
+    """
+    Group parsed blocks into runs by identical runtime config.
+
+    Seed blocks attach to the run that follows them; consecutive code
+    blocks with identical resolved config (same image/cmd/entrypoint/flags)
+    share one container run. Returns a list of runs, each a list of
+    ``seed``/``code`` block dicts. Raises :class:`ValueError` when a code
+    block has no resolvable image.
+    """
+    runs = []
+    current_run = []
+
+    for b in blocks:
+        if b['type'] == 'seed':
+            current_run.append(b)
+        else:
+            if not b['config'] or not b['config'].get('image'):
+                raise ValueError(f"Configuration failed for block with header: '{b.get('header', '')}'")
+
+            if not current_run:
+                current_run.append(b)
+            else:
+                last_code = next((x for x in reversed(current_run) if x['type'] == 'code'), None)
+                if last_code:
+                    if last_code['config'] == b['config']:
+                        current_run.append(b)
+                    else:
+                        runs.append(current_run)
+                        current_run = [b]
+                else:
+                    current_run.append(b)
+
+    if current_run:
+        runs.append(current_run)
+    return runs
+
+
+def request_is_chained(runs: list[list[dict]]) -> bool:
+    """
+    True when any code block in ``runs`` declares artifact chaining.
+
+    Chaining is opt-in (``chain``/``piping``/``pipe`` in a block header).
+    When any block declares it, the whole request must run in-order so
+    artifacts flow run-to-run; otherwise runs are independent and may
+    execute concurrently.
+    """
+    return any(
+        b.get('config') and b['config'].get('allow_chain')
+        for run in runs
+        for b in run
+        if b['type'] == 'code'
+    )
+
+
+async def _execute_run(
+    run: list[dict],
+    run_index: int,
+    total_runs: int,
+    timeout: int | None,
+    server_mode: bool,
+    cancelled_images: set[str],
+) -> tuple[GroupResult | None, str | None, str | None]:
+    """
+    Execute a single run (image check/pull + container).
+
+    Returns ``(result, output_dir, notice)``. In ``server_mode`` a run
+    whose image is missing is skipped (background pull started) and
+    ``notice`` carries the "downloading, wait" message the caller must
+    surface; ``result``/``output_dir`` are then None.
+    """
+    code_item = next(b for b in run if b['type'] == 'code')
+    lang = code_item['header']
+    config = code_item['config']
+
+    image_name = config['image']
+
+    if server_mode and image_name in cancelled_images:
+        return None, None, None
+
+    is_cached = check_image_exists(image_name)
+    if not is_cached:
+        if server_mode:
+            lang_name = lang.split()[0].capitalize() if lang else "Requested"
+            msg = f"The {lang_name} runner isn't cached yet and is currently downloading. Please wait approximately 5 minutes, then run your code again."
+            cancelled_images.add(image_name)
+
+            if image_name not in _active_pulls:
+                _active_pulls.add(image_name)
+
+                async def bg_pull(img=image_name):
+                    try:
+                        await pull_image(img)
+                    finally:
+                        _active_pulls.discard(img)
+
+                asyncio.create_task(bg_pull())
+
+            return None, None, msg
+
+        exit_code = await pull_image(image_name)
+        if exit_code != 0:
+            raise RuntimeError(f"Failed to pull image: {image_name}")
+
+    # Create a temp output directory for this run's artifacts
+    output_dir = tempfile.mkdtemp(prefix="ephemeral_")
+
+    result = await run_container_group(
+        config, run, lang,
+        run_index=run_index,
+        total_runs=total_runs,
+        output_dir=output_dir,
+        timeout=timeout,
+    )
+    return result, output_dir, None
+
+
 # --- Top-Level Orchestrator ---
 
 async def parse_and_execute(
@@ -715,103 +839,27 @@ async def parse_and_execute(
     if not code_blocks:
         raise ValueError("Input contains only seed files with no executable code blocks.")
 
-    # Group blocks into runs by language/config
-    runs = []
-    current_run = []
-
-    for b in blocks:
-        if b['type'] == 'seed':
-            current_run.append(b)
-        else:
-            if not b['config'] or not b['config'].get('image'):
-                raise ValueError(f"Configuration failed for block with header: '{b.get('header', '')}'")
-
-            if not current_run:
-                current_run.append(b)
-            else:
-                last_code = next((x for x in reversed(current_run) if x['type'] == 'code'), None)
-                if last_code:
-                    if last_code['config'] == b['config']:
-                        current_run.append(b)
-                    else:
-                        runs.append(current_run)
-                        current_run = [b]
-                else:
-                    current_run.append(b)
-
-    if current_run:
-        runs.append(current_run)
+    runs = group_into_runs(blocks)
 
     # Ensure Podman is available
     await ensure_podman_running()
 
-    # Execute each run
     all_stdout = []
     all_stderr = []
     overall_exit_code = 0
     all_artifact_paths = []
     final_artifact_dir = None
-    chained_files = []
     cancelled_images = set()
 
-    for i, run in enumerate(runs):
-        if chained_files:
-            run = chained_files + run
-
-        code_item = next(b for b in run if b['type'] == 'code')
-        lang = code_item['header']
-        config = code_item['config']
-
-        image_name = config['image']
-        
-        if server_mode and image_name in cancelled_images:
-            continue
-            
-        is_cached = check_image_exists(image_name)
-        if not is_cached:
-            if server_mode:
-                lang_name = lang.split()[0].capitalize() if lang else "Requested"
-                msg = f"The {lang_name} runner isn't cached yet and is currently downloading. Please wait approximately 5 minutes, then run your code again."
-                all_stdout.append(msg + "\n")
-                
-                cancelled_images.add(image_name)
-                
-                if image_name not in _active_pulls:
-                    _active_pulls.add(image_name)
-                    async def bg_pull(img=image_name):
-                        try:
-                            await pull_image(img)
-                        finally:
-                            _active_pulls.discard(img)
-                    asyncio.create_task(bg_pull())
-                
-                continue
-                
-            exit_code = await pull_image(image_name)
-            if exit_code != 0:
-                raise RuntimeError(f"Failed to pull image: {image_name}")
-
-        # Create a temp output directory for this run's artifacts
-        output_dir = tempfile.mkdtemp(prefix="ephemeral_")
-
-        result = await run_container_group(
-            config, run, lang,
-            run_index=i + 1,
-            total_runs=len(runs),
-            output_dir=output_dir,
-            timeout=timeout
-        )
-
-        chained_files = result.chained_files
-
+    def _collect(result: GroupResult, output_dir: str) -> None:
+        """Merge one run's output into the aggregate (closure over the lists)."""
+        nonlocal overall_exit_code, final_artifact_dir
         if result.stdout_formatted:
             all_stdout.append(result.stdout_formatted)
         if result.stderr:
             all_stderr.append(result.stderr)
         if result.exit_code != 0:
             overall_exit_code = result.exit_code
-
-        # Collect artifact paths; keep the last non-empty artifact dir
         if result.artifact_paths:
             all_artifact_paths.extend(result.artifact_paths)
             final_artifact_dir = output_dir
@@ -821,6 +869,43 @@ async def parse_and_execute(
                 os.rmdir(output_dir)
             except OSError:
                 pass
+
+    if request_is_chained(runs) or len(runs) <= 1:
+        # Sequential path: runs execute in-order and chained artifacts flow
+        # from one run to the next (opt-in via the `chain` flag).
+        chained_files = []
+        for i, run in enumerate(runs):
+            if chained_files:
+                run = chained_files + run
+            result, output_dir, notice = await _execute_run(
+                run, i + 1, len(runs), timeout, server_mode, cancelled_images
+            )
+            if notice:
+                all_stdout.append(notice + "\n")
+            if result is None:
+                continue  # server_mode: image downloading, run skipped
+            chained_files = result.chained_files
+            _collect(result, output_dir)
+    else:
+        # Parallel path: no block declared chaining, so runs are independent
+        # and execute concurrently (capped by MAX_PARALLEL_RUNS).
+        semaphore = asyncio.Semaphore(MAX_PARALLEL_RUNS)
+
+        async def _worker(i: int, run: list[dict]):
+            async with semaphore:
+                return await _execute_run(
+                    run, i + 1, len(runs), timeout, server_mode, cancelled_images
+                )
+
+        results = await asyncio.gather(
+            *(_worker(i, run) for i, run in enumerate(runs))
+        )
+        for result, output_dir, notice in results:
+            if notice:
+                all_stdout.append(notice + "\n")
+            if result is None:
+                continue  # server_mode: image downloading, run skipped
+            _collect(result, output_dir)
 
     return ExecutionResult(
         stdout="\n".join(all_stdout),

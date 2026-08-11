@@ -189,4 +189,37 @@ assert set(imgs) == set(default_image_allowlist()), \
     "hydrate set must match the receiver-side allowlist"
 print(f"PASS: language-map image set ({len(imgs)} unique images == allowlist)")
 
-print("\n=== ALL 22 TESTS PASSED ===")
+# --- Test 23: Chaining is OFF by default ---
+md23 = "```python\nprint(1)\n```"
+blocks23 = parse_codeblocks(md23)
+assert blocks23[0]['config']['allow_chain'] == False
+print("PASS: Chaining off by default (no flag)")
+
+# --- Test 24: Chaining opt-in flags (chain / piping / pipe) ---
+for flag in ('chain', 'piping', 'pipe'):
+    cfg = resolve_runtime_config(f"python {flag}")
+    assert cfg['allow_chain'] == True, f"{flag} should enable chaining"
+print("PASS: chain / piping / pipe opt in to chaining")
+
+# --- Test 25: nopipe still overrides chain ---
+cfg = resolve_runtime_config("python chain nopipe")
+assert cfg['allow_chain'] == False
+print("PASS: nopipe overrides chain")
+
+# --- Test 26: Run grouping + chained detection ---
+from ephemeral_core.executor import group_into_runs, request_is_chained, MAX_PARALLEL_RUNS
+
+md26 = "```python\nprint(1)\n```\n\n```node\nconsole.log(2)\n```\n\n```python\nprint(3)\n```"
+runs26 = group_into_runs(parse_codeblocks(md26))
+assert len(runs26) == 3, f"3 different runs expected, got {len(runs26)}"
+assert not request_is_chained(runs26)
+
+# Same-config blocks merge into one run; chaining declared anywhere -> True
+md26b = "```python\nprint(1)\n```\n\n```python\nprint(2)\n```"
+assert len(group_into_runs(parse_codeblocks(md26b))) == 1
+md26c = "```python chain\nprint(1)\n```\n\n```node\nconsole.log(2)\n```"
+assert request_is_chained(group_into_runs(parse_codeblocks(md26c)))
+assert MAX_PARALLEL_RUNS == 4, "local parallel guardrail must be 4"
+print("PASS: Run grouping + chained detection")
+
+print("\n=== ALL 26 TESTS PASSED ===")

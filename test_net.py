@@ -312,6 +312,173 @@ def test_offload_runs_locally_when_no_warm_neighbor():
     asyncio.run(run())
     print("PASS: offload runs locally when no neighbor has the image")
 
+# --- busy/idle routing unit tests (no iroh required) -------------------
+
+class _RP:
+    """Fake routable peer exposing the attributes select_peer_for_images uses."""
+
+    def __init__(self, node_id="p", images=None, rtt=1.0, active=0, max_jobs=None):
+        self.node_id = node_id
+        self.images = set(images or [])
+        self.rtt = rtt
+        self.active_jobs = active
+        self.max_jobs = max_jobs
+
+
+def test_select_peer_prefers_idle_then_fast():
+    from ephemeral_net.node import select_peer_for_images
+
+    idle = _RP("idle", images=[PY_IMG], rtt=5.0)
+    busy = _RP("busy", images=[PY_IMG], rtt=0.1, active=3, max_jobs=4)
+    fast = _RP("fast", images=[PY_IMG], rtt=0.05, active=1, max_jobs=4)
+
+    # Idle wins over faster-but-busy peers.
+    assert select_peer_for_images([fast, busy, idle], [PY_IMG]).node_id == "idle"
+    # A busier peer beats one that doesn't advertise the image at all.
+    assert select_peer_for_images([busy, _RP("cold", images=[NODE_IMG])], [PY_IMG]).node_id == "busy"
+    # Saturated peers are never chosen.
+    sat = _RP("sat", images=[PY_IMG], rtt=0.01, active=4, max_jobs=4)
+    assert select_peer_for_images([sat, fast], [PY_IMG]).node_id == "fast"
+    # Peers with no image list are treated as not warm.
+    assert select_peer_for_images([_RP("unknown", images=None)], [PY_IMG]) is None
+    assert select_peer_for_images([], [PY_IMG]) is None
+    print("PASS: idle-first peer selection (saturation, RTT, warm-only)")
+
+
+# --- fan-out unit tests (no iroh required) ------------------------------
+
+
+def test_fanout_split_runs():
+    from ephemeral_net.fanout import split_runs
+
+    # Multi-language document splits into per-run docs, seeds attached.
+    md = "```data.csv\na,b\n```\n\n```python\nprint(1)\n```\n\n```node\nconsole.log(2)\n```"
+    docs, chained = split_runs(md)
+    assert chained is False
+    assert docs is not None and len(docs) == 2, docs
+    assert "data.csv" in docs[0] and "print(1)" in docs[0] and "console.log" not in docs[0]
+    assert "console.log(2)" in docs[1]
+
+    # Chaining declared anywhere -> never split.
+    md_chain = "```python chain\nprint(1)\n```\n\n```node\nconsole.log(2)\n```"
+    docs, chained = split_runs(md_chain)
+    assert chained is True and docs is None
+
+    # Single run or seeds-only -> never split.
+    assert split_runs("```python\nprint(1)\n```")[0] is None
+    assert split_runs("```data.csv\na\n```")[0] is None
+    assert split_runs("")[0] is None
+    print("PASS: split_runs (independent runs split; chained/single do not)")
+
+
+class _FanoutLocal:
+    """Fake local executor: echoes a per-run id in its output."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def __call__(self, request):
+        self.calls.append(request.job_id)
+        yield JobLogEvent(channel="stdout", data=b"local\n", job_id=request.job_id)
+        yield JobDoneEvent(exit_code=0, stdout="local\n", stderr="", job_id=request.job_id)
+
+
+class _FanoutNode:
+    """Fake node: hands every warm-image request to a fake peer."""
+
+    def __init__(self):
+        self.peer = _RP("peer", images=[PY_IMG, NODE_IMG], rtt=0.1, active=0, max_jobs=2)
+        self.submitted = []
+
+    def peer_for_images(self, images):
+        return self.peer
+
+    async def submit_job(self, peer, request):
+        self.submitted.append(request.job_id)
+        yield JobLogEvent(channel="stdout", data=b"remote\n", job_id=request.job_id)
+        yield JobDoneEvent(
+            exit_code=0, stdout="remote\n", stderr="", job_id=request.job_id
+        )
+
+
+def _fanout_request(doc):
+    return JobRequest(
+        job_id="fan-1",
+        document_blob=base64.b64encode(doc.encode("utf-8")).decode("ascii"),
+        timeout=60,
+    )
+
+
+def test_fanout_splits_and_merges():
+    from ephemeral_net.fanout import FanoutExecutor
+
+    async def run():
+        md = "```python\nprint(1)\n```\n\n```node\nconsole.log(2)\n```"
+        node = _FanoutNode()
+        local = _FanoutLocal()
+        ex = FanoutExecutor(node, local)
+        events = [e async for e in ex(_fanout_request(md))]
+
+        # Both runs went to the peer, not local.
+        assert len(node.submitted) == 2, node.submitted
+        assert local.calls == []
+        assert node.submitted[0].endswith("-0") and node.submitted[1].endswith("-1")
+
+        logs = [e for e in events if isinstance(e, JobLogEvent)]
+        dones = [e for e in events if isinstance(e, JobDoneEvent)]
+        assert len(logs) == 2 and all(e.data == b"remote\n" for e in logs)
+        assert len(dones) == 1, "one merged done event"
+        merged = dones[0]
+        assert merged.stdout.count("remote") == 2, merged.stdout
+        assert merged.exit_code == 0
+        assert merged.job_id == "fan-1"
+
+    asyncio.run(run())
+    print("PASS: FanoutExecutor splits a multi-run doc across peers and merges")
+
+
+def test_fanout_falls_back_locally():
+    from ephemeral_net.fanout import FanoutExecutor
+
+    async def run():
+        md = "```python\nprint(1)\n```\n\n```node\nconsole.log(2)\n```"
+
+        class _NoPeerNode:
+            def peer_for_images(self, images):
+                return None
+
+            async def submit_job(self, peer, request):
+                raise AssertionError("must not submit")
+
+        local = _FanoutLocal()
+        ex = FanoutExecutor(_NoPeerNode(), local)
+        events = [e async for e in ex(_fanout_request(md))]
+        assert len(local.calls) == 2, local.calls
+        dones = [e for e in events if isinstance(e, JobDoneEvent)]
+        assert len(dones) == 1 and dones[0].stdout.count("local") == 2
+
+    asyncio.run(run())
+    print("PASS: FanoutExecutor falls back to the local executor with no peers")
+
+
+def test_fanout_chained_runs_unsplit():
+    from ephemeral_net.fanout import FanoutExecutor
+
+    async def run():
+        md = "```python chain\nprint(1)\n```\n\n```node\nconsole.log(2)\n```"
+        node = _FanoutNode()
+        local = _FanoutLocal()
+        ex = FanoutExecutor(node, local)
+        events = [e async for e in ex(_fanout_request(md))]
+        # Chained request runs whole through the local executor — never split.
+        assert node.submitted == []
+        assert local.calls == ["fan-1"]
+        assert any(isinstance(e, JobDoneEvent) for e in events)
+
+    asyncio.run(run())
+    print("PASS: FanoutExecutor never splits a chained request")
+
+
 def test_frame_roundtrip():
     msg = {"type": "job_request", "job_id": "abc", "document_blob": "aGVsbG8=", "timeout": 30}
     data = encode_frame(msg)
@@ -377,8 +544,11 @@ def test_hello_frame():
     assert f["node_id"] == "node-a"
     assert f["relay"] == "https://relay.example.com."
     assert f["peers"][0]["node_id"] == "node-b"
+    assert f["active_jobs"] == 0 and f["max_jobs"] is None, "load fields default"
+    f2 = hello_frame("node-a", None, [], active_jobs=3, max_jobs=4)
+    assert f2["active_jobs"] == 3 and f2["max_jobs"] == 4, "load fields advertised"
     assert error_frame("boom", job_id="j1")["job_id"] == "j1"
-    print("PASS: hello/error frame helpers (incl. relay)")
+    print("PASS: hello/error frame helpers (incl. relay + load)")
 
 
 def test_job_messages():
@@ -857,6 +1027,11 @@ def main():
     test_offload_runs_locally_when_warm()
     test_offload_forwards_to_warm_neighbor_and_pulls()
     test_offload_runs_locally_when_no_warm_neighbor()
+    test_select_peer_prefers_idle_then_fast()
+    test_fanout_split_runs()
+    test_fanout_splits_and_merges()
+    test_fanout_falls_back_locally()
+    test_fanout_chained_runs_unsplit()
 
     # Layer 2
     try:

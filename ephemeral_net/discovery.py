@@ -27,6 +27,8 @@ class PeerInfo:
     ticket: str | None = None      # EndpointTicket to dial this peer (fallback)
     relay: str | None = None       # the peer's relay URL — dial by id + relay
     images: set[str] | None = None  # warm container images (for routing)
+    active_jobs: int = 0           # jobs the peer is currently running
+    max_jobs: int | None = None    # peer's concurrency ceiling (None = unknown)
     last_seen: float = 0.0         # time.monotonic() of last contact
 
 
@@ -53,6 +55,8 @@ class PeerTable:
                     ticket=info.ticket,
                     relay=info.relay,
                     images=set(info.images) if info.images else None,
+                    active_jobs=info.active_jobs,
+                    max_jobs=info.max_jobs,
                     last_seen=info.last_seen or now,
                 )
                 new_count += 1
@@ -63,6 +67,8 @@ class PeerTable:
                     existing.relay = info.relay
                 if info.images:
                     existing.images = set(info.images)
+                existing.active_jobs = info.active_jobs
+                existing.max_jobs = info.max_jobs
                 existing.last_seen = info.last_seen or now
         return new_count
 
@@ -74,6 +80,8 @@ class PeerTable:
                 "ticket": info.ticket,
                 "relay": info.relay,
                 "images": sorted(info.images or []),
+                "active_jobs": info.active_jobs,
+                "max_jobs": info.max_jobs,
             }
             for info in self._peers.values()
         ]

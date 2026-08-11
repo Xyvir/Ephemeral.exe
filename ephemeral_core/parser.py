@@ -8,7 +8,7 @@ import re
 import shlex
 import sys
 
-from .config import LANG_MAP, NETWORK_FLAGS, NO_CHAIN_FLAGS
+from .config import CHAIN_FLAGS, LANG_MAP, NETWORK_FLAGS, NO_CHAIN_FLAGS
 
 
 # --- Python Dependency Inference (PEP 723) ---
@@ -211,15 +211,21 @@ def resolve_runtime_config(header_line: str) -> dict | None:
     except: tokens = header_line.split() 
     if not tokens: return None
 
-    # 1. Detect Network Flags
+    # 1. Detect Network / Chaining Flags. Chaining is OFF by default;
+    #    declaring it (chain/piping/pipe) opts the request into the
+    #    sequential, artifact-piping execution path. `nopipe`/`nopiping`
+    #    (legacy) still win when both are present.
     network_enabled = False
-    chain_enabled = True
+    chain_enabled = False
     cleaned_tokens = []
-    
+
     for token in tokens:
-        if token.lower() in NETWORK_FLAGS:
+        low = token.lower()
+        if low in NETWORK_FLAGS:
             network_enabled = True
-        elif token.lower() in NO_CHAIN_FLAGS:
+        elif low in CHAIN_FLAGS:
+            chain_enabled = True
+        elif low in NO_CHAIN_FLAGS:
             chain_enabled = False
         else:
             cleaned_tokens.append(token)
