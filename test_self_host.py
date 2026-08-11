@@ -70,18 +70,19 @@ def test_gateway_start_wires_executor_and_bootstraps():
         assert fake.started
         assert gw.node is fake
         assert fake.bootstrapped == ["ticket-a", "ticket-b"]
-        # executor is an OffloadingExecutor wrapping the sandboxed core
+        # executor is FanoutExecutor -> OffloadingExecutor -> sandboxed core
+        from ephemeral_net.fanout import FanoutExecutor
         from ephemeral_net.offload import OffloadingExecutor
-
-        assert isinstance(fake.executor, OffloadingExecutor)
         from ephemeral_net.sandbox import CoreJobExecutor
 
-        assert isinstance(fake.executor.local, CoreJobExecutor)
+        assert isinstance(fake.executor, FanoutExecutor)
+        assert isinstance(fake.executor.local, OffloadingExecutor)
+        assert isinstance(fake.executor.local.local, CoreJobExecutor)
         await gw.close()
         assert fake.closed
 
     asyncio.run(run())
-    print("PASS: gateway start wires sandboxed+offloading executor and bootstraps")
+    print("PASS: gateway start wires fan-out+offloading sandboxed executor and bootstraps")
 
 
 def test_gateway_run_maps_done_event():
