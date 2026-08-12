@@ -226,7 +226,7 @@ function appendOut(text, cls) {
   box.scrollTop = box.scrollHeight;
 }
 
-// Render a job result envelope ("## Result (lang)\n```lang\n...```") as
+// Render a job result envelope ("## <Lang> Result\n```lang\n...```") as
 // highlighted HTML: result headers, step sub-headers, and code fences as
 // distinct blocks. Everything is HTML-escaped; highlight.js is applied
 // after insertion (gracefully skipped when the CDN is unreachable).

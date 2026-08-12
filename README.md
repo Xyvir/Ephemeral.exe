@@ -172,7 +172,7 @@ And that concludes the tutorial!
 
 **Example output:**
 ````
-## Result (Python)
+## Python Result
 
 ```text
 Pi is: 3.141592653589793
@@ -259,7 +259,7 @@ console.log("This runs in a completely separate, fresh environment.");
 
 **Example output:**
 ````text
-## Run 1 (Python)
+## Python Run 1
 
 ### Step 1 (Python)
 ```text
@@ -271,7 +271,7 @@ Saved 42 to /tmp/shared.txt
 Read shared value: 42
 ```
 
-## Run 2 (Node)
+## Node Run 2
 
 ```text
 This runs in a completely separate, fresh environment.
@@ -310,13 +310,13 @@ console.log(`Hello ${data.user}, your score is ${data.score}!`);
 
 **Example output:**
 ````text
-## Run 1 (Python)
+## Python Run 1
 
 ```text
 Data written to /output/data.json
 ```
 
-## Run 2 (Node)
+## Node Run 2
 
 ```text
 Hello Alice, your score is 42!
@@ -358,7 +358,7 @@ print(f"Image exists: {os.path.exists('seed.png')}")
 
 **Example output:**
 ````text
-## Result (Python)
+## Python Result
 
 ```text
 Hello from seed file!

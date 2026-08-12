@@ -440,6 +440,11 @@ def _run_podman_script(
     return process.returncode, stdout, stderr
 
 
+def _lang_title(lang: str) -> str:
+    """Display name for a block's language (first token, capitalized)."""
+    return lang.split()[0].capitalize() if lang else "Custom"
+
+
 def _format_success_result(
     stdout: str,
     stderr: str,
@@ -494,9 +499,9 @@ def _format_success_result(
 
     # Format output markdown
     result_parts = []
-    title_lang = lang.split()[0].capitalize() if lang else "Custom"
+    title_lang = _lang_title(lang)
 
-    header_prefix = f"## Run {run_index} ({title_lang})" if total_runs > 1 else f"## Result ({title_lang})"
+    header_prefix = f"## {title_lang} Run {run_index}" if total_runs > 1 else f"## {title_lang} Result"
     result_parts.append(header_prefix)
 
     for i, (step_idx, marker_val, block_lang) in enumerate(block_markers):
@@ -538,10 +543,11 @@ def _run_single_stage(
 
     podman_cmd = _build_podman_cmd(config, output_dir)
     returncode, stdout, stderr = _run_podman_script(podman_cmd, script_code, timeout)
+    tlang = _lang_title(lang)
 
     if returncode is None:
         return GroupResult(
-            stdout_formatted=f"## Run {run_index} Timed Out\n```text\nExecution exceeded {timeout}s timeout.\n```\n",
+            stdout_formatted=f"## {tlang} Run {run_index} Timed Out\n```text\nExecution exceeded {timeout}s timeout.\n```\n",
             stderr=f"Timeout after {timeout} seconds",
             exit_code=-1
         )
@@ -554,7 +560,7 @@ def _run_single_stage(
 
     full_error = f"Exit Code: {returncode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
     return GroupResult(
-        stdout_formatted=f"## Run {run_index} Failed\n```text\n{stderr.strip()}\n```\n",
+        stdout_formatted=f"## {tlang} Run {run_index} Failed\n```text\n{stderr.strip()}\n```\n",
         stderr=full_error,
         exit_code=returncode
     )
@@ -585,6 +591,7 @@ def _run_two_stage_python(
     and is removed when the run finishes.
     """
     deps_dir = tempfile.mkdtemp(prefix="ephemeral_deps_")
+    tlang = _lang_title(lang)
     try:
         # --- Stage A: resolve dependencies with network access ---
         install_script = (
@@ -601,7 +608,7 @@ def _run_two_stage_python(
         retcode, stdout, stderr = _run_podman_script(stage_a_cmd, install_script, timeout)
         if retcode is None:
             return GroupResult(
-                stdout_formatted=f"## Run {run_index} Timed Out\n```text\nDependency resolution exceeded {timeout}s timeout.\n```\n",
+                stdout_formatted=f"## {tlang} Run {run_index} Timed Out\n```text\nDependency resolution exceeded {timeout}s timeout.\n```\n",
                 stderr=f"Dependency resolution timed out after {timeout} seconds",
                 exit_code=-1
             )
@@ -611,7 +618,7 @@ def _run_two_stage_python(
                 f"Exit Code: {retcode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
             )
             return GroupResult(
-                stdout_formatted=f"## Run {run_index} Failed (dependency resolution)\n```text\n{stderr.strip()}\n```\n",
+                stdout_formatted=f"## {tlang} Run {run_index} Failed (dependency resolution)\n```text\n{stderr.strip()}\n```\n",
                 stderr=full_error,
                 exit_code=retcode
             )
@@ -626,7 +633,7 @@ def _run_two_stage_python(
         retcode, stdout, stderr = _run_podman_script(stage_c_cmd, script_code, timeout)
         if retcode is None:
             return GroupResult(
-                stdout_formatted=f"## Run {run_index} Timed Out\n```text\nExecution exceeded {timeout}s timeout.\n```\n",
+                stdout_formatted=f"## {tlang} Run {run_index} Timed Out\n```text\nExecution exceeded {timeout}s timeout.\n```\n",
                 stderr=f"Timeout after {timeout} seconds",
                 exit_code=-1
             )
@@ -639,7 +646,7 @@ def _run_two_stage_python(
 
         full_error = f"Exit Code: {retcode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
         return GroupResult(
-            stdout_formatted=f"## Run {run_index} Failed\n```text\n{stderr.strip()}\n```\n",
+            stdout_formatted=f"## {tlang} Run {run_index} Failed\n```text\n{stderr.strip()}\n```\n",
             stderr=full_error,
             exit_code=retcode
         )

@@ -21,7 +21,7 @@ class BlockResult:
 @dataclass
 class GroupResult:
     """Result of a single container run (one language group, possibly multi-step)."""
-    stdout_formatted: str          # Markdown-formatted output (## Result / ## Run N)
+    stdout_formatted: str          # Markdown-formatted output (## <Lang> Result / ## <Lang> Run N)
     stderr: str
     exit_code: int
     artifact_paths: list[str] = field(default_factory=list)
