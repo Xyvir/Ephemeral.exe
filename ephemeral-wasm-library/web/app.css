@@ -130,6 +130,16 @@ textarea { min-height: 150px; resize: vertical; }
 .lang-chip.bad { border-color: #8a5a1e; color: #ffb86b; }
 .lang-chip.file { border-color: #444; color: var(--muted); }
 
+.run-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 10px 0 0;
+}
+.run-note code {
+  color: #ffb86b;
+  font-weight: 600;
+}
+
 .actions { display: flex; gap: 10px; margin-top: 10px; }
 /* Spinner lives inside the Run button: centered over the label while a
    job is in flight. The button is disabled during a run, so this doubles

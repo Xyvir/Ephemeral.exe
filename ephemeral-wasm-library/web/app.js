@@ -83,28 +83,77 @@ function initEditor() {
 // gets a chip — ✓ when it's in the language map, ✗ when it isn't (and the
 // block will be rejected by the node). Dot-bearing tokens are file/seed
 // blocks, shown neutrally.
+// Ephemeral header semantics mirrored from ephemeral_core.config: unsafe
+// (network) and image/cmd/entrypoint overrides are stripped on remote
+// nodes; chain/piping flags are honored.
+const NETWORK_FLAGS = new Set(["unsafe"]);
+const CHAIN_FLAGS = new Set(["chain", "pipe", "piping"]);
+const NO_CHAIN_FLAGS = new Set(["nopipe", "nopiping"]);
+const DROPPED_OVERRIDES = ["image", "cmd", "entrypoint"];
+
+// Every fence's (language, params) from a markdown doc — the first token
+// of each fence header is the language, the rest are ephemeral params
+// (flags like `unsafe chain`, overrides like `image=...`).
+function fenceInfo(markdown) {
+  const out = [];
+  const re = /```\s*([^\n`]*)/g;
+  let m;
+  while ((m = re.exec(markdown)) !== null) {
+    const tokens = m[1].trim().split(/\s+/).filter(Boolean);
+    if (!tokens.length) continue; // bare fence, no header
+    out.push({ lang: tokens[0].toLowerCase(), params: tokens.slice(1) });
+  }
+  return out;
+}
+
 function updateLangStatus() {
   if (!editor) return; // OverType fires onChange during its own _init,
   // before the constructor's destructuring assigns `editor`.
   const el = $("langStatus");
   el.textContent = "";
-  const langs = languagesIn(editor.getValue());
-  if (!langs.length) {
+  const fences = fenceInfo(editor.getValue());
+  if (!fences.length) {
     el.hidden = true;
     return;
   }
-  for (const lang of langs) {
-    const ok = SUPPORTED_LANGUAGES.has(lang);
-    const isFile = !ok && lang.includes(".");
+  for (const f of fences) {
+    // Language chip (as before).
+    const ok = SUPPORTED_LANGUAGES.has(f.lang);
+    const isFile = !ok && f.lang.includes(".");
     const chip = document.createElement("span");
     chip.className = "lang-chip " + (ok ? "ok" : isFile ? "file" : "bad");
-    chip.textContent = (ok ? "✓ " : isFile ? "" : "✗ ") + lang;
+    chip.textContent = (ok ? "✓ " : isFile ? "" : "✗ ") + f.lang;
     chip.title = ok
       ? "supported"
       : isFile
         ? "file/seed block — not a language"
         : "not in the language map — this block will be rejected";
     el.appendChild(chip);
+    // Ephemeral parameter chips: ✗ for what the distributed network
+    // strips, ✓ for what it honors, neutral for unknown tokens.
+    for (const raw of f.params) {
+      const p = raw.toLowerCase();
+      const pchip = document.createElement("span");
+      if (NETWORK_FLAGS.has(p)) {
+        pchip.className = "lang-chip bad";
+        pchip.textContent = "✗ " + raw;
+        pchip.title =
+          "'unsafe' is not supported on the distributed network — jobs always run sandboxed";
+      } else if (DROPPED_OVERRIDES.some((o) => p.startsWith(o + "="))) {
+        pchip.className = "lang-chip bad";
+        pchip.textContent = "✗ " + raw;
+        pchip.title = "overrides are dropped on remote jobs — the node operator decides the image";
+      } else if (CHAIN_FLAGS.has(p) || NO_CHAIN_FLAGS.has(p)) {
+        pchip.className = "lang-chip ok";
+        pchip.textContent = "✓ " + raw;
+        pchip.title = "supported execution flag";
+      } else {
+        pchip.className = "lang-chip file";
+        pchip.textContent = raw;
+        pchip.title = "unknown header token — ignored by the parser";
+      }
+      el.appendChild(pchip);
+    }
   }
   el.hidden = false;
 }
