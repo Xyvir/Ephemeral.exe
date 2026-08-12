@@ -37,6 +37,8 @@ from .errors import (
     ProtocolError,
 )
 from .jobs import (
+    MAX_ARTIFACT_SIZE,
+    JobArtifactEvent,
     JobDoneEvent,
     JobErrorEvent,
     JobEvent,

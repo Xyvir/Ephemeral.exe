@@ -18,6 +18,12 @@ from typing import AsyncIterator, Callable
 
 from .errors import ProtocolError
 
+#: Per-file cap for artifacts transferred inline in a job frame (raw
+#: bytes before base64). 15 MiB raw -> ~20 MiB base64, comfortably under
+#: the 32 MiB frame guard. Larger files are skipped (with a warning) by
+#: the node rather than transferred.
+MAX_ARTIFACT_SIZE = 15 * 1024 * 1024
+
 
 @dataclass
 class JobRequest:
@@ -85,6 +91,56 @@ class JobLogEvent(JobEvent):
 
 
 @dataclass
+class JobArtifactEvent(JobEvent):
+    """A single artifact file produced by the job.
+
+    Streamed *before* the terminating :class:`JobDoneEvent` (clients stop
+    reading the job stream when ``job_done``/``error`` lands), one frame
+    per file, with the bytes base64-encoded inline. The node caps each
+    file at :data:`MAX_ARTIFACT_SIZE`.
+    """
+
+    name: str
+    ext: str
+    data: bytes
+    size: int = 0
+    job_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.size:
+            self.size = len(self.data)
+
+    def to_frame(self) -> dict:
+        return {
+            "type": "artifact",
+            "job_id": self.job_id,
+            "name": self.name,
+            "ext": self.ext,
+            "size": self.size,
+            "data": base64.b64encode(self.data).decode("ascii"),
+        }
+
+    @classmethod
+    def from_frame(cls, frame: dict) -> "JobArtifactEvent":
+        if frame.get("type") != "artifact":
+            raise ProtocolError(f"expected artifact frame, got {frame.get('type')!r}")
+        name = frame.get("name")
+        if not name:
+            raise ProtocolError("artifact frame missing name")
+        try:
+            data = base64.b64decode(frame["data"], validate=True)
+        except Exception as e:
+            raise ProtocolError(f"bad artifact data: {e}") from e
+        return cls(
+            name=str(name),
+            ext=str(frame.get("ext", "")),
+            data=data,
+            size=int(frame.get("size", len(data))),
+            job_id=str(frame.get("job_id", "")),
+        )
+
+
+@dataclass
 class JobDoneEvent(JobEvent):
     """Terminal success event — mirrors ``RunResponse``."""
 
@@ -96,6 +152,10 @@ class JobDoneEvent(JobEvent):
     #: Absolute path to the artifact on the executing node (local consumers
     #: can route it; remote consumers only see the basename via artifact_file).
     artifact_path: str | None = None
+    #: Metadata for every artifact streamed as JobArtifactEvent frames:
+    #: ``[{"name": ..., "ext": ..., "size": ...}]`` — lets clients count
+    #: and name what to expect without holding the bytes.
+    artifact_list: list[dict] | None = None
     job_id: str = ""
 
     def to_frame(self) -> dict:
@@ -108,6 +168,7 @@ class JobDoneEvent(JobEvent):
             "artifact_file": self.artifact_file,
             "artifact_ext": self.artifact_ext,
             "artifact_path": self.artifact_path,
+            "artifact_list": self.artifact_list or [],
         }
 
     @classmethod
@@ -121,6 +182,7 @@ class JobDoneEvent(JobEvent):
             artifact_file=frame.get("artifact_file"),
             artifact_ext=frame.get("artifact_ext"),
             artifact_path=frame.get("artifact_path"),
+            artifact_list=frame.get("artifact_list") or None,
             job_id=str(frame.get("job_id", "")),
         )
 
@@ -148,6 +210,8 @@ def parse_job_frame(frame: dict) -> JobEvent:
     kind = frame.get("type")
     if kind == "job_log":
         return JobLogEvent.from_frame(frame)
+    if kind == "artifact":
+        return JobArtifactEvent.from_frame(frame)
     if kind == "job_done":
         return JobDoneEvent.from_frame(frame)
     if kind == "error":

@@ -186,6 +186,69 @@ def test_core_executor_streams_result():
     print("PASS: CoreJobExecutor returns the result once in the done event")
 
 
+def test_core_executor_streams_artifacts_and_caps():
+    import base64 as b64
+    import tempfile
+    from pathlib import Path
+
+    from ephemeral_net.jobs import (
+        MAX_ARTIFACT_SIZE,
+        JobArtifactEvent,
+        JobDoneEvent,
+        JobLogEvent,
+        JobRequest,
+    )
+    from ephemeral_net.sandbox import CoreJobExecutor
+
+    with tempfile.TemporaryDirectory() as td:
+        small = Path(td) / "chart.png"
+        small.write_bytes(b"\x89PNG fake")
+        big = Path(td) / "huge.bin"
+        big.write_bytes(b"x" * (MAX_ARTIFACT_SIZE + 1))
+        notes = Path(td) / "notes.txt"
+        notes.write_bytes(b"hello")
+
+        async def _runner(markdown_text, timeout, server_mode):
+            class _Result:
+                stdout = "## Result\nok\n"
+                stderr = ""
+                exit_code = 0
+                artifact_paths = [str(small), str(big), str(notes)]
+
+            return _Result()
+
+        async def run():
+            ex = CoreJobExecutor(runner=_runner)
+            req = JobRequest(
+                job_id="art-1",
+                document_blob=b64.b64encode(b"```python\nx = 1\n```").decode(),
+            )
+            events = [e async for e in ex(req)]
+            arts = [e for e in events if isinstance(e, JobArtifactEvent)]
+            dones = [e for e in events if isinstance(e, JobDoneEvent)]
+            warns = [
+                e for e in events
+                if isinstance(e, JobLogEvent) and e.channel == "stderr"
+            ]
+            # Small + text streamed; oversized skipped with a warning.
+            assert sorted(a.name for a in arts) == ["chart.png", "notes.txt"]
+            assert any(b"exceeds" in w.data for w in warns), (
+                "oversized artifact must warn + skip"
+            )
+            # Artifacts stream BEFORE the terminating done event.
+            kinds = [type(e).__name__ for e in events]
+            assert kinds.index("JobArtifactEvent") < kinds.index("JobDoneEvent")
+            assert len(dones) == 1
+            assert dones[0].artifact_list == [
+                {"name": "chart.png", "ext": ".png", "size": len(b"\x89PNG fake")},
+                {"name": "notes.txt", "ext": ".txt", "size": 5},
+            ]
+            assert dones[0].artifact_file == "chart.png"
+
+        asyncio.run(run())
+    print("PASS: CoreJobExecutor streams one artifact frame per file before done, caps oversized")
+
+
 def test_core_executor_ignores_remote_overrides():
     import base64
 
@@ -437,6 +500,60 @@ def test_fanout_splits_and_merges():
     print("PASS: FanoutExecutor splits a multi-run doc across peers and merges")
 
 
+def test_fanout_relays_artifacts():
+    from ephemeral_net.fanout import FanoutExecutor
+    from ephemeral_net.jobs import JobArtifactEvent, JobDoneEvent, JobLogEvent
+
+    class _ArtPeerNode:
+        """Fake node whose peer runs also emit an artifact per run."""
+
+        def __init__(self):
+            self.submitted = []
+            self.peer = _RP(
+                "peer", images=[PY_IMG, NODE_IMG], rtt=0.1, active=0, max_jobs=2
+            )
+
+        def peer_for_images(self, images):
+            return self.peer
+
+        async def submit_job(self, peer, request):
+            self.submitted.append(request.job_id)
+            yield JobLogEvent(channel="stdout", data=b"remote\n", job_id=request.job_id)
+            yield JobArtifactEvent(
+                name=request.job_id + ".png",
+                ext=".png",
+                data=b"\x89PNG " + request.job_id.encode(),
+                job_id=request.job_id,
+            )
+            yield JobDoneEvent(
+                exit_code=0, stdout="remote\n", stderr="", job_id=request.job_id
+            )
+
+    async def run():
+        md = "```python\nprint(1)\n```\n\n```node\nconsole.log(2)\n```"
+        node = _ArtPeerNode()
+        ex = FanoutExecutor(node, _FanoutLocal())
+        events = [e async for e in ex(_fanout_request(md))]
+        arts = [e for e in events if isinstance(e, JobArtifactEvent)]
+        dones = [e for e in events if isinstance(e, JobDoneEvent)]
+        # Both peer runs' artifacts relayed in document order.
+        assert len(node.submitted) == 2
+        assert [a.name for a in arts] == ["fan-1-0.png", "fan-1-1.png"], [
+            a.name for a in arts
+        ]
+        assert all(a.size == len(a.data) for a in arts)
+        assert dones[0].artifact_list == [
+            {"name": "fan-1-0.png", "ext": ".png", "size": 12},
+            {"name": "fan-1-1.png", "ext": ".png", "size": 12},
+        ]
+        # Artifacts stream before the merged done.
+        kinds = [type(e).__name__ for e in events]
+        assert kinds.index("JobArtifactEvent") < kinds.index("JobDoneEvent")
+
+    asyncio.run(run())
+    print("PASS: FanoutExecutor relays artifact frames and merges artifact_list")
+
+
 def test_fanout_falls_back_locally():
     from ephemeral_net.fanout import FanoutExecutor
 
@@ -501,6 +618,38 @@ def test_frame_too_large():
         print("PASS: frame too large rejected")
         return
     raise AssertionError("expected FrameTooLarge")
+
+
+def test_artifact_frame_roundtrip():
+    from ephemeral_net.jobs import JobArtifactEvent, JobDoneEvent, parse_job_frame
+
+    ev = JobArtifactEvent(
+        name="chart.png", ext=".png", data=b"\x89PNG\r\n\x1a\nfake", job_id="j1"
+    )
+    frame = ev.to_frame()
+    assert frame["type"] == "artifact" and frame["name"] == "chart.png"
+    back = parse_job_frame(frame)
+    assert isinstance(back, JobArtifactEvent)
+    assert back.data == ev.data and back.size == len(ev.data)
+
+    done = JobDoneEvent(
+        exit_code=0,
+        stdout="ok",
+        stderr="",
+        artifact_file="chart.png",
+        artifact_ext=".png",
+        artifact_list=[{"name": "chart.png", "ext": ".png", "size": 14}],
+    )
+    dframe = done.to_frame()
+    assert dframe["artifact_list"] == [{"name": "chart.png", "ext": ".png", "size": 14}]
+    dback = JobDoneEvent.from_frame(dframe)
+    assert dback.artifact_list == done.artifact_list
+    # Legacy frames without artifact_list still parse.
+    legacy = JobDoneEvent.from_frame(
+        {"type": "job_done", "exit_code": 0, "stdout": "", "stderr": ""}
+    )
+    assert legacy.artifact_list is None
+    print("PASS: artifact frame + done artifact_list round-trip (legacy-safe)")
 
 
 def test_frame_malformed():
@@ -1238,6 +1387,7 @@ def main():
     test_frame_binary_payload()
     test_frame_too_large()
     test_frame_malformed()
+    test_artifact_frame_roundtrip()
     test_hello_frame()
     test_fetch_swarm_list()
     test_parse_swarm_list_dns()
@@ -1251,6 +1401,7 @@ def main():
     test_sanitize_custom_allowlist()
     test_sanitize_roundtrip_parses_cleanly()
     test_core_executor_streams_result()
+    test_core_executor_streams_artifacts_and_caps()
     test_core_executor_ignores_remote_overrides()
     test_offload_runs_locally_when_warm()
     test_offload_forwards_to_warm_neighbor_and_pulls()
@@ -1258,6 +1409,7 @@ def main():
     test_select_peer_prefers_idle_then_fast()
     test_fanout_split_runs()
     test_fanout_splits_and_merges()
+    test_fanout_relays_artifacts()
     test_fanout_falls_back_locally()
     test_fanout_chained_runs_unsplit()
 

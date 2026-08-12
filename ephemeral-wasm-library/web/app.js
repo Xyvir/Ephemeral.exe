@@ -15,6 +15,20 @@ let client = null;
 // node_id -> { node_id, relay, ticket, images: [..], rtt_ms, seed: bool }
 let peers = new Map();
 
+// Artifacts streamed by the current run's node (one "artifact" frame per
+// file, before job_done). Cleared at the start of each run.
+let runArtifacts = [];
+
+// Image extensions -> mime (inline render + clipboard copy).
+const IMAGE_MIMES = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".bmp": "image/bmp",
+};
+
 // The Run Code editor: OverType (invisible-textarea WYSIWYG markdown) with
 // highlight.js per-fence highlighting — monospace, code fences rendered as
 // distinct highlighted blocks. Falls back to a plain textarea if the CDN
@@ -508,6 +522,7 @@ async function run() {
   localStorage.setItem("ephemeral.ticket", manual);
   localStorage.setItem("ephemeral.relay", $("relay").value.trim());
 
+  runArtifacts = [];
   $("output").textContent = "";
   setStatus(`running on ${shortId(target.node_id)}…`);
   setBusy(true);
@@ -517,10 +532,22 @@ async function run() {
     if (evt.type === "job_log") {
       const data = new TextDecoder().decode(base64_decode(evt.data));
       appendOut(data, "log-" + evt.channel);
+    } else if (evt.type === "artifact") {
+      const ext = evt.ext || "";
+      runArtifacts.push({
+        name: String(evt.name || "artifact" + ext),
+        ext: ext,
+        size: evt.size || 0,
+        b64: evt.data,
+        mime: IMAGE_MIMES[ext] || "application/octet-stream",
+      });
     } else if (evt.type === "job_done") {
       if (evt.stdout) appendResult(evt.stdout);
       if (evt.stderr) appendOut(evt.stderr, "err");
-      if (evt.artifact_file) {
+      if (runArtifacts.length) {
+        renderArtifacts(runArtifacts, markdown);
+      } else if (evt.artifact_file) {
+        // Legacy nodes that only report metadata, not bytes.
         appendOut(`[artifact: ${evt.artifact_file}${evt.artifact_ext || ""}]`, "done");
       }
       setStatus(evt.exit_code === 0 ? "done (exit 0)" : `failed (exit ${evt.exit_code})`,
@@ -593,6 +620,124 @@ function appendLangReminder(unsupported) {
     `language. Supported: ${supported}</div>` +
     `<div class="reminder-hint">Edit the fence info string (e.g. \`\`\`python) or pick one of the above.</div>`;
   const box = $("output");
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+// --- artifacts ------------------------------------------------------------
+
+function b64ToBlob(b64, mime) {
+  return new Blob([base64_decode(b64)], { type: mime });
+}
+
+function artifactSafeName(name) {
+  return String(name).replace(/[\\/]/g, "_");
+}
+
+// Ephemeral's artifact naming (mirrors main_local.py's Downloads routing):
+// single file -> Ephemeral_{lang}_{filename}, zip ->
+// Ephemeral_{lang}_Artifacts_{epoch}.zip, with the block's language
+// sanitized to [^a-zA-Z0-9] -> _.
+function artifactLang(markdown) {
+  return (languagesIn(markdown)[0] || "custom").replace(/[^a-zA-Z0-9]/g, "_");
+}
+
+function artifactFileName(lang, name) {
+  return `Ephemeral_${lang}_${artifactSafeName(name)}`;
+}
+
+function artifactZipName(lang) {
+  return `Ephemeral_${lang}_Artifacts_${Math.floor(Date.now() / 1000)}.zip`;
+}
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+// Download artifacts: a single file downloads directly; multiple files
+// are zipped client-side (JSZip, CDN) into one ball so the user gets a
+// single download — no multi-file permission prompts. Falls back to
+// sequential single downloads if the JSZip CDN is unreachable.
+async function downloadArtifacts(artifacts, lang) {
+  if (artifacts.length === 1) {
+    const a = artifacts[0];
+    triggerDownload(b64ToBlob(a.b64, a.mime), artifactFileName(lang, a.name));
+    return;
+  }
+  if (window.JSZip) {
+    const zip = new JSZip();
+    for (const a of artifacts) {
+      zip.file(artifactSafeName(a.name), b64ToBlob(a.b64, a.mime));
+    }
+    const blob = await zip.generateAsync({ type: "blob" });
+    triggerDownload(blob, artifactZipName(lang));
+  } else {
+    for (const a of artifacts) {
+      triggerDownload(b64ToBlob(a.b64, a.mime), artifactFileName(lang, a.name));
+    }
+  }
+}
+
+// Copy a single image artifact to the clipboard as an image (ClipboardItem
+// write — Chrome/Edge; Firefox requires a permission).
+async function copyArtifactImage(a, btn) {
+  const label = btn.textContent;
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ [a.mime]: b64ToBlob(a.b64, a.mime) })]);
+    btn.classList.add("ok");
+    btn.textContent = "Copied image";
+  } catch (e) {
+    btn.textContent = "Copy failed";
+  }
+  setTimeout(() => {
+    btn.classList.remove("ok");
+    btn.textContent = label;
+  }, 1200);
+}
+
+// Render a run's artifacts in the output: inline image previews, then an
+// action bar — Download (single file) / Download all (.zip) (multi),
+// plus Copy image for a single image artifact.
+function renderArtifacts(artifacts, markdown) {
+  const lang = artifactLang(markdown);
+  const box = $("output");
+  const div = document.createElement("div");
+  div.className = "block artifacts";
+  for (const a of artifacts) {
+    if (!IMAGE_MIMES[a.ext]) continue;
+    const img = document.createElement("img");
+    img.className = "artifact-img";
+    img.src = `data:${a.mime};base64,${a.b64}`;
+    img.alt = a.name;
+    img.title = a.name;
+    div.appendChild(img);
+  }
+  const bar = document.createElement("div");
+  bar.className = "artifact-bar";
+  const label = document.createElement("span");
+  label.className = "artifact-count";
+  label.textContent = `${artifacts.length} artifact${artifacts.length === 1 ? "" : "s"}`;
+  bar.appendChild(label);
+  if (artifacts.length === 1 && IMAGE_MIMES[artifacts[0].ext]) {
+    const copy = document.createElement("button");
+    copy.className = "secondary artifact-btn";
+    copy.textContent = "Copy image";
+    copy.addEventListener("click", () => copyArtifactImage(artifacts[0], copy));
+    bar.appendChild(copy);
+  }
+  const dl = document.createElement("button");
+  dl.className = "secondary artifact-btn";
+  dl.textContent = artifacts.length === 1 ? "Download" : "Download all (.zip)";
+  dl.addEventListener("click", () => downloadArtifacts(artifacts, lang));
+  bar.appendChild(dl);
+  div.appendChild(bar);
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
 }

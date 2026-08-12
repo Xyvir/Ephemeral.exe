@@ -30,7 +30,13 @@ import base64
 import logging
 from typing import AsyncIterator
 
-from .jobs import JobDoneEvent, JobEvent, JobLogEvent, JobRequest
+from .jobs import (
+    JobArtifactEvent,
+    JobDoneEvent,
+    JobEvent,
+    JobLogEvent,
+    JobRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -164,11 +170,21 @@ class FanoutExecutor:
         )
         results.sort(key=lambda r: r[0])
 
-        # Stream all runs' logs in document order, then one merged done.
+        # Stream all runs' logs in document order, then the artifact frames,
+        # then one merged done.
         for _index, events in results:
             for event in events:
                 if isinstance(event, JobLogEvent):
                     yield event
+
+        artifact_list: list[dict] = []
+        for _index, events in results:
+            for event in events:
+                if isinstance(event, JobArtifactEvent):
+                    yield event
+                    artifact_list.append(
+                        {"name": event.name, "ext": event.ext, "size": event.size}
+                    )
 
         stdout_parts: list[str] = []
         stderr_parts: list[str] = []
@@ -195,6 +211,7 @@ class FanoutExecutor:
             artifact_file=artifact_file,
             artifact_ext=artifact_ext,
             artifact_path=artifact_path,
+            artifact_list=artifact_list,
             job_id=request.job_id,
         )
 

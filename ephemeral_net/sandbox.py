@@ -30,7 +30,15 @@ import os
 from typing import AsyncIterator, Callable, Iterable, Sequence
 
 from .errors import JobError
-from .jobs import JobDoneEvent, JobErrorEvent, JobEvent, JobRequest
+from .jobs import (
+    MAX_ARTIFACT_SIZE,
+    JobArtifactEvent,
+    JobDoneEvent,
+    JobErrorEvent,
+    JobEvent,
+    JobLogEvent,
+    JobRequest,
+)
 
 #: Header tokens that grant capabilities a remote peer must not control.
 NETWORK_TOKENS = frozenset({"unsafe"})
@@ -232,16 +240,46 @@ class CoreJobExecutor:
         # consumer that renders both the log stream AND the done event (the
         # wasm SPA, future clients) shows the result twice. The JobDoneEvent
         # is the single carrier of the finished output.
-        artifact_file = result.artifact_paths[0] if result.artifact_paths else None
+        #
+        # Artifacts stream as one JobArtifactEvent per file, BEFORE the done
+        # event (clients stop reading the stream when done lands). Each file
+        # is capped at MAX_ARTIFACT_SIZE; oversized files are skipped with a
+        # warning rather than transferred.
+        artifact_list: list[dict] = []
+        for path in result.artifact_paths or []:
+            if not os.path.isfile(path):
+                continue
+            name = os.path.basename(path)
+            size = os.path.getsize(path)
+            if size > MAX_ARTIFACT_SIZE:
+                yield JobLogEvent(
+                    channel="stderr",
+                    data=(
+                        f"\nWarning: artifact {name} ({size} bytes) exceeds the "
+                        f"{MAX_ARTIFACT_SIZE} byte transfer cap — skipped.\n"
+                    ).encode(),
+                    job_id=request.job_id,
+                )
+                continue
+            ext = os.path.splitext(path)[1]
+            with open(path, "rb") as f:
+                data = f.read()
+            artifact_list.append({"name": name, "ext": ext, "size": size})
+            yield JobArtifactEvent(
+                name=name, ext=ext, data=data, job_id=request.job_id
+            )
+
+        first = artifact_list[0] if artifact_list else None
         yield JobDoneEvent(
             exit_code=result.exit_code,
             stdout=result.stdout or "",
             stderr=result.stderr or "",
-            artifact_file=os.path.basename(artifact_file) if artifact_file else None,
-            artifact_ext=(
-                os.path.splitext(artifact_file)[1] if artifact_file else None
+            artifact_file=first["name"] if first else None,
+            artifact_ext=first["ext"] if first else None,
+            artifact_path=(
+                result.artifact_paths[0] if result.artifact_paths else None
             ),
-            artifact_path=artifact_file,
+            artifact_list=artifact_list,
             job_id=request.job_id,
         )
 

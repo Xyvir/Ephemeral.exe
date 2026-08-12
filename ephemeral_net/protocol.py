@@ -18,8 +18,10 @@ import struct
 
 from .errors import FrameTooLarge, ProtocolError
 
-#: Default maximum frame payload size (16 MiB) — guards against memory abuse.
-DEFAULT_MAX_FRAME_SIZE = 16 * 1024 * 1024
+#: Default maximum frame payload size (32 MiB) — guards against memory
+#: abuse while fitting a cap-sized artifact frame: 15 MiB raw -> ~20 MiB
+#: base64 in a single artifact frame.
+DEFAULT_MAX_FRAME_SIZE = 32 * 1024 * 1024
 
 #: ALPN advertised by ephemeral nodes.
 ALPN = b"ephemeral/1"

@@ -45,7 +45,10 @@ const ALPN: &[u8] = b"ephemeral/1";
 const PROTOCOL_VERSION: u32 = 1;
 
 /// Maximum frame payload size, matching `ephemeral_net`'s 16 MiB guard.
-const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
+// Must match ephemeral_net.protocol.DEFAULT_MAX_FRAME_SIZE — the node
+// streams each artifact as its own frame (15 MiB raw -> ~20 MiB base64),
+// so a single frame needs headroom past the old 16 MiB guard.
+const MAX_FRAME_SIZE: usize = 32 * 1024 * 1024;
 
 fn to_js_err(e: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&e.to_string())

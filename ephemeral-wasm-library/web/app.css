@@ -152,6 +152,36 @@ textarea { min-height: 150px; resize: vertical; }
   margin: 6px 0 0;
 }
 
+/* Artifacts: inline image previews + download/copy action bar. */
+.block.artifacts {
+  border-top: 1px dashed #333;
+  margin-top: 8px;
+  padding-top: 8px;
+  white-space: normal;
+}
+.artifact-img {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  /* Keep genuinely tiny artifacts (e.g. a 1x1 test image) from rendering
+     as an invisible dot at natural size. */
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 6px;
+  border: 1px solid #333;
+  margin: 6px 0;
+  background: #111;
+}
+.artifact-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+.artifact-count { color: var(--muted); font-size: 12px; }
+.artifact-btn { padding: 5px 12px; font-size: 12.5px; }
+.artifact-btn.ok { background: #2d5a2d; }
+
 .actions { display: flex; gap: 10px; margin-top: 10px; }
 /* Spinner lives inside the Run button: centered over the label while a
    job is in flight. The button is disabled during a run, so this doubles
