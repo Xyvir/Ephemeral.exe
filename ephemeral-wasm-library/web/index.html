@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Ephemeral Web — distributed code runner</title>
 <link rel="stylesheet" href="app.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/overtype@latest/dist/overtype.min.js"></script>
 </head>
 <body>
 <header>
@@ -19,7 +22,7 @@
 
 <section class="run">
   <h2>Run code</h2>
-  <textarea id="input" spellcheck="false" placeholder="```python&#10;print(&quot;hello from the cluster&quot;)&#10;```"></textarea>
+  <div id="editor" class="editor" aria-label="Markdown input with code blocks"></div>
   <div class="actions">
     <button id="run">Run in Cluster</button>
     <span id="busy" class="spinner" role="status" aria-label="running"></span>

@@ -14,6 +14,47 @@ let client = null;
 // node_id -> { node_id, relay, ticket, images: [..], rtt_ms, seed: bool }
 let peers = new Map();
 
+// The Run Code editor: OverType (invisible-textarea WYSIWYG markdown) with
+// highlight.js per-fence highlighting — monospace, code fences rendered as
+// distinct highlighted blocks. Falls back to a plain textarea if the CDN
+// is unreachable (editor = { getValue, setValue } either way).
+let editor = null;
+
+function initEditor() {
+  const el = $("editor");
+  if (window.OverType) {
+    if (window.hljs) {
+      // Real-time, per-language: use the fence's language when hljs knows
+      // it, otherwise auto-detect. Must never throw (OverType calls this
+      // on every keystroke).
+      OverType.setCodeHighlighter((code, language) => {
+        try {
+          const known = language && hljs.getLanguage(language);
+          const res = known
+            ? hljs.highlight(code, { language })
+            : hljs.highlightAuto(code);
+          return res.value;
+        } catch (e) {
+          return hljs.util.escapeHtml(code);
+        }
+      });
+    }
+    [editor] = new OverType(el, {
+      value: "",
+      placeholder: "Markdown with ```fenced code blocks```…",
+      theme: "cave", // dark — matches the SPA
+      fontFamily: "ui-monospace, Consolas, monospace",
+      spellcheck: false,
+    });
+  } else {
+    const ta = document.createElement("textarea");
+    ta.id = "input";
+    ta.placeholder = "Markdown with ```fenced code blocks```…";
+    el.appendChild(ta);
+    editor = { getValue: () => ta.value, setValue: (v) => { ta.value = v; } };
+  }
+}
+
 function setStatus(text, cls) {
   const el = $("status");
   el.textContent = text;
@@ -33,6 +74,56 @@ function appendOut(text, cls) {
   pre.className = "line " + (cls || "");
   pre.textContent = text === "" ? " " : text;
   box.appendChild(pre);
+  box.scrollTop = box.scrollHeight;
+}
+
+// Render a job result envelope ("## Result (lang)\n```lang\n...```") as
+// highlighted HTML: result headers, step sub-headers, and code fences as
+// distinct blocks. Everything is HTML-escaped; highlight.js is applied
+// after insertion (gracefully skipped when the CDN is unreachable).
+function renderResult(text) {
+  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const html = [];
+  let inFence = false;
+  let fenceLang = "";
+  let fenceBuf = [];
+  const fence = /^```([\w+-]*)\s*$/;
+  for (const line of text.split("\n")) {
+    const m = fence.exec(line);
+    if (m) {
+      if (!inFence) {
+        inFence = true;
+        fenceLang = m[1] || "text";
+        fenceBuf = [];
+      } else {
+        inFence = false;
+        html.push(`<pre class="code-block"><code class="hljs language-${esc(fenceLang)}">${esc(fenceBuf.join("\n"))}</code></pre>`);
+      }
+      continue;
+    }
+    if (inFence) {
+      fenceBuf.push(line);
+      continue;
+    }
+    if (/^### /.test(line)) html.push(`<div class="result-step">${esc(line.slice(4))}</div>`);
+    else if (/^## /.test(line)) html.push(`<div class="result-title">${esc(line.slice(3))}</div>`);
+    else if (line.trim()) html.push(`<div class="result-line">${esc(line)}</div>`);
+  }
+  if (inFence) {
+    html.push(`<pre class="code-block"><code class="hljs language-${esc(fenceLang)}">${esc(fenceBuf.join("\n"))}</code></pre>`);
+  }
+  return html.join("\n");
+}
+
+function appendResult(text) {
+  const box = $("output");
+  const div = document.createElement("div");
+  div.className = "block result";
+  div.innerHTML = renderResult(text);
+  box.appendChild(div);
+  if (window.hljs) {
+    div.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el));
+  }
   box.scrollTop = box.scrollHeight;
 }
 
@@ -261,7 +352,7 @@ async function start() {
 }
 
 async function run() {
-  const markdown = $("input").value;
+  const markdown = editor.getValue();
   if (!markdown.trim()) {
     setStatus("paste some Markdown with code blocks", "err");
     return;
@@ -291,7 +382,7 @@ async function run() {
       const data = new TextDecoder().decode(base64_decode(evt.data));
       appendOut(data, "log-" + evt.channel);
     } else if (evt.type === "job_done") {
-      if (evt.stdout) appendOut(evt.stdout, "done");
+      if (evt.stdout) appendResult(evt.stdout);
       if (evt.stderr) appendOut(evt.stderr, "err");
       if (evt.artifact_file) {
         appendOut(`[artifact: ${evt.artifact_file}${evt.artifact_ext || ""}]`, "done");
@@ -356,12 +447,14 @@ $("copyOutput").addEventListener("click", async () => {
   }, 1200);
 });
 $("sample").addEventListener("click", () => {
-  $("input").value =
+  editor.setValue(
     "```python\n" +
     "import sys\n" +
     "print('hello from the ephemeral cluster')\n" +
     "print('python', sys.version.split()[0])\n" +
-    "```";
+    "```"
+  );
 });
 
+initEditor();
 start();
