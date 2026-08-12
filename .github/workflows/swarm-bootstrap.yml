@@ -45,9 +45,10 @@ jobs:
     # The genesis anchor is config, not code: set the SWARM_GENESIS repo
     # variable (Settings -> Secrets and variables -> Actions -> Variables,
     # comma-separated node_id@relay) to point at your own always-on node.
-    # Unset, the script uses its built-in default. This only matters for
-    # the very first, empty list — afterwards the list regenerates from
-    # its own members.
+    # Unset, the script uses its built-in default. The list is self-
+    # sustaining: each run regenerates from the previous list's members,
+    # and the pinned genesis anchor is only consulted when no member is
+    # reachable (or the list is empty — first run / manual reset).
     #
     # DNS TXT redundancy (optional): set EPHEMERAL_DNS_TXT (variable, the
     # TXT record hostname) and EPHEMERAL_DNS_TOKEN (secret, a Cloudflare

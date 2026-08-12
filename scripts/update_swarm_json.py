@@ -4,21 +4,26 @@ Refresh ``docs/swarm.json`` with the currently-live swarm.
 Thin/first-time joiners (the wasm SPA, paper-thin REST clients, other
 nodes) can fetch this file instead of running a node themselves. A
 scheduled GitHub Action (``.github/workflows/swarm-bootstrap.yml``) runs
-this every six hours: it joins the swarm as a throwaway client, dials a
-single genesis anchor *plus* whatever the previous list knew (so the
-list survives a dead genesis and regenerates from its own members), and
-commits the refreshed list.
+this every six hours: it joins the swarm as a throwaway client, dials
+whatever the previous list knew, and commits the refreshed list. The list
+is self-sustaining — as long as one member is alive between refresh
+cycles it regenerates from its own members, and the pinned genesis anchor
+(operator config via the ``SWARM_GENESIS`` repo variable) is only
+consulted when the previous list is empty (first run / ``--reset``) or
+every member was unreachable.
 
 Liveness probe: a successful dial + hello handshake proves a node speaks
 the ephemeral wire protocol, but not that it is a live compute node. So
 every node that answers is additionally sent a real job — a tiny Python
 script that prints a fresh per-node nonce — and is only recorded as
-verified when it executes the payload and echoes the nonce back. Nodes
-that cannot be reached keep their entry for a few runs (they may be
+verified when it executes the payload and echoes the nonce back.Nodes that cannot be reached keep their entry for a few runs (they may be
 temporarily offline), then age out; nodes that are reachable but never
 run the probe job (a bot that merely answers hello, a broken executor)
 are evicted after a few failed probes. The genesis anchor is exempt from
-eviction. See ``ephemeral_net.probe`` for the bookkeeping.
+eviction only while it is the active bootstrap source for that run (first
+run / ``--reset`` / all-previous-dead fallback); otherwise it is an
+ordinary member and ages out like any other node. See
+``ephemeral_net.probe`` for the bookkeeping.
 
 File shape:
 
@@ -88,6 +93,23 @@ GENESIS_DEFAULT: list[tuple[str, str]] = [
 
 # How long each dial attempt may take (matches Node._dial_timeout).
 DIAL_TIMEOUT = 20.0
+
+
+def genesis_anchor_required(
+    *,
+    reset: bool,
+    has_prev: bool,
+    prev_reached: int,
+) -> bool:
+    """Whether the pinned genesis anchor must be consulted this run.
+
+    The previous list is the primary census source: as long as one member
+    is alive between refresh cycles the swarm regenerates from its own
+    members and the genesis anchor is never contacted. The anchor is only
+    dialed when the previous list is empty (first run / ``--reset``) or
+    every previous-list member was unreachable.
+    """
+    return reset or not has_prev or prev_reached == 0
 
 
 def parse_genesis(value: str | None) -> list[tuple[str, str]]:
@@ -276,12 +298,14 @@ async def discover(
     Join the swarm, dial every candidate, probe the reachable ones, and
     return the refreshed list.
 
-    Candidates are the genesis anchor plus whatever the previous list
-    knew, plus any peers learned via hello — every entry that ends up in
-    the list is dialed this run, and (with ``probe``) every node that
-    answers is sent a real job and must echo a fresh nonce to be listed
-    as verified. With ``reset`` the previous list is forgotten entirely
-    and the run starts from the genesis anchor alone (a fresh census).
+    Candidates are whatever the previous list knew, plus any peers learned
+    via hello — every entry that ends up in the list is dialed this run,
+    and (with ``probe``) every node that answers is sent a real job and
+    must echo a fresh nonce to be listed as verified. The pinned genesis
+    anchor is only consulted when the previous list is empty (first run /
+    ``--reset``) or every member was unreachable. With ``reset`` the
+    previous list is forgotten entirely and the run starts from the
+    genesis anchor alone (a fresh census).
     """
     node = Node(relay="n0")
     await node.start()
@@ -294,15 +318,19 @@ async def discover(
                 flush=True,
             )
 
-        # Dial targets: the genesis anchor (first-ever list only), plus
-        # whatever the previous list knew — the list keeps regenerating
-        # from its own members, so a dead genesis node doesn't matter
-        # after the first run.
-        targets: dict[str, tuple[str | None, str | None]] = {}
-        for node_id, relay in genesis:
-            targets[node_id] = (relay, None)
-        for entry in prev.values():
-            targets.setdefault(entry["node_id"], (entry.get("relay"), entry.get("ticket")))
+        # Candidate strategy — self-sustaining by design:
+        #   * The previous list is the primary candidate set. As long as
+        #     one member is alive between refresh cycles, the swarm
+        #     regenerates from its own members and the pinned genesis
+        #     anchor is never contacted.
+        #   * The genesis anchor is consulted only when the previous list
+        #     is empty (first run / --reset) or every member was
+        #     unreachable, and while it is the active bootstrap source it
+        #     is exempt from eviction for that run.
+        targets: dict[str, tuple[str | None, str | None]] = {
+            entry["node_id"]: (entry.get("relay"), entry.get("ticket"))
+            for entry in prev.values()
+        }
 
         sem = asyncio.Semaphore(probe_concurrency)
         reached: dict[str, float] = {}  # node_id -> hello RTT (this run)
@@ -331,9 +359,39 @@ async def discover(
                 peers[node_id] = peer
                 reached[node_id] = peer.rtt if peer.rtt is not None else 0.0
 
+        # Phase 1 — dial the previous list's members only. The list renews
+        # itself as long as any one of them is alive.
         await asyncio.gather(
             *(_dial_one(nid, relay, ticket) for nid, (relay, ticket) in targets.items())
         )
+
+        # Phase 2 — genesis fallback (first run / reset / all-prev-dead).
+        if genesis_anchor_required(
+            reset=reset, has_prev=bool(prev), prev_reached=len(reached)
+        ):
+            seed_ids = {nid for nid, _ in genesis}
+            await asyncio.gather(
+                *(_dial_one(nid, relay, None) for nid, relay in genesis)
+            )
+            if not reset and not prev:
+                print(
+                    "  first run: no previous list — seeding from the genesis anchor",
+                    flush=True,
+                )
+            elif not reset:
+                print(
+                    "  fallback: no previous-list node reachable — dialing the "
+                    "pinned genesis anchor",
+                    flush=True,
+                )
+            # (reset was announced above)
+        else:
+            seed_ids = set()
+            print(
+                f"  self-sustaining: {len(reached)} previous-list member(s) alive — "
+                "genesis anchor not consulted",
+                flush=True,
+            )
 
         my_id = node.node_id()
         # Everything we know about: hello-learned nodes (seed + its peers)
@@ -422,8 +480,9 @@ async def discover(
         # Evict entries that are no longer live: reachable nodes that
         # never run the probe job (PROBE_MAX_FAILS), and silent nodes
         # (UNREACHABLE_MAX_MISSES ≈ 36 h offline). The genesis anchor is
-        # exempt — it is operator configuration, not a discovered member.
-        seed_ids = {nid for nid, _ in genesis}
+        # exempt only while it is the active bootstrap source this run
+        # (first run / reset / all-prev-dead fallback); otherwise it is an
+        # ordinary member and ages out like any other node.
         kept: list[dict] = []
         for node_id, entry in infos.items():
             if should_evict(entry, seed_ids=seed_ids):

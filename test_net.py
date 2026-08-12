@@ -769,6 +769,42 @@ def test_peer_table_ttl_eviction():
     print("PASS: peer table TTL eviction")
 
 
+def test_genesis_fallback_plan():
+    """The previous list is the primary census source; the pinned genesis
+    anchor is only consulted when the list is empty or every member is
+    unreachable — and once the swarm is self-sustaining, the anchor is not
+    exempt from eviction."""
+    import scripts.update_swarm_json as upd
+    from ephemeral_net.probe import UNREACHABLE_MAX_MISSES, should_evict
+
+    genesis = [("g" * 64, "https://relay.example")]
+    assert upd.genesis_anchor_required(
+        reset=False, has_prev=True, prev_reached=1
+    ) is False, "one live previous member must be enough — no genesis needed"
+    assert upd.genesis_anchor_required(
+        reset=False, has_prev=True, prev_reached=0
+    ) is True, "all previous members dead must trigger the genesis fallback"
+    assert upd.genesis_anchor_required(
+        reset=False, has_prev=False, prev_reached=0
+    ) is True, "first run seeds from the genesis anchor"
+    assert upd.genesis_anchor_required(
+        reset=True, has_prev=True, prev_reached=3
+    ) is True, "manual reset always regenerates from the genesis anchor"
+
+    # De-pinned: while the swarm regenerates from its own members the
+    # genesis node is an ordinary member and ages out like any other.
+    entry = {
+        "node_id": genesis[0][0],
+        "misses": UNREACHABLE_MAX_MISSES,
+        "seen_alive": True,
+    }
+    assert should_evict(entry, seed_ids=set()) is True, \
+        "genesis must age out when it is not the active anchor"
+    assert should_evict(entry, seed_ids={genesis[0][0]}) is False, \
+        "genesis is exempt only while it is the active anchor"
+    print("PASS: genesis fallback plan (prev-list first, anchor only as fallback)")
+
+
 # ---------------------------------------------------------------------------
 # Layer 2: two-node integration test (requires iroh + local connectivity)
 # ---------------------------------------------------------------------------
@@ -1430,6 +1466,7 @@ def main():
     test_probe_helpers()
     test_job_messages()
     test_peer_table_ttl_eviction()
+    test_genesis_fallback_plan()
     test_sanitize_strips_unsafe_and_overrides()
     test_sanitize_rejects_unknown_language()
     test_sanitize_operator_network_flag()
