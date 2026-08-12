@@ -552,6 +552,23 @@ async function run() {
     (l) => !SUPPORTED_LANGUAGES.has(l) && !l.includes(".")
   );
   if (unsupported.length) appendLangReminder(unsupported);
+
+  // If the run actually attempted the `unsafe` flag, note that the
+  // distributed network strips it — red text outside any reminder box,
+  // only shown when unsafe was declared.
+  const triedUnsafe = fenceInfo(markdown).some((f) =>
+    f.params.some((p) => p.toLowerCase() === "unsafe")
+  );
+  if (triedUnsafe) {
+    const note = document.createElement("div");
+    note.className = "unsafe-note";
+    note.textContent =
+      "Note: the `unsafe` network flag is not supported on the distributed " +
+      "network — jobs always run sandboxed with no network access.";
+    const box = $("output");
+    box.appendChild(note);
+    box.scrollTop = box.scrollHeight;
+  }
 }
 
 // Render the "unsupported language" reminder: which fences were unknown,
@@ -574,8 +591,7 @@ function appendLangReminder(unsupported) {
     `<code>${unsupported.map(esc).join("</code>, <code>")}</code></div>` +
     `<div class="reminder-body">This cluster only runs code declared with a supported ` +
     `language. Supported: ${supported}</div>` +
-    `<div class="reminder-hint">Edit the fence info string (e.g. \`\`\`python) or pick one of the above.</div>` +
-    `<div class="reminder-note">The \`unsafe\` network flag is not supported on the distributed network — jobs always run sandboxed with no network access.</div>`;
+    `<div class="reminder-hint">Edit the fence info string (e.g. \`\`\`python) or pick one of the above.</div>`;
   const box = $("output");
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
