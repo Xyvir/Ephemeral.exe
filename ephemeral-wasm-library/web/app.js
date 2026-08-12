@@ -20,6 +20,13 @@ function setStatus(text, cls) {
   el.className = "status" + (cls ? " " + cls : "");
 }
 
+// Show a spinner next to the Run button (and disable it) while a job is
+// in flight — cleared when the whole job finishes, not per result block.
+function setBusy(busy) {
+  $("busy").classList.toggle("visible", busy);
+  $("run").disabled = busy;
+}
+
 function appendOut(text, cls) {
   const box = $("output");
   const pre = document.createElement("pre");
@@ -276,6 +283,7 @@ async function run() {
 
   $("output").textContent = "";
   setStatus(`running on ${shortId(target.node_id)}…`);
+  setBusy(true);
 
   const onEvent = (jsonStr) => {
     const evt = JSON.parse(jsonStr);
@@ -307,6 +315,8 @@ async function run() {
   } catch (e) {
     setStatus("error", "err");
     appendOut(String(e), "err");
+  } finally {
+    setBusy(false);
   }
 }
 

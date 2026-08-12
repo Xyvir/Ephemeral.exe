@@ -66,6 +66,18 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 textarea { min-height: 150px; resize: vertical; }
 
 .actions { display: flex; gap: 10px; margin-top: 10px; }
+.spinner {
+  display: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: var(--accent-hi);
+  border-radius: 50%;
+  align-self: center;
+  animation: spin 0.8s linear infinite;
+}
+.spinner.visible { display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
 button {
   background: var(--accent);
   color: #fff;
