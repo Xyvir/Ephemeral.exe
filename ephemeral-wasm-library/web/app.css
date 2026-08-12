@@ -86,17 +86,30 @@ textarea { min-height: 150px; resize: vertical; }
 #editor:focus-within { border-color: var(--accent); }
 
 .actions { display: flex; gap: 10px; margin-top: 10px; }
-.spinner {
+/* Spinner lives inside the Run button: centered over the label while a
+   job is in flight. The button is disabled during a run, so this doubles
+   as a visible debounce — a disabled button swallows clicks, so mashing
+   Run can't queue up multiple jobs. */
+.run-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 150px;
+}
+.run-btn .run-label { transition: opacity 0.15s; }
+.run-btn .spinner {
   display: none;
+  position: absolute;
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.25);
-  border-top-color: var(--accent-hi);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
   border-radius: 50%;
-  align-self: center;
   animation: spin 0.8s linear infinite;
 }
-.spinner.visible { display: inline-block; }
+.run-btn.busy .run-label { opacity: 0.15; }
+.run-btn.busy .spinner { display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }
 button {
   background: var(--accent);

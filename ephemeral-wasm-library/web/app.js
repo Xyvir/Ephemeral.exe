@@ -61,11 +61,14 @@ function setStatus(text, cls) {
   el.className = "status" + (cls ? " " + cls : "");
 }
 
-// Show a spinner next to the Run button (and disable it) while a job is
-// in flight — cleared when the whole job finishes, not per result block.
+// Spin the icon inside the Run button (and disable the button) while a
+// job is in flight — cleared when the whole job finishes, not per result
+// block. Disabling doubles as debounce: a disabled button swallows clicks,
+// so spamming Run (intentional or not) can't queue multiple jobs.
 function setBusy(busy) {
-  $("busy").classList.toggle("visible", busy);
+  $("run").classList.toggle("busy", busy);
   $("run").disabled = busy;
+  $("run").setAttribute("aria-busy", String(busy));
 }
 
 function appendOut(text, cls) {
@@ -352,6 +355,7 @@ async function start() {
 }
 
 async function run() {
+  if ($("run").disabled) return; // already running — swallow re-entry
   const markdown = editor.getValue();
   if (!markdown.trim()) {
     setStatus("paste some Markdown with code blocks", "err");
