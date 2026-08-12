@@ -1,5 +1,5 @@
 {
-  "updated": "2026-08-12T18:10:51Z",
+  "updated": "2026-08-12T19:08:21Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
@@ -13,69 +13,25 @@
         "docker.io/library/node:18-alpine",
         "docker.io/tymills620/ephemeral-python-uv:latest"
       ],
+      "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-12T18:10:51Z",
+      "probe_at": "2026-08-12T19:08:21Z",
       "probe_detail": "ok",
-      "probe_ms": 1507,
+      "probe_ms": 4688,
       "probe_fails": 0,
       "misses": 0,
-      "seen_alive": true,
-      "rtt_ms": 6908
+      "rtt_ms": 656
     },
     {
-      "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidaayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs76dsadaeambkaactq4qay",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T18:10:51Z"
-    },
-    {
-      "node_id": "3cd7db62cd74614740bcf2024224ee246bc3fcce55ff9d2784418b387a94c0d9",
+      "node_id": "cbaf6e05be51d2f52f7e7503be1a954b58d09f191e3beaaa7c9640c15033a3f8",
       "relay": null,
-      "ticket": "endpointaa6npw3czv2gcr2axtzaeqre5ysgxq74zzk77hjhqraywod2stansaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
+      "ticket": "endpointadf263qfxzi5f5jppz2qhpq2svfvrue7depdx2vkpslebqkqgor7qaa",
       "images": [],
       "probe_fails": 0,
       "misses": 1,
       "seen_alive": false,
       "probe": "unreachable",
-      "probe_at": "2026-08-12T18:10:51Z"
-    },
-    {
-      "node_id": "92f813ffff653f6a35474613b6356367dfb442a98a0d2f3a61d4ac585ff39894",
-      "relay": null,
-      "ticket": "endpointacjpqe7775st62rvi5dbhnrvmnt57nccvgfa2lz2mhkkywc76omjiaa",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T18:10:51Z"
-    },
-    {
-      "node_id": "b0726ac5ad88bec5d9e6998f61d07cc6615013d52c4901ab6b2553bfab3cd5b1",
-      "relay": null,
-      "ticket": "endpointacyhe2wfvwel5roz42my6yoqptdgcuat2uwesanlnmsvhp5lhtk3caa",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T18:10:51Z"
-    },
-    {
-      "node_id": "e45f2b9c0097f5ab28aaad0e1b7fb288e3ca9b10c2115c5bcd8efb69a8b0e998",
-      "relay": null,
-      "ticket": "endpointadsf6k44acl7lkzivkwq4g37wkeohsu3cdbbcxc3zwhpw2niwduzqaa",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T18:10:51Z"
+      "probe_at": "2026-08-12T19:08:21Z"
     }
   ]
 }
