@@ -19,6 +19,12 @@ Staleness bookkeeping is persisted in ``docs/swarm.json`` per entry:
   its probe job failed; the entry is evicted after :data:`PROBE_MAX_FAILS`.
 * ``misses`` — consecutive runs where the node could not be dialed at
   all; the entry is evicted after :data:`UNREACHABLE_MAX_MISSES`.
+* ``seen_alive`` — set the first time the node ever answered a dial
+  (and ran the probe, or was verified): real nodes get the full
+  recovery grace when they later go dark, while entries that have
+  never once proven alive are dropped after
+  :data:`UNREACHABLE_MAX_MISSES_NEVER_VERIFIED` runs instead of
+  lingering for days.
 
 The genesis anchor is exempt from eviction: it bootstraps the very
 first, empty list and is operator-configured, not discovered.
@@ -40,6 +46,12 @@ PROBE_MAX_FAILS = 3
 #: entry is evicted. Kept generous: a node that is merely offline retries,
 #: while a node that is genuinely gone ages out instead of living forever.
 UNREACHABLE_MAX_MISSES = 6
+
+#: Consecutive undialable runs before a NEVER-verified entry is evicted
+#: (~12 h at the 6-hourly schedule). Entries that have never once answered
+#: a dial have no recovery to wait for — a stale address is just dead
+#: weight in the list, so it gets a short leash instead of the full grace.
+UNREACHABLE_MAX_MISSES_NEVER_VERIFIED = 2
 
 #: Default per-node probe job timeout (seconds). Covers a first-run image
 #: pull; already-warm nodes answer in well under a second.
@@ -84,11 +96,14 @@ def mark_probe(entry: dict, prev: dict | None, *, status: str) -> dict:
 
     ``status`` is one of:
 
-    * ``"ok"`` — dialed and the job probe verified it: counters reset.
+    * ``"ok"`` — dialed and the job probe verified it: counters reset,
+      ``seen_alive`` set.
     * ``"failed"`` — dialed, but the probe job failed: ``probe_fails``
-      increments (evicted after :data:`PROBE_MAX_FAILS`), ``misses`` resets.
+      increments (evicted after :data:`PROBE_MAX_FAILS`), ``misses``
+      resets, ``seen_alive`` set (it IS a real machine).
     * ``"reached"`` — dialed, no job probe ran (``--no-probe``):
-      ``misses`` resets, ``probe_fails`` is left untouched.
+      ``misses`` resets, ``probe_fails`` is left untouched, ``seen_alive``
+      set.
     * ``"unreachable"`` — could not be dialed: ``misses`` increments
       (evicted after :data:`UNREACHABLE_MAX_MISSES`).
 
@@ -101,15 +116,19 @@ def mark_probe(entry: dict, prev: dict | None, *, status: str) -> dict:
     if status == "ok":
         entry["probe_fails"] = 0
         entry["misses"] = 0
+        entry["seen_alive"] = True
     elif status == "failed":
         entry["probe_fails"] = prev_fails + 1
         entry["misses"] = 0
+        entry["seen_alive"] = True
     elif status == "reached":
         entry["probe_fails"] = prev_fails  # untouched — no job probe ran
         entry["misses"] = 0
+        entry["seen_alive"] = True
     elif status == "unreachable":
         entry["probe_fails"] = prev_fails  # untouched — not attributable
         entry["misses"] = prev_misses + 1
+        entry["seen_alive"] = bool((prev or {}).get("seen_alive"))  # carried
     else:  # pragma: no cover - programmer error
         raise ValueError(f"unknown probe status: {status!r}")
     return entry
@@ -175,6 +194,7 @@ def should_evict(
     seed_ids: set[str] | None = None,
     max_fails: int = PROBE_MAX_FAILS,
     max_misses: int = UNREACHABLE_MAX_MISSES,
+    max_misses_never_verified: int = UNREACHABLE_MAX_MISSES_NEVER_VERIFIED,
 ) -> bool:
     """
     Whether ``entry`` should be dropped from the list this run.
@@ -183,21 +203,26 @@ def should_evict(
     configuration, not a discovered member. Otherwise an entry is
     evicted once its counters pass the thresholds: reachable-but-job-
     failing entries go after ``max_fails`` runs, silent entries after
-    ``max_misses`` runs (~36 h at the 6-hourly schedule).
+    ``max_misses`` runs (~36 h at the 6-hourly schedule) — but entries
+    that have never once answered a dial (``seen_alive`` unset) are only
+    given ``max_misses_never_verified`` runs (~12 h), since there is no
+    recovery to wait for.
     """
     if seed_ids and entry.get("node_id") in seed_ids:
         return False
     if (entry.get("probe_fails") or 0) >= max_fails:
         return True
-    if (entry.get("misses") or 0) >= max_misses:
-        return True
-    return False
+    misses = entry.get("misses") or 0
+    if entry.get("seen_alive"):
+        return misses >= max_misses
+    return misses >= max_misses_never_verified
 
 
 __all__ = [
     "DEFAULT_PROBE_TIMEOUT",
     "PROBE_MAX_FAILS",
     "UNREACHABLE_MAX_MISSES",
+    "UNREACHABLE_MAX_MISSES_NEVER_VERIFIED",
     "build_probe_document",
     "mark_probe",
     "probe_nonce",

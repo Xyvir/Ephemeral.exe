@@ -817,6 +817,7 @@ def test_probe_helpers():
     from ephemeral_net.probe import (
         PROBE_MAX_FAILS,
         UNREACHABLE_MAX_MISSES,
+        UNREACHABLE_MAX_MISSES_NEVER_VERIFIED,
         build_probe_document,
         mark_probe,
         probe_nonce,
@@ -845,23 +846,36 @@ def test_probe_helpers():
     assert probe_verdict(1, nonce, nonce)[0] is False
     assert probe_verdict(0, nonce, "other-nonce")[0] is False
 
-    # Bookkeeping: counters carry over from the previous list entry.
+    # Bookkeeping: counters carry over from the previous list entry;
+    # any successful dial (ok / failed / reached) marks the node alive.
     prev = {"node_id": "x", "probe_fails": 2, "misses": 3}
-    assert mark_probe({}, prev, status="ok") == {"probe_fails": 0, "misses": 0}
+    assert mark_probe({}, prev, status="ok") == {
+        "probe_fails": 0, "misses": 0, "seen_alive": True}
     failed = mark_probe({}, prev, status="failed")
-    assert failed == {"probe_fails": 3, "misses": 0}
+    assert failed == {"probe_fails": 3, "misses": 0, "seen_alive": True}
     reached = mark_probe({}, prev, status="reached")
     assert reached["misses"] == 0 and reached["probe_fails"] == 2
+    assert reached["seen_alive"] is True
     unreach = mark_probe({}, prev, status="unreachable")
-    assert unreach == {"probe_fails": 2, "misses": 4}
+    assert unreach == {"probe_fails": 2, "misses": 4, "seen_alive": False}
     assert mark_probe({}, None, status="failed")["probe_fails"] == 1
+    # seen_alive is only ever set by an actual dial, and survives misses.
+    assert mark_probe({}, None, status="unreachable") == {
+        "probe_fails": 0, "misses": 1, "seen_alive": False}
 
-    # Eviction: only when a counter crosses its threshold, and the
-    # genesis anchor is always exempt.
+    # Eviction: only when a counter crosses its threshold; never-verified
+    # entries get a short leash; the genesis anchor is always exempt.
     assert should_evict({"node_id": "x", "probe_fails": PROBE_MAX_FAILS})
     assert not should_evict({"node_id": "x", "probe_fails": PROBE_MAX_FAILS - 1})
-    assert should_evict({"node_id": "x", "misses": UNREACHABLE_MAX_MISSES})
-    assert not should_evict({"node_id": "x", "misses": UNREACHABLE_MAX_MISSES - 1})
+    # Never dialed once: dropped after the short leash, not the long one.
+    assert should_evict({"node_id": "x", "misses": UNREACHABLE_MAX_MISSES_NEVER_VERIFIED})
+    assert not should_evict(
+        {"node_id": "x", "misses": UNREACHABLE_MAX_MISSES_NEVER_VERIFIED - 1})
+    # Was alive once: gets the full recovery grace.
+    assert not should_evict(
+        {"node_id": "x", "seen_alive": True, "misses": UNREACHABLE_MAX_MISSES - 1})
+    assert should_evict(
+        {"node_id": "x", "seen_alive": True, "misses": UNREACHABLE_MAX_MISSES})
     assert not should_evict({"node_id": "x"})
     assert not should_evict(
         {"node_id": "genesis", "probe_fails": 99, "misses": 99},
@@ -1134,34 +1148,39 @@ async def _run_eviction_integration() -> bool:
     the list (discarding it silently froze all counters at 0).
     """
     import scripts.update_swarm_json as upd  # noqa: F401
-    from ephemeral_net.probe import UNREACHABLE_MAX_MISSES
+    from ephemeral_net.probe import (
+        UNREACHABLE_MAX_MISSES,
+        UNREACHABLE_MAX_MISSES_NEVER_VERIFIED,
+    )
 
     with tempfile.TemporaryDirectory(prefix="ephemeral-evict-") as d:
         out = Path(d) / "swarm.json"
         genesis_id = "g" * 64
-        stale_id = "s" * 64
-        fresh_id = "f" * 64
+        never_id = "n" * 64
+        recovering_id = "r" * 64
         out.write_text(
             json.dumps(
                 {
                     "updated": "2026-08-12T00:00:00Z",
                     "nodes": [
-                        # One miss short of the threshold: this run pushes it
-                        # over and it must be dropped from the list.
+                        # Never answered a dial: one miss short of the short
+                        # leash — this run pushes it over and it must go.
                         {
-                            "node_id": stale_id,
+                            "node_id": never_id,
                             "relay": None,
                             "ticket": "bogus-ticket",
                             "probe_fails": 0,
-                            "misses": UNREACHABLE_MAX_MISSES - 1,
+                            "misses": UNREACHABLE_MAX_MISSES_NEVER_VERIFIED - 1,
                         },
-                        # Never dialed successfully before: first miss recorded.
+                        # Was alive once (seen_alive) and offline since:
+                        # keeps the full recovery grace, counters accumulate.
                         {
-                            "node_id": fresh_id,
+                            "node_id": recovering_id,
                             "relay": None,
                             "ticket": "bogus-ticket",
                             "probe_fails": 0,
-                            "misses": 0,
+                            "misses": 1,
+                            "seen_alive": True,
                         },
                         # The genesis anchor is operator config: exempt even
                         # when it has been silent for a very long time.
@@ -1183,23 +1202,24 @@ async def _run_eviction_integration() -> bool:
         genesis = [(genesis_id, "https://127.0.0.1:1")]
         r1 = await upd.discover(out, max_nodes=50, genesis=genesis)
         by_id = {n["node_id"]: n for n in r1["nodes"]}
-        assert stale_id not in by_id, "entry over the miss threshold must be evicted"
+        assert never_id not in by_id, "never-verified entry must be evicted"
         assert genesis_id in by_id and by_id[genesis_id]["misses"] == 100, \
             "genesis is exempt from eviction"
-        assert by_id[fresh_id]["misses"] == 1, \
-            f"fresh entry should carry 1 miss, got {by_id[fresh_id]}"
-        print("  run 1: stale entry evicted; fresh miss recorded; genesis kept")
+        assert by_id[recovering_id]["misses"] == 2, \
+            f"previously-alive entry should carry 2 misses, got {by_id[recovering_id]}"
+        print("  run 1: never-verified evicted; recovering kept; genesis kept")
 
         # Persist run 1 the way main() does (discover() returns the list;
         # the workflow writes it before the next run reads it back).
         out.write_text(json.dumps(r1, indent=2) + "\n", encoding="utf-8")
 
-        # A second run reads the file back: counters survive across runs.
+        # A second run reads the file back: counters survive across runs,
+        # and the recovering entry is still within its grace period.
         r2 = await upd.discover(out, max_nodes=50, genesis=genesis)
         by_id2 = {n["node_id"]: n for n in r2["nodes"]}
-        assert by_id2[fresh_id]["misses"] == 2, \
-            f"misses must accumulate across runs, got {by_id2[fresh_id]}"
-        print("  run 2: misses persisted across runs")
+        assert by_id2[recovering_id]["misses"] == 3, \
+            f"misses must accumulate across runs, got {by_id2[recovering_id]}"
+        print("  run 2: counters persisted; recovering entry still kept")
         print("  EVICTION INTEGRATION OK")
         return True
 

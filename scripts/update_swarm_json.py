@@ -251,6 +251,7 @@ def _existing_nodes(out_path: Path) -> dict[str, dict]:
             "images": entry.get("images") or [],
             "probe_fails": entry.get("probe_fails") or 0,
             "misses": entry.get("misses") or 0,
+            "seen_alive": bool(entry.get("seen_alive")),
         }
     return nodes
 
@@ -340,7 +341,7 @@ async def discover(
             nid = entry["node_id"]
             if nid in infos:
                 # Live hello data wins; carry the staleness bookkeeping over.
-                for key in ("probe_fails", "misses"):
+                for key in ("probe_fails", "misses", "seen_alive"):
                     if entry.get(key):
                         infos[nid][key] = entry[key]
             else:
