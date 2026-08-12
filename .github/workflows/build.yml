@@ -165,6 +165,40 @@ jobs:
         chmod +x dist/ephemeral-distributed-x86_64.AppImage
         APPIMAGE_EXTRACT_AND_RUN=1 ./dist/ephemeral-distributed-x86_64.AppImage --self-check
 
+    # Release consistency: a release's wasm tarball must match the exact
+    # released source, not whatever glue was last committed (wasm-build.yml
+    # commits glue to main on a separate bot commit, so the committed web/wbg
+    # can lag the source). On release runs, compile the wasm here and let the
+    # packaging step below tar the freshly generated glue. Ordinary pushes
+    # keep packaging the committed glue — no duplicate compile per commit.
+    - name: Set up Rust (wasm target, release only)
+      if: github.event.inputs.create_release == 'true'
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+
+    - name: Build wasm module (release only)
+      if: github.event.inputs.create_release == 'true'
+      shell: bash
+      working-directory: ephemeral-wasm-library
+      env:
+        CC_wasm32_unknown_unknown: clang
+        AR_wasm32_unknown_unknown: llvm-ar
+      run: |
+        # The runner ships clang but not llvm-ar; ring's build needs the LLVM
+        # archiver to produce the wasm static lib from clang's objects.
+        sudo apt-get update
+        sudo apt-get install -y llvm
+        command -v clang
+        command -v llvm-ar
+        curl -fsSL \
+          https://github.com/rustwasm/wasm-bindgen/releases/download/0.2.127/wasm-bindgen-0.2.127-x86_64-unknown-linux-musl.tar.gz \
+          | tar xz
+        export PATH="$(pwd)/wasm-bindgen-0.2.127-x86_64-unknown-linux-musl:$PATH"
+        cargo build --release --target wasm32-unknown-unknown
+        wasm-bindgen --target web --out-dir web/wbg \
+          target/wasm32-unknown-unknown/release/ephemeral_wasm_library.wasm
+
     - name: Package wasm/SPA bundle
       shell: bash
       run: |
