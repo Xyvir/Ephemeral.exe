@@ -17,6 +17,12 @@ on:
   schedule:
     - cron: "0 */6 * * *"   # every 6 hours
   workflow_dispatch:
+    inputs:
+      reset:
+        description: "Forget every entry and regenerate the list fresh from the genesis anchor"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -55,7 +61,10 @@ jobs:
         EPHEMERAL_DNS_TXT: ${{ vars.EPHEMERAL_DNS_TXT }}
         EPHEMERAL_DNS_ZONE: ${{ vars.EPHEMERAL_DNS_ZONE }}
         EPHEMERAL_DNS_TOKEN: ${{ secrets.EPHEMERAL_DNS_TOKEN }}
-      run: python scripts/update_swarm_json.py
+      # Manual runs can check "reset" to forget the previous list and
+      # regenerate a fresh census from the genesis anchor (scheduled runs
+      # and un-checked manual runs keep the incremental merge).
+      run: python scripts/update_swarm_json.py ${{ github.event.inputs.reset == 'true' && '--reset' || '' }}
 
     - name: Commit and push the refreshed list
       shell: bash
@@ -66,7 +75,11 @@ jobs:
         if git diff --cached --quiet; then
           echo "swarm.json unchanged — nothing to commit"
         else
-          git commit -m "swarm: refresh bootstrap list (scheduled)"
+          if [ "${{ github.event.inputs.reset }}" = "true" ]; then
+            git commit -m "swarm: reset and regenerate bootstrap list (manual)"
+          else
+            git commit -m "swarm: refresh bootstrap list (scheduled)"
+          fi
           git pull --rebase --autostash origin main
           git push origin main
         fi

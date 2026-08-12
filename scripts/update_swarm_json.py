@@ -41,6 +41,12 @@ ignored by all consumers.
 Usage:
     python scripts/update_swarm_json.py [--out docs/swarm.json]
         [--no-probe] [--probe-timeout 180] [--probe-concurrency 8]
+        [--reset]
+
+``--reset`` forgets the entire previous list and regenerates a fresh
+census from the genesis anchor alone (and whatever it reveals via
+hello). Use it when the list has gone stale and you want a clean
+regeneration instead of the incremental merge.
 """
 from __future__ import annotations
 
@@ -264,6 +270,7 @@ async def discover(
     probe: bool = True,
     probe_timeout: float = DEFAULT_PROBE_TIMEOUT,
     probe_concurrency: int = 8,
+    reset: bool = False,
 ) -> dict:
     """
     Join the swarm, dial every candidate, probe the reachable ones, and
@@ -273,12 +280,19 @@ async def discover(
     knew, plus any peers learned via hello — every entry that ends up in
     the list is dialed this run, and (with ``probe``) every node that
     answers is sent a real job and must echo a fresh nonce to be listed
-    as verified.
+    as verified. With ``reset`` the previous list is forgotten entirely
+    and the run starts from the genesis anchor alone (a fresh census).
     """
     node = Node(relay="n0")
     await node.start()
     try:
-        prev = _existing_nodes(out_path)
+        prev = {} if reset else _existing_nodes(out_path)
+        if reset:
+            print(
+                "reset: previous list forgotten — regenerating from the "
+                "genesis anchor",
+                flush=True,
+            )
 
         # Dial targets: the genesis anchor (first-ever list only), plus
         # whatever the previous list knew — the list keeps regenerating
@@ -510,6 +524,11 @@ async def main() -> None:
         default=8,
         help="max simultaneous dials/probes (default: 8)",
     )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="forget the previous list and regenerate fresh from the genesis anchor",
+    )
     args = parser.parse_args()
 
     genesis = parse_genesis(args.genesis or os.environ.get("SWARM_GENESIS"))
@@ -520,6 +539,7 @@ async def main() -> None:
         probe=not args.no_probe,
         probe_timeout=args.probe_timeout,
         probe_concurrency=max(1, args.probe_concurrency),
+        reset=args.reset,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     tmp = args.out.with_name(args.out.name + ".tmp")

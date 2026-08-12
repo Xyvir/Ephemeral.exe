@@ -1220,6 +1220,14 @@ async def _run_eviction_integration() -> bool:
         assert by_id2[recovering_id]["misses"] == 3, \
             f"misses must accumulate across runs, got {by_id2[recovering_id]}"
         print("  run 2: counters persisted; recovering entry still kept")
+
+        # Reset: forget the whole list and regenerate from the genesis
+        # anchor alone — every previous entry is dropped regardless of
+        # its counters (nothing is reachable here, so the fresh census
+        # is empty).
+        r3 = await upd.discover(out, max_nodes=50, genesis=genesis, reset=True)
+        assert r3["nodes"] == [], "reset must drop every previous entry"
+        print("  run 3: reset regenerated from scratch (empty fresh census)")
         print("  EVICTION INTEGRATION OK")
         return True
 
