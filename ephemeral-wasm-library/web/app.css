@@ -317,3 +317,18 @@ footer {
   text-align: center;
 }
 footer strong { color: var(--err); }
+
+/* Bottom-right link back to the main repo page. */
+.about-link {
+  margin: 6px 0 0;
+  text-align: right;
+  font-size: 12px;
+}
+.about-link a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.about-link a:hover {
+  color: var(--accent-hi);
+  text-decoration: underline;
+}
