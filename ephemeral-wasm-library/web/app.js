@@ -26,15 +26,29 @@ function initEditor() {
   if (window.OverType) {
     if (window.hljs) {
       // Real-time, per-language: use the fence's language when hljs knows
-      // it, otherwise auto-detect. Must never throw (OverType calls this
-      // on every keystroke).
+      // it, otherwise auto-detect. Shebang lines are pulled out first and
+      // rendered as a bright marker line (header-ish, not code). Must
+      // never throw (OverType calls this on every keystroke) and must
+      // preserve every character (the invisible textarea aligns with it).
+      const escHtml = (s) =>
+        s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       OverType.setCodeHighlighter((code, language) => {
         try {
-          const known = language && hljs.getLanguage(language);
-          const res = known
-            ? hljs.highlight(code, { language })
-            : hljs.highlightAuto(code);
-          return res.value;
+          const nl = code.indexOf("\n");
+          const firstLine = nl === -1 ? code : code.slice(0, nl);
+          const hasShebang = firstLine.startsWith("#!");
+          const body = hasShebang ? (nl === -1 ? "" : code.slice(nl + 1)) : code;
+          let html = "";
+          if (body) {
+            const known = language && hljs.getLanguage(language);
+            const res = known
+              ? hljs.highlight(body, { language })
+              : hljs.highlightAuto(body);
+            html = res.value;
+          }
+          return (hasShebang
+            ? `<span class="shebang">${escHtml(firstLine)}</span>${body ? "\n" : ""}`
+            : "") + html;
         } catch (e) {
           return hljs.util.escapeHtml(code);
         }
@@ -50,7 +64,10 @@ function initEditor() {
       theme: "cave", // dark — matches the SPA
       fontFamily: "ui-monospace, Consolas, monospace",
       spellcheck: false,
-      onChange: () => updateLangStatus(),
+      onChange: () => {
+        updateLangStatus();
+        setTimeout(highlightCodeHeaders, 0);
+      },
     });
   } else {
     const ta = document.createElement("textarea");
@@ -90,6 +107,35 @@ function updateLangStatus() {
     el.appendChild(chip);
   }
   el.hidden = false;
+}
+
+// Bright-highlight fence header info-strings (the language declaration +
+// ephemeral parameters, e.g. `python unsafe chain`) in the OverType
+// preview. OverType re-renders the preview on every keystroke, wiping any
+// spans we add — so this re-runs after each render (onChange, sample,
+// clear). Whitespace is preserved exactly so the invisible textarea stays
+// aligned.
+function highlightCodeHeaders() {
+  if (!editor || !editor.getRenderedHTML) return; // not OverType
+  const preview = document.querySelector("#editor .overtype-preview");
+  if (!preview) return;
+  for (const span of preview.querySelectorAll("span.code-fence")) {
+    if (span.querySelector(".code-header")) continue; // already processed
+    const m = /^(`{3,}|~{3,})([\s\S]*)$/.exec(span.textContent);
+    if (!m || !m[2]) continue; // closing fence — nothing to highlight
+    span.textContent = "";
+    span.appendChild(document.createTextNode(m[1]));
+    for (const part of m[2].split(/(\s+)/)) {
+      if (/^\s+$/.test(part)) {
+        span.appendChild(document.createTextNode(part));
+      } else {
+        const t = document.createElement("span");
+        t.className = "code-header";
+        t.textContent = part;
+        span.appendChild(t);
+      }
+    }
+  }
 }
 
 function setStatus(text, cls) {
@@ -530,6 +576,7 @@ $("copyCode").addEventListener("click", () => {
 $("clearCode").addEventListener("click", () => {
   editor.setValue("");
   updateLangStatus();
+  highlightCodeHeaders();
 });
 $("sample").addEventListener("click", () => {
   editor.setValue(
@@ -546,8 +593,10 @@ $("sample").addEventListener("click", () => {
     "```"
   );
   updateLangStatus(); // setValue doesn't fire OverType's onChange
+  highlightCodeHeaders();
 });
 
 initEditor();
 updateLangStatus();
+highlightCodeHeaders();
 start();

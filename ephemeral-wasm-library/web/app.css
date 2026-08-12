@@ -96,6 +96,18 @@ textarea { min-height: 150px; resize: vertical; }
   font-family: ui-monospace, Consolas, monospace;
   color: var(--muted);
 }
+/* Bright highlight for fence header info-strings (language declaration +
+   ephemeral parameters) and shebang lines inside code blocks. */
+#editor .code-header,
+#editor .shebang {
+  color: #7cfc9a;
+  font-weight: 600;
+}
+#editor .shebang {
+  display: inline;
+  background: rgba(124, 252, 154, 0.08);
+  border-radius: 3px;
+}
 
 /* Language badges under the editor: each declared fence language gets a
    chip — green when it's in the language map, amber when it isn't. */
