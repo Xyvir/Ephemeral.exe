@@ -7,6 +7,7 @@
 // image first, latency).
 import init, { EphemeralClient, base64_decode } from "./wbg/ephemeral_wasm_library.js";
 import { BOOTSTRAP } from "./config.js";
+import { SUPPORTED_LANGUAGES, CANONICAL_LANGUAGES, ALIAS_MAP } from "./languages.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -41,18 +42,54 @@ function initEditor() {
     }
     [editor] = new OverType(el, {
       value: "",
-      placeholder: "Markdown with ```fenced code blocks```…",
+      placeholder: "```python\nprint(\"hello from the cluster\")\n```",
+      // OverType copies the placeholder onto the overlay textarea too —
+      // blank the native one or the hint renders doubled (styled preview
+      // + browser textarea placeholder).
+      textareaProps: { placeholder: "" },
       theme: "cave", // dark — matches the SPA
       fontFamily: "ui-monospace, Consolas, monospace",
       spellcheck: false,
+      onChange: () => updateLangStatus(),
     });
   } else {
     const ta = document.createElement("textarea");
     ta.id = "input";
-    ta.placeholder = "Markdown with ```fenced code blocks```…";
+    ta.placeholder = "```python\nprint(\"hello from the cluster\")\n```";
     el.appendChild(ta);
+    ta.addEventListener("input", updateLangStatus);
     editor = { getValue: () => ta.value, setValue: (v) => { ta.value = v; } };
   }
+}
+
+// Live language badges under the editor: every declared fence language
+// gets a chip — ✓ when it's in the language map, ✗ when it isn't (and the
+// block will be rejected by the node). Dot-bearing tokens are file/seed
+// blocks, shown neutrally.
+function updateLangStatus() {
+  if (!editor) return; // OverType fires onChange during its own _init,
+  // before the constructor's destructuring assigns `editor`.
+  const el = $("langStatus");
+  el.textContent = "";
+  const langs = languagesIn(editor.getValue());
+  if (!langs.length) {
+    el.hidden = true;
+    return;
+  }
+  for (const lang of langs) {
+    const ok = SUPPORTED_LANGUAGES.has(lang);
+    const isFile = !ok && lang.includes(".");
+    const chip = document.createElement("span");
+    chip.className = "lang-chip " + (ok ? "ok" : isFile ? "file" : "bad");
+    chip.textContent = (ok ? "✓ " : isFile ? "" : "✗ ") + lang;
+    chip.title = ok
+      ? "supported"
+      : isFile
+        ? "file/seed block — not a language"
+        : "not in the language map — this block will be rejected";
+    el.appendChild(chip);
+  }
+  el.hidden = false;
 }
 
 function setStatus(text, cls) {
@@ -413,6 +450,39 @@ async function run() {
   } finally {
     setBusy(false);
   }
+
+  // A fence that declared an unknown language gets rejected by the node's
+  // image allowlist — remind the user what the cluster actually supports.
+  const unsupported = languagesIn(markdown).filter(
+    (l) => !SUPPORTED_LANGUAGES.has(l) && !l.includes(".")
+  );
+  if (unsupported.length) appendLangReminder(unsupported);
+}
+
+// Render the "unsupported language" reminder: which fences were unknown,
+// plus the full supported-language list (canonical + aliases).
+function appendLangReminder(unsupported) {
+  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const div = document.createElement("div");
+  div.className = "block reminder";
+  // Each canonical language with its aliases inline in parentheses:
+  // python (py), node (js, javascript, npm, npx, …)
+  const supported = CANONICAL_LANGUAGES.map((l) => {
+    const als = ALIAS_MAP[l] || [];
+    const aliases = als.length
+      ? ` <span class="reminder-als">(${als.map(esc).join(", ")})</span>`
+      : "";
+    return `<code>${esc(l)}</code>${aliases}`;
+  }).join(" ");
+  div.innerHTML =
+    `<div class="reminder-title">Unsupported language${unsupported.length > 1 ? "s" : ""}: ` +
+    `<code>${unsupported.map(esc).join("</code>, <code>")}</code></div>` +
+    `<div class="reminder-body">This cluster only runs code declared with a supported ` +
+    `language. Supported: ${supported}</div>` +
+    `<div class="reminder-hint">Edit the fence info string (e.g. \`\`\`python) or pick one of the above.</div>`;
+  const box = $("output");
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
 }
 
 $("run").addEventListener("click", run);
@@ -456,9 +526,17 @@ $("sample").addEventListener("click", () => {
     "import sys\n" +
     "print('hello from the ephemeral cluster')\n" +
     "print('python', sys.version.split()[0])\n" +
+    "```\n\n" +
+    "```node\n" +
+    "console.log('node', process.version)\n" +
+    "```\n\n" +
+    "```bash\n" +
+    "echo \"bash $BASH_VERSION\"\n" +
     "```"
   );
+  updateLangStatus(); // setValue doesn't fire OverType's onChange
 });
 
 initEditor();
+updateLangStatus();
 start();

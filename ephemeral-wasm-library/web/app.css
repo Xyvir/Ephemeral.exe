@@ -75,15 +75,48 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 textarea { min-height: 150px; resize: vertical; }
 
 /* Run Code editor (OverType): bordered panel matching the section; the
-   invisible-textarea WYSIWYG renders fenced code as highlighted blocks. */
+   invisible-textarea WYSIWYG renders fenced code as highlighted blocks.
+   OverType only fills a parent with a definite height (min-height isn't
+   enough — its container defaults to 60px), so give #editor a fixed
+   height and stretch OverType's internal layers to match. */
 #editor {
-  min-height: 180px;
+  height: 220px;
   background: #1a1a1a;
   border: 1px solid #444;
   border-radius: 6px;
   overflow: auto;
 }
 #editor:focus-within { border-color: var(--accent); }
+#editor .overtype-container,
+#editor .overtype-wrapper { height: 100%; }
+/* Placeholder: OverType's own div collapses newlines (white-space:normal)
+   and the fenced-python hint needs them — force pre + monospace. */
+#editor .overtype-placeholder {
+  white-space: pre;
+  font-family: ui-monospace, Consolas, monospace;
+  color: var(--muted);
+}
+
+/* Language badges under the editor: each declared fence language gets a
+   chip — green when it's in the language map, amber when it isn't. */
+.lang-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.lang-status[hidden] { display: none; }
+.lang-chip {
+  font: 12px ui-monospace, Consolas, monospace;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid #444;
+  background: #1a1a1a;
+  color: var(--muted);
+}
+.lang-chip.ok { border-color: #2d5a2d; color: var(--ok); }
+.lang-chip.bad { border-color: #8a5a1e; color: #ffb86b; }
+.lang-chip.file { border-color: #444; color: var(--muted); }
 
 .actions { display: flex; gap: 10px; margin-top: 10px; }
 /* Spinner lives inside the Run button: centered over the label while a
@@ -232,6 +265,27 @@ details.advanced .advanced-meta code { color: var(--accent-hi); }
   background: transparent;
   padding: 0;
   font: 13px/1.55 ui-monospace, Consolas, monospace;
+}
+
+/* Unsupported-language reminder block in the output. */
+.block.reminder {
+  border: 1px solid #8a5a1e;
+  background: #2a2215;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  white-space: normal;
+}
+.reminder-title { color: #ffb86b; font-weight: 600; margin-bottom: 6px; }
+.reminder-body { font-size: 12.5px; line-height: 1.7; }
+.reminder-als { color: var(--muted); font-size: 11.5px; }
+.reminder-hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.reminder code {
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--accent-hi);
+  white-space: nowrap;
 }
 
 footer {
