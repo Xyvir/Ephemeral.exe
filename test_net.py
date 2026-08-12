@@ -164,7 +164,7 @@ async def _fake_core_runner(markdown_text, timeout, server_mode):
 def test_core_executor_streams_result():
     import base64
 
-    from ephemeral_net.jobs import JobDoneEvent, JobLogEvent, JobRequest
+    from ephemeral_net.jobs import JobDoneEvent, JobRequest
     from ephemeral_net.sandbox import CoreJobExecutor
 
     async def run():
@@ -174,20 +174,22 @@ def test_core_executor_streams_result():
             document_blob=base64.b64encode(b"```python\nprint(1)\n```").decode(),
         )
         events = [e async for e in ex(req)]
-        logs = [e for e in events if isinstance(e, JobLogEvent)]
         dones = [e for e in events if isinstance(e, JobDoneEvent)]
-        assert logs and b"hello from core" in logs[0].data
-        assert dones and dones[0].exit_code == 0
+        # Exactly one done, carrying the full result — the finished output is
+        # NOT re-streamed as job_log chunks (that doubled it for consumers
+        # that render both the log stream and the done event).
+        assert len(dones) == 1
+        assert dones[0].exit_code == 0
         assert dones[0].stdout == "## Result\nhello from core\n"
 
     asyncio.run(run())
-    print("PASS: CoreJobExecutor streams logs + done event")
+    print("PASS: CoreJobExecutor returns the result once in the done event")
 
 
 def test_core_executor_ignores_remote_overrides():
     import base64
 
-    from ephemeral_net.jobs import JobDoneEvent, JobLogEvent, JobRequest
+    from ephemeral_net.jobs import JobDoneEvent, JobRequest
     from ephemeral_net.sandbox import CoreJobExecutor
 
     async def run():
@@ -201,10 +203,8 @@ def test_core_executor_ignores_remote_overrides():
         events = [e async for e in ex(req)]
         # The unsafe/override instructions are ignored; the job runs with the
         # default allowlisted image and never reaches the runner with network.
-        logs = [e for e in events if isinstance(e, JobLogEvent)]
         dones = [e for e in events if isinstance(e, JobDoneEvent)]
-        assert logs and b"hello from core" in logs[0].data
-        assert dones and dones[0].exit_code == 0
+        assert len(dones) == 1 and dones[0].exit_code == 0
 
     asyncio.run(run())
     print("PASS: CoreJobExecutor ignores remote override instructions")

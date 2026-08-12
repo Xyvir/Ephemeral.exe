@@ -30,7 +30,7 @@ import os
 from typing import AsyncIterator, Callable, Iterable, Sequence
 
 from .errors import JobError
-from .jobs import JobDoneEvent, JobErrorEvent, JobEvent, JobLogEvent, JobRequest
+from .jobs import JobDoneEvent, JobErrorEvent, JobEvent, JobRequest
 
 #: Header tokens that grant capabilities a remote peer must not control.
 NETWORK_TOKENS = frozenset({"unsafe"})
@@ -141,7 +141,9 @@ class CoreJobExecutor:
     Wires :class:`ephemeral_net.jobs.JobRequest` to
     ``ephemeral_core.parse_and_execute`` after sanitizing the document
     (see :func:`sanitize_markdown`). Results stream back as
-    :class:`JobLogEvent` chunks followed by a :class:`JobDoneEvent`;
+    a :class:`JobDoneEvent` carrying the finished result (server-mode
+    results are not re-streamed as :class:`JobLogEvent` chunks — that
+    would duplicate the output for stream-and-done consumers);
     rejections and runner failures surface as :class:`JobErrorEvent`.
 
     ``runner``, ``image_exists``, and ``pull`` are injectable for tests
@@ -225,27 +227,16 @@ class CoreJobExecutor:
             yield JobErrorEvent(message=str(e), job_id=request.job_id)
             return
 
-        stdout = result.stdout or ""
-        stderr = result.stderr or ""
-        size = self.log_chunk_size
-        for i in range(0, len(stdout), size):
-            yield JobLogEvent(
-                channel="stdout",
-                data=stdout[i : i + size].encode("utf-8"),
-                job_id=request.job_id,
-            )
-        for i in range(0, len(stderr), size):
-            yield JobLogEvent(
-                channel="stderr",
-                data=stderr[i : i + size].encode("utf-8"),
-                job_id=request.job_id,
-            )
-
+        # The runner (server mode) returns the fully-rendered result envelope
+        # in result.stdout — do NOT also stream it as job_log chunks, or every
+        # consumer that renders both the log stream AND the done event (the
+        # wasm SPA, future clients) shows the result twice. The JobDoneEvent
+        # is the single carrier of the finished output.
         artifact_file = result.artifact_paths[0] if result.artifact_paths else None
         yield JobDoneEvent(
             exit_code=result.exit_code,
-            stdout=stdout,
-            stderr=stderr,
+            stdout=result.stdout or "",
+            stderr=result.stderr or "",
             artifact_file=os.path.basename(artifact_file) if artifact_file else None,
             artifact_ext=(
                 os.path.splitext(artifact_file)[1] if artifact_file else None

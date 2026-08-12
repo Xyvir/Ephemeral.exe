@@ -34,6 +34,15 @@ h1 { font-size: 20px; margin: 0; }
 h1 span { color: var(--accent-hi); }
 h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 0 8px; }
 
+.title-block { display: flex; flex-direction: column; align-items: flex-start; }
+.subtitle {
+  font-size: 11px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
 .meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 #nodeId { color: var(--text); }
 .status { color: var(--muted); }
@@ -118,6 +127,24 @@ button.secondary:hover { background: #4a4a4a; }
 }
 .tag.seed { background: #2d4a2d; color: var(--ok); }
 .count { color: var(--muted); }
+
+details.advanced { margin-top: 14px; }
+details.advanced > summary {
+  cursor: pointer;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+  user-select: none;
+  list-style: none;
+}
+details.advanced > summary::-webkit-details-marker { display: none; }
+details.advanced > summary::before { content: "▸ "; }
+details.advanced[open] > summary::before { content: "▾ "; }
+details.advanced > summary:hover { color: var(--text); }
+details.advanced section { margin-top: 12px; }
+details.advanced .advanced-meta { margin-top: 12px; }
+details.advanced .advanced-meta code { color: var(--accent-hi); }
 
 .output {
   background: #111;
