@@ -18,6 +18,11 @@ let peers = new Map();
 // Artifacts streamed by the current run's node (one "artifact" frame per
 // file, before job_done). Cleared at the start of each run.
 let runArtifacts = [];
+// Raw (unformatted) markdown of everything appended to the Output box —
+// results keep their `## <Lang> Result` headers and fenced code blocks
+// exactly as the node emitted them, so Copy output pastes the markdown
+// source rather than the flattened rendered text.
+let outputRaw = "";
 
 // Image extensions -> mime (inline render + clipboard copy).
 const IMAGE_MIMES = {
@@ -223,6 +228,7 @@ function appendOut(text, cls) {
   pre.className = "line " + (cls || "");
   pre.textContent = text === "" ? " " : text;
   box.appendChild(pre);
+  outputRaw += text + "\n";
   box.scrollTop = box.scrollHeight;
 }
 
@@ -270,6 +276,9 @@ function appendResult(text) {
   div.className = "block result";
   div.innerHTML = renderResult(text);
   box.appendChild(div);
+  // Keep the raw markdown source so Copy output pastes the unformatted
+  // version (headers + fences), not the flattened rendered text.
+  outputRaw += (text.endsWith("\n") ? text : text + "\n") + "\n";
   if (window.hljs) {
     div.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el));
   }
@@ -523,6 +532,7 @@ async function run() {
   localStorage.setItem("ephemeral.relay", $("relay").value.trim());
 
   runArtifacts = [];
+  outputRaw = "";
   $("output").textContent = "";
   setStatus(`running on ${shortId(target.node_id)}…`);
   setBusy(true);
@@ -746,6 +756,7 @@ $("run").addEventListener("click", run);
 $("refresh").addEventListener("click", () => { peers.clear(); refreshPeers(); });
 $("clearOutput").addEventListener("click", () => {
   $("output").textContent = "";
+  outputRaw = "";
 });
 
 // Copy text to the clipboard, then flash the button green. Races the
@@ -779,7 +790,7 @@ async function copyText(text, btn, restoreTitle) {
 }
 
 $("copyOutput").addEventListener("click", () => {
-  copyText($("output").textContent, $("copyOutput"), "Copy output");
+  copyText(outputRaw.replace(/\n+$/, ""), $("copyOutput"), "Copy output");
 });
 $("copyCode").addEventListener("click", () => {
   copyText(editor.getValue(), $("copyCode"), "Copy code");
