@@ -1,290 +1,81 @@
 {
-  "updated": "2026-08-12T17:46:23Z",
+  "updated": "2026-08-12T18:10:51Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "3006f2d2e520682828a849ab89960da65027d0de902aa529a803f707d1841eed",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaayan4ws4uqgqkbivbe2xcmwbwtfaj6q32icvjjjvab7ob6rqqpo2ayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacuaaabi5ridaeachpgxtwhmkay",
+      "ticket": "endpointaayan4ws4uqgqkbivbe2xcmwbwtfaj6q32icvjjjvab7ob6rqqpo2ayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacuaaabmhricaeachpgxtxb4kaq",
       "images": [
         "docker.io/esolang/cobol:latest",
         "docker.io/library/alpine:latest",
         "docker.io/library/node:18-alpine",
         "docker.io/tymills620/ephemeral-python-uv:latest"
       ],
-      "probe": "failed",
-      "probe_at": "2026-08-12T17:46:23Z",
-      "probe_detail": "probe failed: ",
-      "probe_ms": 198746,
-      "probe_fails": 1,
+      "probe": "ok",
+      "probe_at": "2026-08-12T18:10:51Z",
+      "probe_detail": "ok",
+      "probe_ms": 1507,
+      "probe_fails": 0,
       "misses": 0,
       "seen_alive": true,
-      "rtt_ms": 279
+      "rtt_ms": 6908
     },
     {
-      "node_id": "03c971bf7c5b995b469ab6614a2e257aca289354eb7862ff492f30eda7e70b47",
-      "relay": null,
-      "ticket": "endpointaab4s4n7prnzsw2gtk3gcsroev5muketktvxqyx7jextb3nh44fuoaa",
+      "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
+      "relay": "https://use1-1.relay.n0.iroh.link./",
+      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidaayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs76dsadaeambkaactq4qay",
       "images": [],
       "probe_fails": 0,
       "misses": 1,
       "seen_alive": false,
       "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
+      "probe_at": "2026-08-12T18:10:51Z"
     },
     {
-      "node_id": "09f3bced98c618b386349d0e2c14e96b841f2d3dad3376b73c70473c2e501229",
+      "node_id": "3cd7db62cd74614740bcf2024224ee246bc3fcce55ff9d2784418b387a94c0d9",
       "relay": null,
-      "ticket": "endpointaae7hphntddbrm4ggsoq4lau5fvyihznhwwtg5vxhryeopbokajcsaa",
+      "ticket": "endpointaa6npw3czv2gcr2axtzaeqre5ysgxq74zzk77hjhqraywod2stansaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
       "images": [],
       "probe_fails": 0,
       "misses": 1,
       "seen_alive": false,
       "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
+      "probe_at": "2026-08-12T18:10:51Z"
     },
     {
-      "node_id": "273746d05e8f96f2c87b4e9647fd35c781c53a0f93642201fc30e9b3df39fb7c",
+      "node_id": "92f813ffff653f6a35474613b6356367dfb442a98a0d2f3a61d4ac585ff39894",
       "relay": null,
-      "ticket": "endpointaattorwql2hzn4wipnhjmr75gxdydrj2b6jwiiqb7qyotm67hh5xyaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
+      "ticket": "endpointacjpqe7775st62rvi5dbhnrvmnt57nccvgfa2lz2mhkkywc76omjiaa",
       "images": [],
       "probe_fails": 0,
       "misses": 1,
       "seen_alive": false,
       "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
+      "probe_at": "2026-08-12T18:10:51Z"
     },
     {
-      "node_id": "3fc1703c26d647c963fbd515aa1f33e848af866230b0a1521d386a9bcaf3e63d",
+      "node_id": "b0726ac5ad88bec5d9e6998f61d07cc6615013d52c4901ab6b2553bfab3cd5b1",
       "relay": null,
-      "ticket": "endpointaa74c4b4e3lepsld7pkrlkq7gpuerl4gmiylbiksdu4gvg6k6ptd2aa",
+      "ticket": "endpointacyhe2wfvwel5roz42my6yoqptdgcuat2uwesanlnmsvhp5lhtk3caa",
       "images": [],
       "probe_fails": 0,
       "misses": 1,
       "seen_alive": false,
       "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
+      "probe_at": "2026-08-12T18:10:51Z"
     },
     {
-      "node_id": "4713be5d71c6a554992c58f2e62da0c26e66f0e3215d2f09d3738c78c617a06c",
+      "node_id": "e45f2b9c0097f5ab28aaad0e1b7fb288e3ca9b10c2115c5bcd8efb69a8b0e998",
       "relay": null,
-      "ticket": "endpointabdrhps5ohdkkvezfrmpfzrnudbg4zxq4mqv2lyj2nzyy6ggc6qgyaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
+      "ticket": "endpointadsf6k44acl7lkzivkwq4g37wkeohsu3cdbbcxc3zwhpw2niwduzqaa",
       "images": [],
       "probe_fails": 0,
       "misses": 1,
       "seen_alive": false,
       "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "521adfed4ed96650f475cec12a1daf128a3ead7e0d789cc7360db8003e16ace2",
-      "relay": null,
-      "ticket": "endpointabjbvx7nj3mwmuhuoxhmckq5v4jiupvnpygxrhghgyg3qab6c2woeaa",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "5cecffcc490d0c05829f64c411479c245931b1d8d824d6bd3cf25858809a95d0",
-      "relay": null,
-      "ticket": "endpointabooz76mjegqybmct5smiekhtqsfsmnr3dmcjvv5htzfqweatkk5aaa",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "5d88b7015ed0b655d4ec0ad91ce0dd8fcfff3fec2841fcf147f718986ceb7fe4",
-      "relay": null,
-      "ticket": "endpointaboyrnybl3ilmvou5qfnshha3wh477z75qued7hri73rrgdm5n76iaa",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "5fd37a2272f3162b8f9e2915aac1f1ad39efcc73151823a1c50b9de670dccbbf",
-      "relay": null,
-      "ticket": "endpointabp5g6rcolzrmk4ptyurlkwb6gwtt36momkrqi5byufz3ztq3tf36aiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "7282b986d6e4286d195921b6c5b58f5b6cdb44841fef4e741c0e55a30acd0aef",
-      "relay": null,
-      "ticket": "endpointabzifomg23scq3izleq3nrnvr5nwzw2eqqp66ttudqhfliykzufo6aa",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "736a5c29dbbab6a2d25200abe4d5e34c3d561a31c9d2c9f2b42506fd60d5bbae",
-      "relay": null,
-      "ticket": "endpointabzwuxbj3o5lniwskiakxzgv4ngd2vq2ghe5fspswqsqn7la2w524aa",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "8638abbef343d550723ca8241c49eab95cb5b7a0427adaf0d0bd8694150e3109",
-      "relay": null,
-      "ticket": "endpointacddrk566nb5kudshsucihcj5k4vznnxubbhvwxq2c6ynfavbyyqsaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "8f621495ea5478387aadc6ccea3344a807ce50881e861fc4be2dbd58a86862b6",
-      "relay": null,
-      "ticket": "endpointachwefev5jkhqod2vxdmz2rtisuaptsqrapimh6exyw32wfinbrlmaa",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "8f99d10670e2354475e86024bfaa87413cf128b7ad0083d6f742a83bb9582332",
-      "relay": null,
-      "ticket": "endpointachztuigodrdkrdv5bqcjp5kq5atz4jiw6wqba6w65bkqo5zlarteaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "91e9210c16ac79a690be239ffd096532999b5f06d2f85048412a2f283b5da64c",
-      "relay": null,
-      "ticket": "endpointaci6siimc2whtjuqxyrz77ijmuzjtg27a3jpquciievc6kb3lwteyaa",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "9697efe29d27ba80d2b01a02fcd2a4c8052f70b4f3b6aa1c97187a2802aa958f",
-      "relay": null,
-      "ticket": "endpointacljp37ctut3vagswanaf7gsuteakl3qwtz3nkq4s4mhukacvkky6aiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "9f840dd2ad8b7c6d4f4f59b8066fc5d433c4385d9c0cbc5d86761018b892e631",
-      "relay": null,
-      "ticket": "endpointacpyidosvwfxy3kpj5m3qbtpyxkdhrbylwoazpc5qz3bagfysltdcaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "a237b43e1a5722ce95acfaab6101e08361f20de789101ddf2f8d146ce9705cde",
-      "relay": null,
-      "ticket": "endpointacrdpnb6djlsftuvvt5kwyib4cbwd4qn46eraho7f6gri3hjobon4aiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "c30be93cc084a8d6aa273e2d0828e280980779fe47dcd1230abbd56ade1843bf",
-      "relay": null,
-      "ticket": "endpointadbqx2j4ycckrvvke47c2cbi4kajqb3z7zd5zujdbk55k2w6dbb36aa",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "ca53578dc86f32ec30b4e16acb680351ec5c70927eabc624819778820d61dd5b",
-      "relay": null,
-      "ticket": "endpointadffgv4nzbxtf3bqwtqwvs3iani6yxdqsj7kxrreqglxraqnmhovwaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "d2d7ba1a010761acc39d8cedf2bdcdae314b69fb1f1dad6e489acde35f6f8e5e",
-      "relay": null,
-      "ticket": "endpointadjnpoq2aedwdlgdtwgo34v5zwxdcs3j7mpr3llojcnm3y27n6hf4aa",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "e3f16ea9d829f71e04864647eb6ec86ffa27802d96d2db729232082688bb6be1",
-      "relay": null,
-      "ticket": "endpointadr7c3vj3au7ohqeqzdep23ozbx7uj4afwlnfw3ssizaqjuixnv6caiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "fe73cbcf5751acfdebc6f96495601df242ae9d4a1ed9da9e53426a66bcd27a4b",
-      "relay": null,
-      "ticket": "endpointad7hhs6pk5i2z7ply34wjfladxzeflu5jipntwu6knbguzv42j5ewaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
-    },
-    {
-      "node_id": "fe84bb437ad5f144aebca7ad25b5e5bd3259d1aceaf867b4ef504c625a794097",
-      "relay": null,
-      "ticket": "endpointad7ijo2dplk7crfoxst22jnv4w6teworvtvpqz5u55ieyys2pfajoaa",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T17:46:23Z"
+      "probe_at": "2026-08-12T18:10:51Z"
     }
   ]
 }
