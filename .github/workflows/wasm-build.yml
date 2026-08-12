@@ -49,6 +49,16 @@ jobs:
             | tar xz
           echo "$(pwd)/wasm-bindgen-0.2.127-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
 
+      - name: Install wasm toolchain (clang + llvm-ar)
+        # The runner ships clang but not llvm-ar, and ring's build needs the
+        # LLVM archiver to produce the wasm static lib from clang's objects
+        # (cc-rs defaults to llvm-ar for wasm32-unknown-unknown).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm
+          command -v clang
+          command -v llvm-ar
+
       - name: Build and generate glue
         working-directory: ephemeral-wasm-library
         env:
