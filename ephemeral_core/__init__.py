@@ -13,6 +13,7 @@ Public API:
     check_podman_alive() -> bool
     ensure_podman_running() -> None
     parse_codeblocks(content) -> list[dict]
+    pull_image(image_name) -> int
 """
 
 from .models import ExecutionResult, GroupResult, BlockResult
@@ -22,6 +23,7 @@ from .executor import (
     check_image_exists,
     list_local_images,
     ensure_podman_running,
+    pull_image,
 )
 from .parser import parse_codeblocks
 
@@ -32,6 +34,7 @@ __all__ = [
     "list_local_images",
     "ensure_podman_running",
     "parse_codeblocks",
+    "pull_image",
     "ExecutionResult",
     "GroupResult",
     "BlockResult",

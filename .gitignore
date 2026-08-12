@@ -25,3 +25,6 @@ test_ephemeral.py
 
 # Rust / wasm build output
 target/
+
+# Freebuff desktop app runtime state
+.freebuff/
