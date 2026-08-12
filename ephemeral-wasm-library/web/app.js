@@ -80,12 +80,21 @@ function initEditor() {
       // blank the native one or the hint renders doubled (styled preview
       // + browser textarea placeholder).
       textareaProps: { placeholder: "" },
+      // Grow the editor with its content instead of scrolling internally.
+      autoResize: true,
       theme: "cave", // dark — matches the SPA
       fontFamily: "ui-monospace, Consolas, monospace",
       spellcheck: false,
       onChange: () => {
         updateLangStatus();
-        setTimeout(highlightCodeHeaders, 0);
+      },
+      // Re-apply the fence-header/shebang highlights after every preview
+      // render. OverType replaces the preview DOM wholesale on each
+      // keystroke (preview.innerHTML = ...), so a setTimeout from onChange
+      // races the next render and the highlights flicker away. onRender
+      // fires synchronously after every replacement — no race.
+      onRender: () => {
+        highlightCodeHeaders();
       },
     });
   } else {

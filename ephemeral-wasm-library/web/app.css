@@ -76,19 +76,22 @@ textarea { min-height: 150px; resize: vertical; }
 
 /* Run Code editor (OverType): bordered panel matching the section; the
    invisible-textarea WYSIWYG renders fenced code as highlighted blocks.
-   OverType only fills a parent with a definite height (min-height isn't
-   enough — its container defaults to 60px), so give #editor a fixed
-   height and stretch OverType's internal layers to match. */
+   OverType's autoResize mode makes the wrapper grow with its content,
+   so the panel expands instead of scrolling internally — it starts at
+   min-height and only gets taller. */
 #editor {
-  height: 220px;
+  height: auto;
+  min-height: 220px;
   background: #1a1a1a;
   border: 1px solid #444;
   border-radius: 6px;
   overflow: auto;
 }
 #editor:focus-within { border-color: var(--accent); }
-#editor .overtype-container,
-#editor .overtype-wrapper { height: 100%; }
+#editor .overtype-container { height: auto; min-height: 220px; }
+/* Beat OverType's auto-resize floor (60px) so the empty editor still
+   presents as a proper panel. */
+#editor .overtype-wrapper { height: auto; min-height: 220px !important; }
 /* Placeholder: OverType's own div collapses newlines (white-space:normal)
    and the fenced-python hint needs them — force pre + monospace. */
 #editor .overtype-placeholder {
@@ -294,7 +297,6 @@ details.advanced .advanced-meta code { color: var(--accent-hi); }
   border-radius: 6px;
   padding: 10px;
   min-height: 140px;
-  max-height: 420px;
   overflow: auto;
   font: 13px/1.55 ui-monospace, Consolas, monospace;
 }
