@@ -1124,6 +1124,86 @@ async def _run_probe_integration() -> bool:
         await probe.close()
 
 
+async def _run_eviction_integration() -> bool:
+    """
+    Staleness bookkeeping across real ``discover()`` runs: unreachable
+    entries accumulate ``misses`` in the written list and are evicted
+    once they cross the threshold — the refresh script must not keep
+    dead entries forever. Regression test: mark_probe() returns a NEW
+    entry with the counters, and discover() must write that back into
+    the list (discarding it silently froze all counters at 0).
+    """
+    import scripts.update_swarm_json as upd  # noqa: F401
+    from ephemeral_net.probe import UNREACHABLE_MAX_MISSES
+
+    with tempfile.TemporaryDirectory(prefix="ephemeral-evict-") as d:
+        out = Path(d) / "swarm.json"
+        genesis_id = "g" * 64
+        stale_id = "s" * 64
+        fresh_id = "f" * 64
+        out.write_text(
+            json.dumps(
+                {
+                    "updated": "2026-08-12T00:00:00Z",
+                    "nodes": [
+                        # One miss short of the threshold: this run pushes it
+                        # over and it must be dropped from the list.
+                        {
+                            "node_id": stale_id,
+                            "relay": None,
+                            "ticket": "bogus-ticket",
+                            "probe_fails": 0,
+                            "misses": UNREACHABLE_MAX_MISSES - 1,
+                        },
+                        # Never dialed successfully before: first miss recorded.
+                        {
+                            "node_id": fresh_id,
+                            "relay": None,
+                            "ticket": "bogus-ticket",
+                            "probe_fails": 0,
+                            "misses": 0,
+                        },
+                        # The genesis anchor is operator config: exempt even
+                        # when it has been silent for a very long time.
+                        {
+                            "node_id": genesis_id,
+                            "relay": None,
+                            "ticket": "bogus-ticket",
+                            "probe_fails": 0,
+                            "misses": 99,
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        # A bogus relay + bogus tickets make every dial fail fast (no 20 s
+        # per-node timeouts); the genesis is passed as operator config.
+        genesis = [(genesis_id, "https://127.0.0.1:1")]
+        r1 = await upd.discover(out, max_nodes=50, genesis=genesis)
+        by_id = {n["node_id"]: n for n in r1["nodes"]}
+        assert stale_id not in by_id, "entry over the miss threshold must be evicted"
+        assert genesis_id in by_id and by_id[genesis_id]["misses"] == 100, \
+            "genesis is exempt from eviction"
+        assert by_id[fresh_id]["misses"] == 1, \
+            f"fresh entry should carry 1 miss, got {by_id[fresh_id]}"
+        print("  run 1: stale entry evicted; fresh miss recorded; genesis kept")
+
+        # Persist run 1 the way main() does (discover() returns the list;
+        # the workflow writes it before the next run reads it back).
+        out.write_text(json.dumps(r1, indent=2) + "\n", encoding="utf-8")
+
+        # A second run reads the file back: counters survive across runs.
+        r2 = await upd.discover(out, max_nodes=50, genesis=genesis)
+        by_id2 = {n["node_id"]: n for n in r2["nodes"]}
+        assert by_id2[fresh_id]["misses"] == 2, \
+            f"misses must accumulate across runs, got {by_id2[fresh_id]}"
+        print("  run 2: misses persisted across runs")
+        print("  EVICTION INTEGRATION OK")
+        return True
+
+
 def main():
     # Layer 1
     test_frame_roundtrip()
@@ -1174,6 +1254,11 @@ def main():
     ok = asyncio.run(_run_probe_integration())
     if not ok:
         print("SKIP: probe integration test — no local connectivity")
+
+    print("\n--- staleness-eviction integration (discover() twice) ---")
+    ok = asyncio.run(_run_eviction_integration())
+    if not ok:
+        print("SKIP: eviction integration test — no local connectivity")
 
     print("\n--- mesh-heal integration ---")
     ok = asyncio.run(_run_mesh_heal_integration())

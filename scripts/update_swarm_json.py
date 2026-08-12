@@ -353,7 +353,7 @@ async def discover(
             *(
                 _dial_one(nid, entry.get("relay"), entry.get("ticket"))
                 for nid, entry in infos.items()
-                if nid not in peers and (entry.get("relay") or entry.get("ticket"))
+                if nid not in targets and (entry.get("relay") or entry.get("ticket"))
             )
         )
 
@@ -370,7 +370,14 @@ async def discover(
             entry["probe_at"] = now_iso
             entry["probe_detail"] = result["detail"]
             entry["probe_ms"] = result["ms"]
-            mark_probe(entry, prev.get(node_id), status="ok" if result["ok"] else "failed")
+            # mark_probe returns a NEW entry carrying the counters — write it
+            # back into infos, or the bookkeeping is silently lost and stale
+            # nodes are never evicted.
+            infos[node_id] = mark_probe(
+                entry,
+                prev.get(node_id),
+                status="ok" if result["ok"] else "failed",
+            )
             tag = "probe ok" if result["ok"] else "probe FAILED"
             print(f"  {tag:14} {node_id[:12]}... {result['detail']} ({result['ms']} ms)", flush=True)
 
@@ -390,7 +397,9 @@ async def discover(
             if not (entry.get("relay") or entry.get("ticket")):
                 entry["probe"] = "skipped"  # nothing to dial — leave untouched
                 continue
-            mark_probe(entry, prev.get(node_id), status="unreachable")
+            entry = infos[node_id] = mark_probe(
+                entry, prev.get(node_id), status="unreachable"
+            )
             entry["probe"] = "unreachable"
             entry["probe_at"] = now_iso
             print(f"  unreachable    {node_id[:12]}...", flush=True)
