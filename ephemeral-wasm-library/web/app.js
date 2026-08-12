@@ -574,7 +574,8 @@ function appendLangReminder(unsupported) {
     `<code>${unsupported.map(esc).join("</code>, <code>")}</code></div>` +
     `<div class="reminder-body">This cluster only runs code declared with a supported ` +
     `language. Supported: ${supported}</div>` +
-    `<div class="reminder-hint">Edit the fence info string (e.g. \`\`\`python) or pick one of the above.</div>`;
+    `<div class="reminder-hint">Edit the fence info string (e.g. \`\`\`python) or pick one of the above.</div>` +
+    `<div class="reminder-note">The \`unsafe\` network flag is not supported on the distributed network — jobs always run sandboxed with no network access.</div>`;
   const box = $("output");
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;

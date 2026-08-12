@@ -130,14 +130,27 @@ textarea { min-height: 150px; resize: vertical; }
 .lang-chip.bad { border-color: #8a5a1e; color: #ffb86b; }
 .lang-chip.file { border-color: #444; color: var(--muted); }
 
+/* Disclaimer directly under the Run buttons. */
 .run-note {
   font-size: 12px;
   color: var(--muted);
   margin: 10px 0 0;
+  border-left: 3px solid var(--err);
+  padding-left: 8px;
 }
-.run-note code {
-  color: #ffb86b;
-  font-weight: 600;
+.run-note .caps {
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--err);
+}
+.run-note strong { color: var(--err); }
+
+.reminder-note {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 8px;
+  border-top: 1px dashed #444;
+  padding-top: 6px;
 }
 
 .actions { display: flex; gap: 10px; margin-top: 10px; }
@@ -310,13 +323,6 @@ details.advanced .advanced-meta code { color: var(--accent-hi); }
   white-space: nowrap;
 }
 
-footer {
-  margin-top: 14px;
-  font-size: 12px;
-  color: var(--muted);
-  text-align: center;
-}
-footer strong { color: var(--err); }
 
 /* Bottom-right link back to the main repo page. */
 .about-link {
