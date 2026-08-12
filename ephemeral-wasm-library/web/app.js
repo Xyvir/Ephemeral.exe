@@ -490,13 +490,13 @@ $("refresh").addEventListener("click", () => { peers.clear(); refreshPeers(); })
 $("clearOutput").addEventListener("click", () => {
   $("output").textContent = "";
 });
-$("copyOutput").addEventListener("click", async () => {
-  const text = $("output").textContent;
+
+// Copy text to the clipboard, then flash the button green. Races the
+// async clipboard API against a timeout: in embedded/iframe contexts
+// writeText() can hang on a permission prompt that never resolves, so it
+// falls back to the synchronous execCommand path.
+async function copyText(text, btn, restoreTitle) {
   if (!text.trim()) return;
-  const btn = $("copyOutput");
-  // Race the async clipboard API against a timeout: in embedded/iframe
-  // contexts writeText() can hang on a permission prompt that never
-  // resolves, so fall back to the synchronous execCommand path.
   const copied = await Promise.race([
     navigator.clipboard.writeText(text).then(() => true).catch(() => false),
     new Promise((resolve) => setTimeout(() => resolve(false), 1000)),
@@ -517,8 +517,19 @@ $("copyOutput").addEventListener("click", async () => {
   btn.title = "Copied";
   setTimeout(() => {
     btn.classList.remove("ok");
-    btn.title = "Copy output";
+    btn.title = restoreTitle;
   }, 1200);
+}
+
+$("copyOutput").addEventListener("click", () => {
+  copyText($("output").textContent, $("copyOutput"), "Copy output");
+});
+$("copyCode").addEventListener("click", () => {
+  copyText(editor.getValue(), $("copyCode"), "Copy code");
+});
+$("clearCode").addEventListener("click", () => {
+  editor.setValue("");
+  updateLangStatus();
 });
 $("sample").addEventListener("click", () => {
   editor.setValue(
