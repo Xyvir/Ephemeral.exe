@@ -322,6 +322,39 @@ async function run() {
 
 $("run").addEventListener("click", run);
 $("refresh").addEventListener("click", () => { peers.clear(); refreshPeers(); });
+$("clearOutput").addEventListener("click", () => {
+  $("output").textContent = "";
+});
+$("copyOutput").addEventListener("click", async () => {
+  const text = $("output").textContent;
+  if (!text.trim()) return;
+  const btn = $("copyOutput");
+  // Race the async clipboard API against a timeout: in embedded/iframe
+  // contexts writeText() can hang on a permission prompt that never
+  // resolves, so fall back to the synchronous execCommand path.
+  const copied = await Promise.race([
+    navigator.clipboard.writeText(text).then(() => true).catch(() => false),
+    new Promise((resolve) => setTimeout(() => resolve(false), 1000)),
+  ]);
+  if (!copied) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    } catch (e) {
+      // give up — still flash so the click feels responsive
+    }
+  }
+  btn.classList.add("ok");
+  btn.title = "Copied";
+  setTimeout(() => {
+    btn.classList.remove("ok");
+    btn.title = "Copy output";
+  }, 1200);
+});
 $("sample").addEventListener("click", () => {
   $("input").value =
     "```python\n" +

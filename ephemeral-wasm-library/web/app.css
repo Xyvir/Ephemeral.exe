@@ -128,6 +128,28 @@ button.secondary:hover { background: #4a4a4a; }
 .tag.seed { background: #2d4a2d; color: var(--ok); }
 .count { color: var(--muted); }
 
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.section-head h2 { margin: 18px 0 8px; }
+.head-actions { display: flex; gap: 2px; margin-bottom: 6px; }
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-radius: 4px;
+  padding: 4px;
+  cursor: pointer;
+}
+.icon-btn:hover { background: #333; color: var(--text); }
+.icon-btn svg { width: 14px; height: 14px; }
+.icon-btn.ok svg { color: var(--ok); }
+
 details.advanced { margin-top: 14px; }
 details.advanced > summary {
   cursor: pointer;
