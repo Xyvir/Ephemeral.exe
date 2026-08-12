@@ -32,11 +32,37 @@ class PeerInfo:
     last_seen: float = 0.0         # time.monotonic() of last contact
 
 
+# How long a peer entry survives without being seen (directly or via
+# gossip) before it is presumed dead and pruned. The maintenance loop
+# re-dials the live swarm every ~60 s, so live nodes refresh constantly
+# and stale ones age out within a few minutes of going quiet. Without
+# this the table only ever grows: every hello re-shares every entry, so
+# a node that died long ago keeps circulating through gossip forever.
+PEER_TTL_SECONDS = 600.0
+
+
 class PeerTable:
     """Thread-safe-by-convention table of known peers (single event loop)."""
 
     def __init__(self) -> None:
         self._peers: dict[str, PeerInfo] = {}
+
+    def prune(self, ttl: float = PEER_TTL_SECONDS) -> int:
+        """Drop peers not seen (directly or via gossip) within ``ttl`` seconds.
+
+        Returns the number of entries evicted. Called on every merge and
+        before every snapshot so stale entries both age out locally and
+        stop propagating to other nodes through hello gossip.
+        """
+        now = time.monotonic()
+        dead = [
+            nid
+            for nid, info in self._peers.items()
+            if now - (info.last_seen or now) > ttl
+        ]
+        for nid in dead:
+            del self._peers[nid]
+        return len(dead)
 
     def merge(self, infos: Iterable[PeerInfo]) -> int:
         """
@@ -70,10 +96,14 @@ class PeerTable:
                 existing.active_jobs = info.active_jobs
                 existing.max_jobs = info.max_jobs
                 existing.last_seen = info.last_seen or now
+        # Evict stale entries after the merge so a dead peer arriving via
+        # gossip can't linger until the next merge call.
+        self.prune()
         return new_count
 
     def snapshot(self) -> list[dict]:
         """Peer entries for embedding in a ``hello`` frame."""
+        self.prune()
         return [
             {
                 "node_id": info.node_id,

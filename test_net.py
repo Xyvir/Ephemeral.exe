@@ -734,6 +734,41 @@ def test_job_messages():
     print("PASS: job message schemas")
 
 
+def test_peer_table_ttl_eviction():
+    """PeerTable prunes entries unseen (direct or gossip) past the TTL, and
+    stale entries never propagate through snapshots."""
+    import time
+
+    from ephemeral_net.discovery import PEER_TTL_SECONDS, PeerInfo, PeerTable
+
+    t = PeerTable()
+    now = time.monotonic()
+    fresh = PeerInfo(node_id="live", relay="https://relay.example/", last_seen=now)
+    t.merge([fresh])
+    assert "live" in t.known_peer_ids()
+
+    # A peer whose last_seen is past the TTL is evicted on the next merge.
+    stale = PeerInfo(
+        node_id="dead",
+        relay="https://relay.example/",
+        last_seen=now - PEER_TTL_SECONDS - 60.0,
+    )
+    t.merge([stale, fresh])  # fresh re-seen now, dead is not
+    assert "live" in t.known_peer_ids()
+    assert "dead" not in t.known_peer_ids()
+
+    # Snapshot also prunes, so a stale entry can never be re-gossiped to
+    # other nodes once the table has gone quiet.
+    t2 = PeerTable()
+    t2.merge([stale])
+    assert len(t2.snapshot()) == 0
+    assert len(t2.known_peer_ids()) == 0
+
+    # Prune is idempotent on an empty table and reports eviction counts.
+    assert t2.prune() == 0
+    print("PASS: peer table TTL eviction")
+
+
 # ---------------------------------------------------------------------------
 # Layer 2: two-node integration test (requires iroh + local connectivity)
 # ---------------------------------------------------------------------------
@@ -1394,6 +1429,7 @@ def main():
     test_fetch_swarm_list_dns()
     test_probe_helpers()
     test_job_messages()
+    test_peer_table_ttl_eviction()
     test_sanitize_strips_unsafe_and_overrides()
     test_sanitize_rejects_unknown_language()
     test_sanitize_operator_network_flag()
