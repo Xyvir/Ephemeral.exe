@@ -1,0 +1,74 @@
+name: Build Wasm Module
+
+# Rebuilds ephemeral-wasm-library for wasm32-unknown-unknown on the GitHub
+# runner (whose clang has the wasm backend — unlike Windows stock LLVM,
+# which is why local rebuilds need wasi-sdk) and commits the regenerated
+# web/wbg glue back so the SPA always ships a wasm that matches main.
+#
+# The SPA needs the wasm IN the repo: app.js imports ./wbg/ephemeral_wasm_library.js,
+# which loads the .wasm, and GitHub Pages serves the static site as-is — there
+# is no separate build step on deploy.
+#
+# Triggers:
+#   * push to main touching ephemeral-wasm-library/** (or this workflow)
+#   * release published (build the exact released source)
+#   * manual workflow_dispatch
+#
+# The bot's own commit (ephemeral-wasm-library/web/wbg) is a GITHUB_TOKEN
+# push, which does not re-trigger workflows, so no recursion. A run where
+# the glue is already current commits nothing.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ephemeral-wasm-library/**"
+      - ".github/workflows/wasm-build.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (wasm32 target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen CLI (pinned prebuilt binary)
+        run: |
+          curl -fsSL \
+            https://github.com/rustwasm/wasm-bindgen/releases/download/0.2.127/wasm-bindgen-0.2.127-x86_64-unknown-linux-musl.tar.gz \
+            | tar xz
+          echo "$(pwd)/wasm-bindgen-0.2.127-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
+
+      - name: Build and generate glue
+        working-directory: ephemeral-wasm-library
+        env:
+          CC_wasm32_unknown_unknown: clang
+          AR_wasm32_unknown_unknown: llvm-ar
+        run: |
+          cargo build --release --target wasm32-unknown-unknown
+          wasm-bindgen --target web --out-dir web/wbg \
+            target/wasm32-unknown-unknown/release/ephemeral_wasm_library.wasm
+
+      - name: Commit and push the regenerated glue
+        shell: bash
+        run: |
+          git config user.name "ephemeral-wasm-bot"
+          git config user.email "actions@github.com"
+          git add ephemeral-wasm-library/web/wbg
+          if git diff --cached --quiet; then
+            echo "wasm glue unchanged — nothing to commit"
+          else
+            git commit -m "wasm: rebuild module for wasm32-unknown-unknown"
+            git pull --rebase --autostash origin main
+            git push origin main
+          fi
