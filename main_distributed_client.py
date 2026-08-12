@@ -41,6 +41,7 @@ import base64
 import ctypes
 import logging
 import os
+from pathlib import Path
 import re
 import shlex
 import shutil
@@ -464,11 +465,23 @@ def toggle_startup(icon, item_unused):
 SERVICE_TASK_NAME = "Ephemeral-Distributed Node"
 
 
+def _service_state_dir() -> Path:
+    """Private state dir for the always-on node.
+
+    The scheduled task runs as SYSTEM, whose ambient home can resolve to
+    the shared ``C:\\Users\\Public`` on Windows — never let node state
+    (secret key, logs) land there. Pin it to a subdir of the installing
+    user's own profile instead; SYSTEM can still read it.
+    """
+    return default_state_dir() / "service"
+
+
 def _service_command() -> str:
     """Command line the scheduled task runs to start the always-on node."""
+    state = _service_state_dir()
     if getattr(sys, "frozen", False):
-        return f'"{sys.executable}" --service'
-    return f'"{sys.executable}" "{os.path.abspath(__file__)}" --service'
+        return f'"{sys.executable}" --service "{state}"'
+    return f'"{sys.executable}" "{os.path.abspath(__file__)}" --service "{state}"'
 
 
 def service_installed() -> bool:
@@ -709,14 +722,24 @@ if __name__ == '__main__':
     if "--service" in sys.argv:
         # Always-on headless node: join the swarm and accept remote jobs.
         # Runs under the scheduled task even while the user is logged off.
-        log_path = default_state_dir() / "service.log"
+        # The installer bakes the user's private state dir into the task
+        # command; use it when present so SYSTEM never writes state to its
+        # own (possibly shared, e.g. C:\Users\Public) home.
+        if len(sys.argv) > 2 and os.path.isabs(sys.argv[2]):
+            service_state = Path(sys.argv[2])
+        else:
+            service_state = default_state_dir()
+        os.environ["EPHEMERAL_STATE_DIR"] = str(service_state)
+        EPHEMERAL_SECRET = load_or_create_secret(service_state / "secret_key.bin")
+        log_path = service_state / "service.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         logging.basicConfig(
             filename=str(log_path), level=logging.INFO,
             format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         )
         logging.getLogger("ephemeral").info(
-            "background node starting (relay=%s)", EPHEMERAL_RELAY)
+            "background node starting (relay=%s, state=%s)",
+            EPHEMERAL_RELAY, service_state)
         # ``start()`` gives the node 10 s to bind and bootstrap; at boot the
         # network may not be up yet, so retry forever instead of dying.
         while True:
