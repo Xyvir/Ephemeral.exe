@@ -30,12 +30,16 @@ Usage:
     python main_distributed_client.py script.md       # One-shot mode
     python main_distributed_client.py --cli script.md # Headless CLI mode
     python main_distributed_client.py --self-check    # Print node id and exit
+    python main_distributed_client.py --service       # Always-on node (background service)
+    python main_distributed_client.py --install-service   # (elevated) register the service
+    python main_distributed_client.py --uninstall-service # (elevated) remove the service
 """
 from __future__ import annotations
 
 import asyncio
 import base64
 import ctypes
+import logging
 import os
 import re
 import shlex
@@ -68,7 +72,12 @@ except ImportError:
 
 import ephemeral_core
 from ephemeral_net.jobs import JobDoneEvent, JobErrorEvent, JobRequest
-from ephemeral_net.swarm import load_or_create_secret, parse_seed_nodes, parse_seeds
+from ephemeral_net.swarm import (
+    default_state_dir,
+    load_or_create_secret,
+    parse_seed_nodes,
+    parse_seeds,
+)
 
 # Reuse the local client's platform plumbing (icon, clipboard, language
 # prompt, artifact routing) so behavior stays identical between tiers.
@@ -447,6 +456,118 @@ def toggle_startup(icon, item_unused):
     set_startup(not is_enabled, icon)
 
 
+# --- Always-on background node (Windows service) -------------------------
+# Installs the back-end (cluster node) as a boot-time scheduled task running
+# as SYSTEM, so the node stays in the swarm even while the user is logged
+# off. The tray app keeps acting as the front end when logged in.
+
+SERVICE_TASK_NAME = "Ephemeral-Distributed Node"
+
+
+def _service_command() -> str:
+    """Command line the scheduled task runs to start the always-on node."""
+    if getattr(sys, "frozen", False):
+        return f'"{sys.executable}" --service'
+    return f'"{sys.executable}" "{os.path.abspath(__file__)}" --service'
+
+
+def service_installed() -> bool:
+    """True when the background-node scheduled task exists for this app."""
+    if sys.platform != "win32":
+        return False
+    try:
+        out = subprocess.run(
+            ["schtasks", "/Query", "/TN", SERVICE_TASK_NAME, "/FO", "LIST", "/V"],
+            capture_output=True, text=True, timeout=15, startupinfo=get_startupinfo(),
+        )
+    except Exception:
+        return False
+    if out.returncode != 0:
+        return False
+    # Guard against a stale task pointing at a moved/old exe path.
+    needle = sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__)
+    return os.path.basename(needle) in out.stdout
+
+
+def _elevate(*args: str) -> None:
+    """Re-launch this app elevated (UAC prompt) for a privileged action."""
+    if sys.platform != "win32" or not HAS_WINREG:
+        return
+    if getattr(sys, "frozen", False):
+        params = " ".join(args)
+        target = sys.executable
+    else:
+        params = f'"{os.path.abspath(__file__)}" {" ".join(args)}'
+        target = sys.executable
+    ctypes.windll.shell32.ShellExecuteW(None, "runas", target, params, None, 1)
+
+
+def _service_feedback(message: str, error: bool = False) -> int:
+    """Surface install/uninstall results from the windowless elevated child."""
+    try:
+        ctypes.windll.user32.MessageBoxW(
+            None, message,
+            "Ephemeral-Distributed" + (" - Error" if error else ""),
+            0x10 if error else 0x40,
+        )
+    except Exception:
+        pass
+    return 1 if error else 0
+
+
+def install_service() -> int:
+    """Create a scheduled task that runs the node at boot as SYSTEM."""
+    task = subprocess.run(
+        ["schtasks", "/Create", "/TN", SERVICE_TASK_NAME,
+         "/TR", _service_command(), "/SC", "ONSTART", "/RU", "SYSTEM",
+         "/RL", "HIGHEST", "/F"],
+        capture_output=True, text=True, timeout=60, startupinfo=get_startupinfo(),
+    )
+    if task.returncode != 0:
+        return _service_feedback(
+            f"Failed to install the background node:\n"
+            f"{task.stderr.strip() or task.stdout.strip()}",
+            error=True,
+        )
+    # Start it immediately so it takes effect now, not just after reboot.
+    subprocess.run(["schtasks", "/Run", "/TN", SERVICE_TASK_NAME],
+                   capture_output=True, text=True, timeout=30,
+                   startupinfo=get_startupinfo())
+    return _service_feedback(
+        "Background node installed and started.\n"
+        "It will also run automatically at every boot (even while logged off)."
+    )
+
+
+def uninstall_service() -> int:
+    """Stop and remove the background-node scheduled task."""
+    subprocess.run(["schtasks", "/End", "/TN", SERVICE_TASK_NAME],
+                   capture_output=True, text=True, timeout=30,
+                   startupinfo=get_startupinfo())
+    task = subprocess.run(["schtasks", "/Delete", "/TN", SERVICE_TASK_NAME, "/F"],
+                          capture_output=True, text=True, timeout=30,
+                          startupinfo=get_startupinfo())
+    if task.returncode != 0:
+        return _service_feedback(
+            f"Failed to remove the background node:\n"
+            f"{task.stderr.strip() or task.stdout.strip()}",
+            error=True,
+        )
+    return _service_feedback("Background node removed.")
+
+
+def on_install_service(icon, item_unused=None):
+    _elevate("--install-service")
+    icon.notify("Approve the UAC prompt to install the always-on background node.",
+                title="Ephemeral")
+
+
+def on_uninstall_service(icon, item_unused=None):
+    _elevate("--uninstall-service")
+    icon.notify("Approve the UAC prompt to remove the background node.",
+                title="Ephemeral")
+
+
 def purge_cache(icon, item_unused):
     icon.notify("Pruning unused images... this may take a moment.", title="Ephemeral Maintenance")
     startupinfo = get_startupinfo()
@@ -579,6 +700,40 @@ if __name__ == '__main__':
     if "--self-check" in sys.argv:
         sys.exit(self_check())
 
+    # Privileged service management (run via the UAC-elevated child).
+    if "--install-service" in sys.argv:
+        sys.exit(install_service())
+    if "--uninstall-service" in sys.argv:
+        sys.exit(uninstall_service())
+
+    if "--service" in sys.argv:
+        # Always-on headless node: join the swarm and accept remote jobs.
+        # Runs under the scheduled task even while the user is logged off.
+        log_path = default_state_dir() / "service.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        logging.basicConfig(
+            filename=str(log_path), level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+        logging.getLogger("ephemeral").info(
+            "background node starting (relay=%s)", EPHEMERAL_RELAY)
+        # ``start()`` gives the node 10 s to bind and bootstrap; at boot the
+        # network may not be up yet, so retry forever instead of dying.
+        while True:
+            try:
+                cluster.start()
+                break
+            except Exception as e:
+                logging.getLogger("ephemeral").exception(
+                    "background node start failed (%s); retrying in 30s", e)
+                time.sleep(30)
+        logging.getLogger("ephemeral").info(
+            "background node started: node_id=%s",
+            cluster.node.node_id() if cluster.node else "?",
+        )
+        while True:
+            time.sleep(3600)
+
     # Start the cluster node before doing anything else.
     try:
         cluster.start()
@@ -618,6 +773,10 @@ if __name__ == '__main__':
         menu = (
             item('Run Clipboard', lambda icon, i: on_hotkey(icon), default=True),
             item('Install && Run on Boot', toggle_startup, checked=lambda item: check_startup()),
+            item('Install Background Service', on_install_service,
+                 visible=lambda i: sys.platform == 'win32' and not service_installed()),
+            item('Uninstall Background Service', on_uninstall_service,
+                 visible=lambda i: sys.platform == 'win32' and service_installed()),
             item('Force Stop All Runs', force_stop_all),
             item('Clear Image Cache', purge_cache),
             item('Cluster Status', on_cluster_info),
