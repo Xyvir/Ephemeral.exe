@@ -1,6 +1,21 @@
 {
-  "updated": "2026-08-12T15:37:57Z",
+  "updated": "2026-08-12T15:42:47Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
-  "nodes": []
+  "nodes": [
+    {
+      "node_id": "3006f2d2e520682828a849ab89960da65027d0de902aa529a803f707d1841eed",
+      "relay": "https://use1-1.relay.n0.iroh.link./",
+      "ticket": "endpointaayan4ws4uqgqkbivbe2xcmwbwtfaj6q32icvjjjvab7ob6rqqpo2ayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacuaaabl5yqcaeachpgxtw7oeaq",
+      "images": [],
+      "probe": "failed",
+      "probe_at": "2026-08-12T15:42:47Z",
+      "probe_detail": "output did not contain the probe nonce",
+      "probe_ms": 833,
+      "probe_fails": 1,
+      "misses": 0,
+      "seen_alive": true,
+      "rtt_ms": 2867
+    }
+  ]
 }
