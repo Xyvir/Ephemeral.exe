@@ -629,7 +629,7 @@ The thin-client SPA (`ephemeral-wasm-library/web/`) is fully static — the comp
 
 1. **Settings → Pages** → *Source: Deploy from a branch* → branch `main`, folder **`/` (root)** — the whole repo is served, so `ephemeral-wasm-library/web/` is reachable.
 2. The root `.nojekyll` skips Jekyll processing (it would otherwise mangle the repo's files).
-3. The bare site URL (`https://<owner>.github.io/Ephemeral.exe/`) lands on `docs/index.html`, which redirects straight to the SPA at `ephemeral-wasm-library/web/`.
+3. The bare site URL (`https://<owner>.github.io/Ephemeral.exe/`) lands on the root `index.html`, which redirects straight to the SPA at `ephemeral-wasm-library/web/` (hitting `/docs/` directly works too — `docs/index.html` redirects the same way).
 
 > **Note:** don't select the `/docs` folder as the Pages source — a `/docs`-only deploy publishes *just* that folder, so the redirect target (the SPA elsewhere in the repo) would 404.
 
