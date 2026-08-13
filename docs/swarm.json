@@ -1,12 +1,12 @@
 {
-  "updated": "2026-08-12T19:08:21Z",
+  "updated": "2026-08-13T01:32:00Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "3006f2d2e520682828a849ab89960da65027d0de902aa529a803f707d1841eed",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaayan4ws4uqgqkbivbe2xcmwbwtfaj6q32icvjjjvab7ob6rqqpo2ayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacuaaabmhricaeachpgxtxb4kaq",
+      "relay": "https://usw1-1.relay.n0.iroh.link./",
+      "ticket": "endpointaayan4ws4uqgqkbivbe2xcmwbwtfaj6q32icvjjjvab7ob6rqqpo2ayaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacuaaabmhricaeachpgxtxb4kaq",
       "images": [
         "docker.io/esolang/cobol:latest",
         "docker.io/library/alpine:latest",
@@ -15,23 +15,12 @@
       ],
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-12T19:08:21Z",
+      "probe_at": "2026-08-13T01:32:00Z",
       "probe_detail": "ok",
-      "probe_ms": 4688,
+      "probe_ms": 8583,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 656
-    },
-    {
-      "node_id": "cbaf6e05be51d2f52f7e7503be1a954b58d09f191e3beaaa7c9640c15033a3f8",
-      "relay": null,
-      "ticket": "endpointadf263qfxzi5f5jppz2qhpq2svfvrue7depdx2vkpslebqkqgor7qaa",
-      "images": [],
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-12T19:08:21Z"
+      "rtt_ms": 6223
     }
   ]
 }
