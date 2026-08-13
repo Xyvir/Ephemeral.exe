@@ -1,5 +1,5 @@
 {
-  "updated": "2026-08-13T07:42:24Z",
+  "updated": "2026-08-13T13:23:24Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
@@ -15,12 +15,23 @@
       ],
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-13T07:42:24Z",
+      "probe_at": "2026-08-13T13:23:24Z",
       "probe_detail": "ok",
-      "probe_ms": 8848,
+      "probe_ms": 10187,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 106
+      "rtt_ms": 6086
+    },
+    {
+      "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
+      "relay": "https://use1-1.relay.n0.iroh.link./",
+      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidaayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs73vfqdaeambkaacs5jmay",
+      "images": [],
+      "probe_fails": 0,
+      "misses": 3,
+      "seen_alive": true,
+      "probe": "unreachable",
+      "probe_at": "2026-08-13T13:23:24Z"
     },
     {
       "node_id": "ad2599506ffbde7dd0785650529ac14b41f7ab2d4f5591fde22bb7c267153c9e",
@@ -28,35 +39,10 @@
       "ticket": "endpointacwslgkqn75547oqpblfauu2yffud55lfvhvlep54iv3pqthcu6j4baaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs77luycaeaevjzmx6yoaaybadakqaauwdqag",
       "images": [],
       "probe_fails": 2,
-      "seen_alive": true,
-      "probe": "failed",
-      "probe_at": "2026-08-13T07:42:24Z",
-      "probe_detail": "probe failed: offload to neighbor failed: ",
-      "probe_ms": 164,
-      "misses": 0,
-      "rtt_ms": 3021
-    },
-    {
-      "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidaayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs73vfqdaeambkaacs5jmay",
-      "images": [],
-      "misses": 2,
-      "seen_alive": true,
-      "probe_fails": 0,
-      "probe": "unreachable",
-      "probe_at": "2026-08-13T07:42:24Z"
-    },
-    {
-      "node_id": "bd4b48d61af90dfd09974e387635ef9ed5dda58c3a6c50b7f3f200a00012f2c2",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointac6uwsgwdl4q37ijs5hdq5rv56pnlxnfrq5gyufx6pzabiaaclzmebaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbadk7b6icaeacqtdv5cmmaaybacwbcaab6d4qe",
-      "images": [],
-      "probe_fails": 0,
       "misses": 1,
-      "seen_alive": false,
+      "seen_alive": true,
       "probe": "unreachable",
-      "probe_at": "2026-08-13T07:42:24Z"
+      "probe_at": "2026-08-13T13:23:24Z"
     }
   ]
 }
