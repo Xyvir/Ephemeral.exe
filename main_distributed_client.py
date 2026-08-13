@@ -815,7 +815,12 @@ def install_service() -> int:
 
 
 def uninstall_service() -> int:
-    """Stop and remove the background-node scheduled task."""
+    """Stop and remove the background-node scheduled task.
+
+    Also disables login autostart ("Install && Run on Boot") and deletes
+    the staged exe under LOCALAPPDATA, so uninstalling the service leaves
+    no task, no autostart entry, and no orphaned binary behind.
+    """
     subprocess.run(["schtasks", "/End", "/TN", SERVICE_TASK_NAME],
                    capture_output=True, text=True, timeout=30,
                    startupinfo=get_startupinfo())
@@ -828,9 +833,14 @@ def uninstall_service() -> int:
             f"{task.stderr.strip() or task.stdout.strip()}",
             error=True,
         )
-    # The staged exe (LOCALAPPDATA) is left in place: it is also the
-    # target of "Install && Run on Boot", and removing it would silently
-    # break that entry. Reinstalling the service refreshes the copy anyway.
+    # Full cleanup: drop the login-autostart entry (its target would
+    # otherwise dangle) and delete the staged exe. set_startup(False)
+    # already removes the HKCU Run value and the staged file, deferring
+    # deletion to the next reboot if the binary is still locked.
+    try:
+        set_startup(False)
+    except Exception as e:
+        print(f"Failed to clean up startup entry: {e}")
     return _service_feedback("Background node removed.")
 
 
