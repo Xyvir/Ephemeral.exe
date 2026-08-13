@@ -169,6 +169,18 @@ class Cluster:
     # --- lifecycle -------------------------------------------------------
 
     def start(self) -> None:
+        if self.node is not None:
+            return
+        if self._thread is not None and self._thread.is_alive():
+            # A bootstrap is already running in the background (e.g. the
+            # launch warmup) — wait for it to settle rather than spawn a
+            # second node/loop on top of it.
+            for _ in range(200):
+                if self.node is not None or self._start_error is not None:
+                    return
+                time.sleep(0.05)
+            raise RuntimeError("timed out starting the cluster node")
+        self._start_error = None  # clear any previous failure
         self.loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run_loop, name="ephemeral-cluster", daemon=True)
         self._thread.start()
@@ -241,6 +253,8 @@ class Cluster:
         except Exception:
             pass
         self.loop.call_soon_threadsafe(self.loop.stop)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
 
     # --- job submission --------------------------------------------------
 
@@ -338,10 +352,26 @@ def run_through_cluster(blob: str, timeout: int) -> dict:
     return result
 
 
+_cluster_start_lock = threading.Lock()
+
+
 def _ensure_cluster() -> None:
     """Start the tray's own node (standalone fallback), if not already up."""
-    if cluster.node is None:
+    if cluster.node is not None:
+        return
+    with _cluster_start_lock:
+        if cluster.node is not None:
+            return
         cluster.start()
+
+
+def _warmup_cluster() -> None:
+    """Best-effort background warmup so the node joins the swarm at launch."""
+    try:
+        _ensure_cluster()
+    except Exception as e:
+        # Non-fatal — the first job retries via _ensure_cluster().
+        print(f"Cluster warmup failed (will retry on first job): {e}")
 
 
 def service_available() -> bool:
@@ -1323,15 +1353,16 @@ if __name__ == '__main__':
 
     # Hybrid identity: prefer the installed background node (one identity
     # per machine — thin client). Only when no service is reachable do we
-    # start the tray's own node, preserving the zero-admin standalone
+    # run the tray's own node, preserving the zero-admin standalone
     # behavior of the original client.
     service_ok = service_available()
     if not service_ok:
-        try:
-            cluster.start()
-        except Exception as e:
-            print(f"Cluster start failed: {e}")
-            sys.exit(1)
+        # Warm the node up in the BACKGROUND — never block the tray icon on
+        # cluster bootstrap. A slow relay/DNS/swarm dial (or a stale swarm
+        # entry) can exceed the 10 s start window; before, that delayed the
+        # icon or, on timeout, silently killed the process before pystray
+        # ever ran. The first job retries via _ensure_cluster().
+        threading.Thread(target=_warmup_cluster, name="ephemeral-warmup", daemon=True).start()
 
     if len(sys.argv) > 1 and os.path.exists(sys.argv[-1]):
         file_target = sys.argv[-1]
