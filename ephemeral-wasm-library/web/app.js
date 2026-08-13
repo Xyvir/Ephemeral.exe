@@ -368,10 +368,34 @@ function resultElement(text) {
 
 function appendResult(text) {
   $("output").appendChild(resultElement(text));
+  addCopyButtons($("output"));
   // Keep the raw markdown source so Copy output pastes the unformatted
   // version (headers + fences), not the flattened rendered text.
   outputRaw += (text.endsWith("\n") ? text : text + "\n") + "\n";
   $("output").scrollTop = $("output").scrollHeight;
+}
+
+// Attach a small copy button to each rendered code block (idempotent).
+// It copies just the code contents — not the fence markers.
+function addCopyButtons(root) {
+  root.querySelectorAll("pre.code-block").forEach((pre) => {
+    if (pre.querySelector(".block-copy")) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "block-copy";
+    btn.title = "Copy code";
+    btn.setAttribute("aria-label", "Copy code");
+    btn.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+      'stroke-linecap="round" stroke-linejoin="round">' +
+      '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>' +
+      '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+    btn.addEventListener("click", () => {
+      const code = pre.querySelector("code");
+      copyText(code ? code.textContent : pre.textContent, btn, "Copy code");
+    });
+    pre.appendChild(btn);
+  });
 }
 
 // --- interleaved view ------------------------------------------------------
@@ -483,6 +507,7 @@ function renderInterleaved() {
       }
     }
   }
+  addCopyButtons(box);
   box.scrollTop = box.scrollHeight;
 }
 
@@ -492,6 +517,7 @@ function renderNormal() {
   box.textContent = "";
   box.classList.remove("interleaved");
   if (lastOutputRaw) box.appendChild(resultElement(lastOutputRaw));
+  addCopyButtons(box);
   box.scrollTop = box.scrollHeight;
 }
 
