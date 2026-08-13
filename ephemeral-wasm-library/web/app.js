@@ -225,6 +225,25 @@ function setStatus(text, cls) {
   el.className = "status" + (cls ? " " + cls : "");
 }
 
+// PUBLIC / PRIVATE network indicator: a `#seed=` link puts the SPA in
+// private mode (public swarm skipped), which flips the header badge and
+// the disclaimer under the Run button.
+function setMode(privateMode) {
+  const modeEl = $("mode");
+  const noteEl = $("runNote");
+  if (privateMode) {
+    modeEl.textContent = "PRIVATE";
+    modeEl.className = "mode mode-private";
+    noteEl.className = "run-note private";
+    noteEl.innerHTML = "<strong class=\"caps\">Private network</strong> — jobs run only on the node(s) you connected to, not the public swarm.";
+  } else {
+    modeEl.textContent = "PUBLIC";
+    modeEl.className = "mode mode-public";
+    noteEl.className = "run-note";
+    noteEl.innerHTML = "<strong class=\"caps\">Public network</strong> — anything you submit is <strong>public knowledge</strong>. No privacy guarantee. For private use, self-host.";
+  }
+}
+
 // Spin the icon inside the Run button (and disable the button) while a
 // job is in flight — cleared when the whole job finishes, not per result
 // block. Disabling doubles as debounce: a disabled button swallows clicks,
@@ -531,6 +550,7 @@ async function refreshPeers() {
 // Split `node_id@relay_url` into { node_id, relay }; null when the value
 // isn't that shape (e.g. a bare EndpointTicket).
 function splitNodeAtRelay(seed) {
+  if (!seed) return null;
   const at = seed.indexOf("@");
   if (at <= 0) return null;
   const node_id = seed.slice(0, at).trim();
@@ -585,6 +605,7 @@ async function start() {
     urlBootstrap.relay = url.relay;
     localStorage.setItem("ephemeral.relay", url.relay);
   }
+  setMode(!!url.seed);
   $("ticket").value = localStorage.getItem("ephemeral.ticket") || "";
   $("relay").value = localStorage.getItem("ephemeral.relay") || BOOTSTRAP.relay || "";
   setStatus("loading wasm…");

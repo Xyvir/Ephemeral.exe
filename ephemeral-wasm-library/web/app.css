@@ -48,6 +48,20 @@ h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: v
 .status { color: var(--muted); }
 .status.err { color: var(--err); }
 
+/* PUBLIC / PRIVATE network badge in the header (flipped by #seed=). */
+.mode {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  line-height: 1;
+}
+.mode-public { color: #e6a23c; border: 1px solid #e6a23c; }
+.mode-private { color: var(--ok); border: 1px solid var(--ok); }
+
 section {
   background: var(--panel);
   border: 1px solid #333;
@@ -147,6 +161,9 @@ textarea { min-height: 150px; resize: vertical; }
   color: var(--err);
 }
 .run-note strong { color: var(--err); }
+.run-note.private { border-left-color: var(--ok); }
+.run-note.private .caps,
+.run-note.private strong { color: var(--ok); }
 
 /* Red note shown in the output only when `unsafe` was actually tried. */
 .unsafe-note {
