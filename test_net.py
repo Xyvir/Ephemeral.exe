@@ -375,6 +375,31 @@ def test_offload_runs_locally_when_no_warm_neighbor():
     asyncio.run(run())
     print("PASS: offload runs locally when no neighbor has the image")
 
+
+def test_offload_falls_back_to_local_when_forward_fails():
+    from ephemeral_net.offload import OffloadingExecutor
+
+    class _FailNode(_FakeNode):
+        async def submit_job(self, peer, request):
+            self.submitted += 1
+            if False:  # pragma: no cover - keep this an async generator
+                yield
+            raise RuntimeError("dial timed out")
+
+    async def run():
+        local = _FakeLocal([PY_IMG], warm=set(), events=_events)
+        node = _FailNode(peer=_FakePeer(images={PY_IMG}))
+        ex = OffloadingExecutor(node, local)
+        req = JobRequest(job_id="j", document_blob="")
+        events = [e async for e in ex(req)]
+        # A failed neighbor forward must not fail the job — run locally.
+        assert any(e.data == b"local\n" for e in events if hasattr(e, "data"))
+        assert node.submitted == 1
+        await asyncio.sleep(0.05)  # let the background pull task settle
+
+    asyncio.run(run())
+    print("PASS: offload falls back to local when the neighbor forward fails")
+
 # --- busy/idle routing unit tests (no iroh required) -------------------
 
 class _RP:

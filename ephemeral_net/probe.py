@@ -184,7 +184,10 @@ async def run_probe(
     except asyncio.TimeoutError:
         detail = f"probe timed out after {int(timeout)}s"
     except Exception as e:
-        detail = f"probe failed: {e}"
+        # Include the exception type and fall back to repr() for errors
+        # whose str() is empty (e.g. a bare TimeoutError), so the swarm
+        # list never records an uninformative "probe failed: " with no cause.
+        detail = f"probe failed ({type(e).__name__}): {str(e).strip() or repr(e)}"
     return {"ok": ok, "detail": detail, "ms": round((time.monotonic() - started) * 1000)}
 
 

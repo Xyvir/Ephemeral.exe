@@ -11,8 +11,9 @@ not have cached locally, it must not block on a slow pull. Instead it:
 
 If no neighbor has the image warm, the node runs the job locally and
 lets ``ephemeral_core``'s ``server_mode`` background-pull behavior
-report the delay. If every required image is already warm locally, the
-job runs locally immediately.
+report the delay. If the forward to a neighbor fails, the node also
+falls back to running locally instead of failing the job. If every
+required image is already warm locally, the job runs locally immediately.
 
 ``OffloadingExecutor`` wraps a local :class:`CoreJobExecutor` (or any
 executor exposing ``prepare(request)``, ``is_warm(image)``, and the
@@ -25,7 +26,7 @@ import asyncio
 import logging
 from typing import AsyncIterator
 
-from .jobs import JobErrorEvent, JobEvent, JobRequest
+from .jobs import JobEvent, JobRequest
 
 logger = logging.getLogger(__name__)
 
@@ -95,20 +96,28 @@ class OffloadingExecutor:
                 peer.node_id[:8],
                 missing,
             )
+            yielded = False
             try:
                 async for event in self.node.submit_job(peer, request):
+                    yielded = True
                     yield event
                 return
             except Exception as e:
-                logger.exception("offload of %s to %s failed", request.job_id, peer.node_id)
-                yield JobErrorEvent(
-                    message=f"offload to neighbor failed: {e}",
-                    job_id=request.job_id,
+                if yielded:
+                    # A partial stream already reached the requester — re-running
+                    # locally would duplicate it. Surface the failure instead.
+                    logger.exception(
+                        "offload of %s to %s failed mid-stream",
+                        request.job_id, peer.node_id[:8],
+                    )
+                    raise
+                logger.exception(
+                    "offload of %s to %s failed (%s); running locally",
+                    request.job_id, peer.node_id[:8], e,
                 )
-                return
 
-        # No warm neighbor: run locally (server_mode background-pulls and
-        # reports the delay in the response).
+        # No warm neighbor (or the forward failed): run locally
+        # (server_mode background-pulls and reports the delay).
         async for event in self.local(request):
             yield event
 
