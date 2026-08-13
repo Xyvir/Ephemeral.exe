@@ -1054,17 +1054,86 @@ def _prehydrate_bash(timeout: int = 300) -> bool:
         return False
 
 
-def _elevate(*args: str) -> None:
-    """Re-launch this app elevated (UAC prompt) for a privileged action."""
+def _elevate(*args: str) -> int | None:
+    """Re-launch this app elevated (UAC prompt) for a privileged action.
+
+    Returns the elevated child's process handle (or ``None`` when
+    elevation didn't start — non-Windows, or the user denied the prompt),
+    so callers can wait for it instead of guessing.
+    """
     if sys.platform != "win32" or not HAS_WINREG:
-        return
+        return None
     if getattr(sys, "frozen", False):
         params = " ".join(args)
         target = sys.executable
     else:
         params = f'"{os.path.abspath(__file__)}" {" ".join(args)}'
         target = sys.executable
-    ctypes.windll.shell32.ShellExecuteW(None, "runas", target, params, None, 1)
+
+    class _SEI(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", ctypes.c_ulong),
+            ("fMask", ctypes.c_ulong),
+            ("hwnd", ctypes.c_void_p),
+            ("lpVerb", ctypes.c_wchar_p),
+            ("lpFile", ctypes.c_wchar_p),
+            ("lpParameters", ctypes.c_wchar_p),
+            ("lpDirectory", ctypes.c_wchar_p),
+            ("nShow", ctypes.c_int),
+            ("hInstApp", ctypes.c_void_p),
+            ("lpIDList", ctypes.c_void_p),
+            ("lpClass", ctypes.c_wchar_p),
+            ("hkeyClass", ctypes.c_void_p),
+            ("dwHotKey", ctypes.c_ulong),
+            ("hIcon", ctypes.c_void_p),
+            ("hProcess", ctypes.c_void_p),
+        ]
+
+    sei = _SEI()
+    sei.cbSize = ctypes.sizeof(_SEI)
+    sei.fMask = 0x00000040  # SEE_MASK_NOCLOSEPROCESS
+    sei.lpVerb = "runas"
+    sei.lpFile = target
+    sei.lpParameters = params
+    sei.nShow = 1
+    if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(sei)):
+        return None
+    return sei.hProcess or None
+
+
+def _wait_for_service_change(icon, *, installed: bool, child=None, timeout: float = 30.0) -> None:
+    """Block until the service marker flips, then rebuild the tray menu.
+
+    pystray's win32 backend caches the menu (``checked`` is evaluated once,
+    at startup — reopening it never re-evaluates), so the Background
+    Service box only appeared after restarting the app. The elevated child
+    writes/removes the marker early (before the slow bash pre-hydration),
+    so we poll briefly for the flip and then force ``update_menu()`` to
+    rebuild — the checkmark updates in-session, no restart needed.
+
+    Runs on the tray's UI thread; bounded by ``timeout`` and by the
+    elevated child's exit (covers a denied UAC prompt).
+    """
+    deadline = time.monotonic() + timeout
+    kernel32 = ctypes.windll.kernel32
+    while time.monotonic() < deadline:
+        if service_installed() == installed:
+            break
+        # Handle must be pointer-sized (a 64-bit HANDLE truncated to a C
+        # int would corrupt the wait).
+        if child is not None and kernel32.WaitForSingleObject(ctypes.c_void_p(child), 0) == 0:
+            break  # elevated child exited (denied UAC or failure)
+        time.sleep(0.25)
+    if child is not None:
+        kernel32.CloseHandle(ctypes.c_void_p(child))
+    try:
+        if HAS_GUI and icon is not None:
+            if hasattr(icon, "update_menu"):
+                icon.update_menu()
+            else:
+                icon.menu = icon.menu  # older pystray: rebuild via setter
+    except Exception:
+        pass
 
 
 def _service_feedback(message: str, error: bool = False) -> int:
@@ -1190,15 +1259,17 @@ def uninstall_service() -> int:
 
 
 def on_install_service(icon, item_unused=None):
-    _elevate("--install-service")
+    child = _elevate("--install-service")
     icon.notify("Approve the UAC prompt to install the always-on background node.",
                 title="Ephemeral")
+    _wait_for_service_change(icon, installed=True, child=child)
 
 
 def on_uninstall_service(icon, item_unused=None):
-    _elevate("--uninstall-service")
+    child = _elevate("--uninstall-service")
     icon.notify("Approve the UAC prompt to remove the background node.",
                 title="Ephemeral")
+    _wait_for_service_change(icon, installed=False, child=child)
 
 
 def toggle_service(icon, item_unused=None):
