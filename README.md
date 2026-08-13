@@ -46,6 +46,12 @@ The fastest way to experience Ephemeral needs no install at all — it's a web p
 
 The client speaks the same wire protocol as every other tier, so your Markdown codeblocks run in the same sandboxed containers on real cluster nodes, with the full language map and artifact support (technical details in [Web thin client](#web-thin-client-ephemeral-wasm-library)).
 
+### Self-Directed Learners & Code Golfers
+
+The privacy calculus flips when you're learning on your own: with no institution, no FERPA, and no grade to protect, the public swarm stops being a liability and becomes what it actually is — a **free, zero-setup lab bench**. Tweak, break, and iterate on real codeblocks in the live language map, submit experiments from anywhere with a browser, and move at your own pace. Nothing to install, pay for, or sign up to.
+
+It's also a natural home for **code golfers and esolang enthusiasts**. The language map ships a full esoteric shelf — **Brainfuck, Lolcode, Piet, GolfScript, CJam, 05AB1E, Shakespeare, Fish (`><>`),** and more — each running in its own disposable container. Golf a snippet and verify it byte-for-byte against the real interpreter with zero toolchain setup.
+
 ---
 
 ## Philosophy
@@ -640,6 +646,8 @@ Ephemeral's privacy is a **deployment choice**, not a feature toggle: where the 
 "Zero setup" applies to the **browser client**, and only because it executes nothing locally — it ships the code somewhere. On Windows, private local execution costs a one-time WSL2 + Podman setup; no configuration is both zero-setup *and* offline. And that one-time setup buys **every language, forever**: once Podman is there, a language is just a container — the built-in map covers ~50 out of the box, and anything else that runs dockerized can be added on request. **One setup, all languages, forever.**
 
 The **professor gateway** is the classroom sweet spot: students get the zero-setup browser client, and their code lands only on a server you control — encrypted end-to-end (iroh relays are blind forwarders), the same trust model as submitting homework to an LMS.
+
+The **public swarm** is only a non-starter for *graded* work. For **self-directed learners** there's no institution to answer to, so the privacy trade-off vanishes and what remains is a free, zero-setup lab bench for experimenting and iterating (see [Self-Directed Learners & Code Golfers](#self-directed-learners--code-golfers)).
 
 **Stand up a classroom node in four steps:**
 
