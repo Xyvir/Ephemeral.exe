@@ -1,10 +1,10 @@
 # Ephemeral.exe
 
+![Live swarm nodes](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FXyvir%2FEphemeral.exe%2Fmain%2Fdocs%2Fswarm-status.json&label=live%20nodes)
+
 **Ephemeral** is a **zero-friction, zero-barrier** way to run code — built for students, teachers, and analysts in math, engineering, and data science. It is a **one-shot** sandboxed code-execution engine that parses Markdown for codeblocks, runs them in isolated Podman containers, and extracts generated artifacts — a **literate-programming alternative to Jupyter notebooks** where the codeblocks live inside your **plaintext Markdown**, not a heavyweight notebook format. Rather than acting as a long-running daemon or task scheduler, it is a stateless, on-demand processing pipeline: highlight code in your notes, run it, paste the result back. It ships as a **Windows tray app**, a **Linux AppImage**, a **browser WebAssembly thin client**, and a **FastAPI server** (for remote sidecar execution), and it can run standalone or as a node in a peer-to-peer distributed compute network.
 
 ![Ephemeral Demo](ephemeral.gif)
-
-![Live swarm nodes](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FXyvir%2FEphemeral.exe%2Fmain%2Fdocs%2Fswarm-status.json)
 
 ---
 
