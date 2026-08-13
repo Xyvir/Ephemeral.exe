@@ -653,7 +653,7 @@ The **public swarm** is only a non-starter for *graded* work. For **self-directe
 
 **Stand up a classroom node:**
 
-**The easy way — desktop tray.** Run **`Ephemeral-Distributed.exe`** (Windows) or the distributed AppImage (Linux), right-click the tray icon → **Private Mode**, and the node leaves the public swarm and becomes its own seed. It copies the student URL to your clipboard (also listed under *About* while enabled) — hand that link out:
+**The recommended way — desktop tray.** Run **`Ephemeral-Distributed.exe`** (Windows) or the distributed AppImage (Linux), right-click the tray icon → **Private Mode**, and the node leaves the public swarm and becomes its own seed. It copies the student URL to your clipboard (also listed under *About* while enabled) — hand that link out:
 
 ```text
 https://xyvir.github.io/Ephemeral.exe/#seed=<the node's seed ticket>
