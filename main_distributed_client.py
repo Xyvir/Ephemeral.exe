@@ -3,12 +3,15 @@ Ephemeral Distributed Client — Windows tray application (``ephemeral-distribut
 
 A portable Windows tray utility packaged with the ``iroh`` Python extension.
 
-Two-identity model: the tray always runs its own compute node — no admin,
-no service required — exactly like the original client. The always-on
-background node (``--service``, installed from the tray menu) is a separate,
-independent node that keeps the machine in the swarm even while the user is
-logged off; the two never share an identity. Either way it runs
-clipboard-driven code with intelligent nearest-neighbor offloading:
+Merged-identity model: one node per machine. When the background service
+(``--service``, installed from the tray menu) is installed, the tray is a
+thin front-end to it — jobs run through the always-on node, so every user
+on the box shares the one identity and the one warm image cache. The
+decision is lazy and marker-based (never a launch-time probe): if the
+service is unreachable at job time, the tray falls back to running its own
+compute node for that job — no admin, no service required, always works.
+Either way it runs clipboard-driven code with intelligent nearest-neighbor
+offloading:
 
 * jobs execute through the node's sandboxed executor (image allowlist,
   ``unsafe`` stripped, hard container limits) — locally when the image is
@@ -44,7 +47,8 @@ Usage:
     python main_distributed_client.py --uninstall-service # (elevated) remove the service
 
 Localhost control API (in ``--service`` mode): the background node listens
-on ``127.0.0.1:8788`` (override ``EPHEMERAL_SERVICE_PORT``) exposing
+on ``127.0.0.1`` (``EPHEMERAL_SERVICE_PORT``, default 8788; auto-picked
+when taken and persisted for tray discovery) exposing
 ``GET /health`` (plus the job/artifact/private endpoints) for diagnostics
 and curl-based control.
 """
@@ -66,6 +70,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -142,8 +147,27 @@ EPHEMERAL_ALLOW_NETWORK = os.getenv("EPHEMERAL_ALLOW_NETWORK", "0") == "1"
 # tray's "Private Mode" menu item).
 
 # Localhost port the background node's control API listens on (in
-# ``--service`` mode) — kept for diagnostics and curl-based control.
+# ``--service`` mode) — kept for diagnostics and curl-based control. The
+# actual port is dynamic: the service tries this one, scans up, then lets
+# the OS assign one, and persists the winner for tray discovery.
 SERVICE_PORT = int(os.getenv("EPHEMERAL_SERVICE_PORT", "8788"))
+
+
+def _service_url() -> str:
+    """Base URL of the background node's localhost API.
+
+    The service persists its actual port to the shared state dir — read it
+    fresh per call so a service restart that lands on a new port is always
+    found, and fall back to the configured port when the file is missing.
+    """
+    port = SERVICE_PORT
+    try:
+        persisted = (_service_state_dir() / "service_port.txt").read_text().strip()
+        if persisted.isdigit():
+            port = int(persisted)
+    except Exception:
+        pass
+    return f"http://127.0.0.1:{port}"
 
 
 # --- Cluster lifecycle (dedicated event loop thread) ---------------------
@@ -602,17 +626,46 @@ class _ServiceHandler(BaseHTTPRequestHandler):
         self._send_json(200, result)
 
 
+class _NoReuseHTTPServer(ThreadingHTTPServer):
+    # Windows: SO_REUSEADDR lets a second socket bind the same port and
+    # silently STEAL the connections (the cause of the Freebuff incident).
+    # Keep it off on Windows so a collision always surfaces as WinError
+    # 10048 and the scan-up below can dodge it; Linux keeps standard
+    # behavior so restarts don't trip over TIME_WAIT.
+    allow_reuse_address = sys.platform != "win32"
+
+
 def start_local_service_api(state_dir: Path) -> None:
-    """Expose the background node over localhost for diagnostics/curl."""
+    """Expose the background node over localhost for diagnostics/curl.
+
+    Port selection is "check then assign", Windows-safe: try the
+    configured ``SERVICE_PORT``, scan upward for a free one, then let the
+    OS assign an ephemeral port as the final guarantee. The winner is
+    persisted to the shared state dir so every user's tray discovers it.
+    """
     global SERVICE_ARTIFACTS_DIR
     SERVICE_ARTIFACTS_DIR = state_dir / "artifacts"
     SERVICE_ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-    server = ThreadingHTTPServer(("127.0.0.1", SERVICE_PORT), _ServiceHandler)
+    server = None
+    for port in range(SERVICE_PORT, SERVICE_PORT + 128):
+        try:
+            server = _NoReuseHTTPServer(("127.0.0.1", port), _ServiceHandler)
+            break
+        except OSError:
+            continue
+    if server is None:
+        server = _NoReuseHTTPServer(("127.0.0.1", 0), _ServiceHandler)
+    actual = server.server_address[1]
+    try:
+        (state_dir / "service_port.txt").write_text(str(actual), encoding="utf-8")
+    except Exception as e:
+        logging.getLogger("ephemeral").warning(
+            "failed to persist service port: %s", e)
     threading.Thread(
         target=server.serve_forever, daemon=True, name="ephemeral-local-api"
     ).start()
     logging.getLogger("ephemeral").info(
-        "local API listening on http://127.0.0.1:%d", SERVICE_PORT
+        "local API listening on http://127.0.0.1:%d", actual
     )
 
 
@@ -654,24 +707,43 @@ def run_logic(icon, content=None):
     markdown = rebuild_markdown(blocks)
     blob = base64.b64encode(markdown.encode("utf-8")).decode("ascii")
 
-    try:
-        _ensure_cluster()
-    except Exception as e:
-        show_post_mortem_error(f"Cluster execution error:\n{e}")
-        icon.notify("Cluster execution failed.", title="Ephemeral Failed")
-        return
-
     set_icon_animation_state(icon, True)
+    result = None
     try:
-        result = run_through_cluster(blob, timeout=300)
+        if _service_installed_local():
+            # Merged identity: one node per machine — run through the
+            # always-on background service when it's installed.
+            result = submit_via_service(blob, timeout=300)
+        else:
+            _ensure_cluster()
+            result = run_through_cluster(blob, timeout=300)
     except Exception as e:
-        show_post_mortem_error(f"Cluster execution error:\n{e}")
-        icon.notify("Cluster execution failed.", title="Ephemeral Failed")
-        return
+        # Lazy per-job fallback (never a launch-time decision): if the
+        # service is unreachable or dies mid-run, run THIS job through the
+        # tray's own node instead. A bootstrapping/down service can't
+        # wedge the tray into the wrong mode.
+        if _service_installed_local():
+            try:
+                _ensure_cluster()
+                result = run_through_cluster(blob, timeout=300)
+            except Exception as e2:
+                show_post_mortem_error(f"Cluster execution error:\n{e2}")
+                icon.notify("Cluster execution failed.", title="Ephemeral Failed")
+                return
+        else:
+            show_post_mortem_error(f"Cluster execution error:\n{e}")
+            icon.notify("Cluster execution failed.", title="Ephemeral Failed")
+            return
     finally:
         set_icon_animation_state(icon, False)
 
     artifact_local = result.get("artifact_path")
+    if not artifact_local and result.get("artifact_file"):
+        # Artifact produced on the background node — fetch it over localhost.
+        try:
+            artifact_local = str(download_artifact(result["artifact_file"]))
+        except Exception as e:
+            icon.notify(f"Artifact download failed: {e}", title="Ephemeral Error")
 
     if artifact_local:
         routed = ephemeral_core.ExecutionResult(
@@ -827,20 +899,37 @@ SERVICE_TASK_NAME = "Ephemeral-Distributed Node"
 
 
 def _service_state_dir() -> Path:
-    """Private state dir for the always-on node.
+    """State dir for the always-on node (secret identity, logs, port file).
 
-    The scheduled task runs as SYSTEM, whose ambient home can resolve to
-    the shared ``C:\\Users\\Public`` on Windows — never let node state
-    (secret key, logs) land there. Pin it to a subdir of the installing
-    user's own profile instead; SYSTEM can still read it.
+    Shared across all users — SYSTEM writes it, every user's tray reads
+    and (for private-mode markers) writes it. The installing user's
+    profile was per-user and hid the node from other trays; the SYSTEM
+    account's own home can resolve to ``C:\\Users\\Public`` anyway, so we
+    deliberately use the OS's shared folder.
     """
+    return _service_root_dir()
+
+
+def _service_root_dir() -> Path:
+    """Machine-wide root for the always-on node's shared state.
+
+    Lives under ``C:\\Users\\Public`` (the ``PUBLIC`` env var) — the OS's
+    built-in shared folder, readable/writable by every local user and
+    SYSTEM with default ACLs, so every user's tray on the box discovers
+    and drives the ONE SYSTEM node (the multi-user story) with no
+    permission surgery. Falls back to the user profile when PUBLIC is
+    unset (non-Windows).
+    """
+    public = os.environ.get("PUBLIC")
+    if public:
+        return Path(public) / "Ephemeral-Distributed"
     return default_state_dir() / "service"
 
 
 def _service_marker() -> Path:
-    """Marker the elevated installer writes so the tray can show the service
-    as installed without querying the SYSTEM-owned scheduled task."""
-    return Path(get_install_path()).with_name("service.installed")
+    """Marker the elevated installer writes so ANY user's tray can show the
+    service as installed without querying the SYSTEM-owned scheduled task."""
+    return _service_root_dir() / "service.installed"
 
 
 def _service_command() -> str:
@@ -954,6 +1043,27 @@ def install_service() -> int:
         except Exception as e:
             return _service_feedback(
                 f"Failed to stage the background node binary:\n{e}", error=True)
+
+    # Prepare the shared, machine-wide state dir under C:\Users\Public —
+    # its default ACL already lets every local user (and SYSTEM) read and
+    # write it, so no permission changes are needed here.
+    try:
+        shared = _service_state_dir()
+        shared.mkdir(parents=True, exist_ok=True)
+        (shared / "artifacts").mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(f"Failed to prepare shared service dir: {e}")
+    # One-time migration: older installs kept the service state under the
+    # user's profile. Copy it over so the machine keeps its stable node
+    # identity across the move to the shared Public folder.
+    try:
+        old = default_state_dir() / "service"
+        if old.is_dir() and old != _service_state_dir():
+            for p in old.iterdir():
+                if p.is_file() and not (_service_state_dir() / p.name).exists():
+                    shutil.copy2(p, _service_state_dir() / p.name)
+    except Exception as e:
+        print(f"Service state migration skipped: {e}")
 
     task = subprocess.run(
         ["schtasks", "/Create", "/TN", SERVICE_TASK_NAME,
@@ -1077,9 +1187,7 @@ def _service_installed_local() -> bool:
 def _service_status() -> dict | None:
     """The background node's /health snapshot, or None when unreachable."""
     try:
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{SERVICE_PORT}/health", timeout=3
-        ) as res:
+        with urllib.request.urlopen(_service_url() + "/health", timeout=3) as res:
             return json.loads(res.read().decode("utf-8"))
     except Exception:
         return None
@@ -1091,13 +1199,44 @@ def _post_private(enabled: bool, seed: str = "") -> dict:
     if seed:
         payload["seed"] = seed
     req = urllib.request.Request(
-        f"http://127.0.0.1:{SERVICE_PORT}/private",
+        _service_url() + "/private",
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=90) as res:
         return json.loads(res.read().decode("utf-8"))
+
+
+def submit_via_service(blob: str, timeout: int = 300) -> dict:
+    """POST a job to the background node; returns its RunResponse dict."""
+    body = json.dumps({"document_blob": blob, "timeout": timeout}).encode("utf-8")
+    req = urllib.request.Request(
+        _service_url() + "/ephemeral/api/v1/run",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout + 60) as res:
+            return json.loads(res.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read().decode("utf-8")).get("detail", str(e))
+        except Exception:
+            detail = str(e)
+        raise RuntimeError(detail) from e
+
+
+def download_artifact(name: str) -> Path:
+    """Fetch an artifact produced by the background node into a temp file."""
+    dest_dir = Path(tempfile.gettempdir()) / "ephemeral-service-artifacts"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / os.path.basename(name)
+    url = _service_url() + "/artifact?name=" + urllib.parse.quote(os.path.basename(name))
+    with urllib.request.urlopen(url, timeout=120) as res, open(dest, "wb") as f:
+        shutil.copyfileobj(res, f)
+    return dest
 
 
 def service_private_url() -> str | None:
@@ -1120,13 +1259,23 @@ def toggle_private(icon, item_unused=None):
     if not enabling:
         _apply_private_mode(False)
         write_private_seed(None)
-        cluster.stop()
-        cluster.start()
+        # Restart the tray's own node only if it's actually running (it
+        # exists only as a fallback when the service is installed) — never
+        # spawn one just to flip a flag.
+        if cluster.node is not None:
+            cluster.stop()
+            cluster.start()
         if _service_installed_local():
             # Clear the service's persisted state directly (so it can't come
             # back private after a reboot), then apply it live if reachable.
-            _apply_private_mode(False, _service_state_dir())
-            write_private_seed(None, state_dir=_service_state_dir())
+            try:
+                _apply_private_mode(False, _service_state_dir())
+                write_private_seed(None, state_dir=_service_state_dir())
+            except Exception as e:
+                icon.notify(
+                    f"Could not persist the background node's state: {e}",
+                    title="Ephemeral Warning",
+                )
             try:
                 _post_private(False, "")
             except Exception as e:
@@ -1147,8 +1296,14 @@ def toggle_private(icon, item_unused=None):
     if _service_installed_local():
         # Persist the service's state directly (works even while it's down),
         # then ask the running node to apply + restart via its localhost API.
-        _apply_private_mode(True, _service_state_dir())
-        write_private_seed(seed, state_dir=_service_state_dir())
+        try:
+            _apply_private_mode(True, _service_state_dir())
+            write_private_seed(seed, state_dir=_service_state_dir())
+        except Exception as e:
+            icon.notify(
+                f"Could not persist the background node's state: {e}",
+                title="Ephemeral Warning",
+            )
         try:
             resp = _post_private(True, seed or "")
             service_ticket = resp.get("ticket")
@@ -1160,8 +1315,9 @@ def toggle_private(icon, item_unused=None):
                 title="Ephemeral Warning",
             )
 
-    # The tray node joins the swarm the service just anchored (create-new),
-    # joins the pasted seed (join-existing), or self-seeds (no service).
+    # The tray's fallback node mirrors the same swarm the service just
+    # anchored (create-new) or joined (join-existing), or self-seeds when
+    # no service is installed.
     if seed:
         tray_seed = seed
     elif service_ticket:
@@ -1171,8 +1327,9 @@ def toggle_private(icon, item_unused=None):
 
     _apply_private_mode(True)
     write_private_seed(tray_seed)
-    cluster.stop()
-    cluster.start()
+    if cluster.node is not None:
+        cluster.stop()
+        cluster.start()
     _announce_private(icon, True, bool(seed), service_url or _student_url())
 
 
@@ -1220,6 +1377,26 @@ def on_hotkey(icon):
 
 
 def on_cluster_info(icon, item_unused=None):
+    if _service_installed_local():
+        info = _service_status()
+        if info:
+            lines = ["Mode: background service (one identity per machine)"]
+            lines.append(f"Node:     {info.get('node_id')}")
+            lines.append(f"Peers:    {info.get('peers', '?')}")
+            lines.append(f"Warm images: {len(info.get('warm_images') or [])}")
+            if info.get("private"):
+                lines.append("Private:  on")
+            icon.notify("\n".join(lines), title="Ephemeral Cluster")
+            return
+        # Service installed but not answering yet — report honestly instead
+        # of silently starting a second identity.
+        icon.notify(
+            "Mode: background service (one identity per machine)\n"
+            "Status: not answering yet — jobs fall back to the tray's own "
+            "node until it is reachable.",
+            title="Ephemeral Cluster",
+        )
+        return
     lines = ["Mode: standalone (tray's own node)"]
     lines.append(cluster.info())
     icon.notify("\n".join(lines), title="Ephemeral Cluster")
@@ -1372,14 +1549,17 @@ if __name__ == '__main__':
         while True:
             time.sleep(3600)
 
-    # Two-identity model: the tray always runs its own node, independent of
-    # the background service (if installed). Warm the node up in the
-    # BACKGROUND — never block the tray icon on cluster bootstrap. A slow
-    # relay/DNS/swarm dial (or a stale swarm entry) can exceed the 10 s
-    # start window; before, that delayed the icon or, on timeout, silently
-    # killed the process before pystray ever ran. The first job retries via
-    # _ensure_cluster().
-    threading.Thread(target=_warmup_cluster, name="ephemeral-warmup", daemon=True).start()
+    # Merged identity: one node per machine. When the background service is
+    # installed, the tray is a thin front-end and must NOT spawn its own
+    # node (that would double the identity and the warm image cache) — warm
+    # the tray's own node only when no service is installed. In both cases
+    # warmup runs in the BACKGROUND — never block the tray icon on cluster
+    # bootstrap. A slow relay/DNS/swarm dial (or a stale swarm entry) can
+    # exceed the 10 s start window; before, that delayed the icon or, on
+    # timeout, silently killed the process before pystray ever ran. The
+    # first job retries via _ensure_cluster().
+    if not _service_installed_local():
+        threading.Thread(target=_warmup_cluster, name="ephemeral-warmup", daemon=True).start()
 
     if len(sys.argv) > 1 and os.path.exists(sys.argv[-1]):
         file_target = sys.argv[-1]
