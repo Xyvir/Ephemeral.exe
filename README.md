@@ -627,6 +627,41 @@ Mount the host Podman socket (`-v /run/podman/podman.sock:/run/podman/podman.soc
 
 Lithic-UK can provision the Ephemeral backend itself (`ENABLE_EPHEMERAL=true` → `./install.sh` + a Caddy reverse proxy on `/ephemeral/api/v1`). The full integration contract lives in [misc.md](misc.md).
 
+### Classroom deployment — three privacy dials
+
+Ephemeral's privacy is a **deployment choice**, not a feature toggle: where the code runs is up to you, and every choice trades student setup against data movement.
+
+| Model | Setup cost | Where student code runs | Privacy posture |
+|---|---|---|---|
+| **Desktop local** (`Ephemeral.exe`) | Each student (WSL2 + Podman) | The student's own machine | **Best** — nothing ever leaves the machine |
+| **Professor gateway + browser** | The professor (one server) | The professor's server only | **Normal** — the same posture as an LMS/autograder |
+| **Public swarm** (browser default) | None | Volunteers' machines | **Non-starter** for graded work — public by design |
+
+"Zero setup" applies to the **browser client**, and only because it executes nothing locally — it ships the code somewhere. On Windows, private local execution costs a one-time WSL2 + Podman setup; no configuration is both zero-setup *and* offline. And that one-time setup buys **every language, forever**: once Podman is there, a language is just a container — the built-in map covers ~50 out of the box, and anything else that runs dockerized can be added on request. **One setup, all languages, forever.**
+
+The **professor gateway** is the classroom sweet spot: students get the zero-setup browser client, and their code lands only on a server you control — encrypted end-to-end (iroh relays are blind forwarders), the same trust model as submitting homework to an LMS.
+
+**Stand up a classroom node in four steps:**
+
+1. **One Linux box** — any always-on server (a department machine, a cheap VPS) with Podman. Install the distributed gateway:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/install_self_host.sh | SYSTEMD=1 bash -s -- distributed
+   ```
+
+2. **Keep it private** — run it with `EPHEMERAL_SEEDS` set to its own seed ticket (printed at startup) so it bootstraps privately and never appears in the public swarm list. Grab its identity from the log:
+
+   ```bash
+   journalctl --user -u ephemeral-self-host | grep SWARM
+   # SWARM NODE_ID …  SWARM RELAY …  SWARM SEED TICKET …
+   ```
+
+3. **Pre-warm it once** so students never wait on an image pull: `python scripts/hydrate_images.py` (at minimum `--only python,octave` for a MATLAB-style course).
+
+4. **Students connect from the browser** — open the SPA and paste the seed ticket into the manual seed field (or host the SPA yourself with the ticket baked in). From there it's the no-install loop: paste a codeblock, hit run, get the result.
+
+Honest notes: the professor's box is the trust anchor — everything executes there, so treat it like any autograder server. First-run latency is image-pull time unless you hydrated (step 3). And school firewalls may need the iroh relay hostname allowlisted, since browser↔node traffic traverses n0's public relays by default.
+
 ### Building from Source (with Ephemeral!)
 
 Ephemeral can build itself! If you already have a working copy of Ephemeral, you can update to the latest version by copying and executing this snippet. It fetches the latest source from GitHub, cross-compiles a Windows `.exe` using PyWine, and drops it into your `\Downloads` folder:
