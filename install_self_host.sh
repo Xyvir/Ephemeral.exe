@@ -46,14 +46,22 @@ else
   ASSET="ephemeral-self-host.tar.gz"
 fi
 if [ "${EPHEMERAL_FROM_MAIN:-0}" != "1" ] \
-  && curl -fsSL -o "$TMP/tarball.tar.gz" "https://github.com/$REPO/releases/latest/download/$ASSET"; then
+  && curl --retry 3 --retry-delay 2 -fsSL -o "$TMP/tarball.tar.gz" "https://github.com/$REPO/releases/latest/download/$ASSET"; then
   echo "==> Using release asset $ASSET"
   tar -xzf "$TMP/tarball.tar.gz" -C "$INSTALL_DIR"
 else
   echo "==> Installing from the main branch"
-  curl -fsSL -o "$TMP/main.tar.gz" "https://github.com/$REPO/archive/refs/heads/main.tar.gz"
-  tar -xzf "$TMP/main.tar.gz" -C "$TMP"
-  SRC="$TMP/Ephemeral.exe-main"
+  # Prefer a shallow clone over the codeload tarball endpoint: github.com's
+  # on-demand archive generation throttles anonymous downloads (HTTP 503)
+  # from CI/datacenter IPs. Smart-HTTP clone is far more reliable.
+  if command -v git >/dev/null 2>&1; then
+    git clone --depth 1 --quiet "https://github.com/$REPO.git" "$TMP/repo"
+    SRC="$TMP/repo"
+  else
+    curl --retry 3 --retry-delay 2 -fsSL -o "$TMP/main.tar.gz" "https://github.com/$REPO/archive/refs/heads/main.tar.gz"
+    tar -xzf "$TMP/main.tar.gz" -C "$TMP"
+    SRC="$TMP/Ephemeral.exe-main"
+  fi
   if [ "$FLAVOR" = "distributed" ]; then
     # main_distributed.py imports main_api (wire contract) -> ephemeral_core,
     # and the gateway pulls in ephemeral_net — all four modules are required.
