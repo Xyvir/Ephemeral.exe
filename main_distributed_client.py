@@ -730,21 +730,17 @@ def _service_command() -> str:
 
 
 def service_installed() -> bool:
-    """True when the background-node scheduled task exists for this app."""
-    if sys.platform != "win32":
-        return False
-    try:
-        out = subprocess.run(
-            ["schtasks", "/Query", "/TN", SERVICE_TASK_NAME, "/FO", "LIST", "/V"],
-            capture_output=True, text=True, timeout=15, startupinfo=get_startupinfo(),
-        )
-    except Exception:
-        return False
-    if out.returncode != 0:
-        return False
-    # Guard against a stale task pointing at a moved/old exe path.
-    needle = sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__)
-    return os.path.basename(needle) in out.stdout
+    """True when the background node is installed and serving.
+
+    The scheduled task runs as SYSTEM with highest privileges, so a normal
+    (non-elevated) tray process cannot query it: schtasks returns "Access
+    is denied" and the Task Scheduler COM API hides it entirely. The task
+    starts the node immediately on install and at every boot, so the
+    localhost health probe is the accurate, privilege-free signal that the
+    background node exists and is doing its job (it is also exactly what
+    startup uses to decide thin-client vs. own-node mode).
+    """
+    return service_available()
 
 
 def _elevate(*args: str) -> None:
@@ -829,9 +825,9 @@ def on_uninstall_service(icon, item_unused=None):
 def toggle_service(icon, item_unused=None):
     """One menu item that installs or removes the background node.
 
-    Shows a checkmark while the scheduled task exists (same pattern as the
-    "Install && Run on Boot" toggle); clicking always re-prompts UAC and
-    flips the state.
+    Shows a checkmark while the background node is installed and serving
+    (localhost health probe); clicking always re-prompts UAC and flips the
+    state.
     """
     if service_installed():
         on_uninstall_service(icon)
