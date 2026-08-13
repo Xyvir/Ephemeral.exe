@@ -62,7 +62,7 @@ A few design principles underpin every tier:
 
 ## Donating Compute
 
-The public swarm is a community, good-faith network — it only stays alive while people run nodes. If you have a machine that is on anyway (a home server, a spare VPS, an old laptop, or your daily desktop), please consider joining it. **The more nodes, the more resilient the network and the faster everyone's jobs run.**
+![Live swarm nodes](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FXyvir%2FEphemeral.exe%2Fmain%2Fdocs%2Fswarm-status.json&label=live%20nodes) — **this could be you.** Join the horde: the swarm only stays alive while people run nodes. If you have a machine that is on anyway (a home server, a spare VPS, an old laptop, or your daily desktop), please consider joining it. **The more nodes, the more resilient the network and the faster everyone's jobs run.**
 
 Running a node takes minutes and requires nothing beyond the app itself:
 
