@@ -722,10 +722,15 @@ def _service_state_dir() -> Path:
 
 
 def _service_command() -> str:
-    """Command line the scheduled task runs to start the always-on node."""
+    """Command line the scheduled task runs to start the always-on node.
+
+    Points at the permanent staged copy under LOCALAPPDATA (see
+    install_service), never at wherever the app was launched from — so
+    moving or deleting the original exe can't break the always-on node.
+    """
     state = _service_state_dir()
     if getattr(sys, "frozen", False):
-        return f'"{sys.executable}" --service "{state}"'
+        return f'"{get_install_path()}" --service "{state}"'
     return f'"{sys.executable}" "{os.path.abspath(__file__)}" --service "{state}"'
 
 
@@ -770,7 +775,23 @@ def _service_feedback(message: str, error: bool = False) -> int:
 
 
 def install_service() -> int:
-    """Create a scheduled task that runs the node at boot as SYSTEM."""
+    """Create a scheduled task that runs the node at boot as SYSTEM.
+
+    The exe is first staged to a permanent location under LOCALAPPDATA
+    (same spot the login-autostart feature uses), so the task never points
+    at a Downloads/desktop copy that could move or be deleted.
+    """
+    # Stage a permanent copy so the task survives the original file moving.
+    if getattr(sys, "frozen", False):
+        install_path = get_install_path()
+        try:
+            os.makedirs(os.path.dirname(install_path), exist_ok=True)
+            if os.path.abspath(sys.executable) != os.path.abspath(install_path):
+                shutil.copy2(sys.executable, install_path)
+        except Exception as e:
+            return _service_feedback(
+                f"Failed to stage the background node binary:\n{e}", error=True)
+
     task = subprocess.run(
         ["schtasks", "/Create", "/TN", SERVICE_TASK_NAME,
          "/TR", _service_command(), "/SC", "ONSTART", "/RU", "SYSTEM",
@@ -807,6 +828,9 @@ def uninstall_service() -> int:
             f"{task.stderr.strip() or task.stdout.strip()}",
             error=True,
         )
+    # The staged exe (LOCALAPPDATA) is left in place: it is also the
+    # target of "Install && Run on Boot", and removing it would silently
+    # break that entry. Reinstalling the service refreshes the copy anyway.
     return _service_feedback("Background node removed.")
 
 
