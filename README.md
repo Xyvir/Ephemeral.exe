@@ -74,6 +74,8 @@ A few design principles underpin every tier:
 
 **Join the horde:** the swarm only stays alive while people run nodes. If you have a machine that is on anyway (a home server, a spare VPS, an old laptop, or your daily desktop), please consider joining it. **The more nodes, the more resilient the network and the faster everyone's jobs run.**
 
+> If you enjoy the local or private-distributed versions, we humbly ask you to consider donating **one public node** on your infrastructure too. The public swarm is what keeps Ephemeral free and zero-setup for self-taught learners, code golfers, and anyone without their own server — a single node from each self-hoster is what makes that possible.
+
 Running a node takes minutes and requires nothing beyond the app itself:
 
 * **Linux / DIY self-hosters:** one line installs the distributed gateway as a systemd service:
