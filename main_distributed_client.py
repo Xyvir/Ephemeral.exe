@@ -67,6 +67,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
+import urllib.request
 
 # GUI deps are optional (CLI/self-check work without them).
 try:
@@ -1029,6 +1030,76 @@ def toggle_private(icon, item_unused=None):
     _announce_private(icon, True, bool(seed), _student_url())
 
 
+def _service_private_marker() -> Path:
+    """The ``private_mode`` marker in the background node's own state dir.
+
+    The always-on node (``--service``) roots its state at
+    ``~/.ephemeral/service`` via ``EPHEMERAL_STATE_DIR``, so its private
+    marker lives there — independent of the tray's own node. Reading it
+    directly is deterministic (no health probe, no admin).
+    """
+    return _service_state_dir() / PRIVATE_MODE_MARKER
+
+
+def service_private_checked(_item=None) -> bool:
+    """True when the always-on background node is in private mode."""
+    return _service_private_marker().exists()
+
+
+def _post_private(enabled: bool, seed: str = "") -> dict:
+    """Toggle the background node's private mode via its localhost API."""
+    payload = {"enabled": enabled}
+    if seed:
+        payload["seed"] = seed
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{SERVICE_PORT}/private",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=90) as res:
+        return json.loads(res.read().decode("utf-8"))
+
+
+def service_private_url() -> str | None:
+    """Student URL for the background node when it's running private."""
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{SERVICE_PORT}/health", timeout=3
+        ) as res:
+            info = json.loads(res.read().decode("utf-8"))
+        ticket = (info or {}).get("ticket")
+        return private_student_url(ticket) if ticket else None
+    except Exception:
+        return None
+
+
+def toggle_private_service(icon, item_unused=None):
+    """Enable/disable private mode on the always-on background node.
+
+    The preferred classroom node: it stays in the swarm even while the
+    user is logged off, so the student URL keeps working overnight. Same
+    create-vs-join seed prompt as the tray's own node — empty creates a
+    NEW swarm, pasting a ticket JOINS an existing one.
+    """
+    if service_private_checked():
+        enabled, seed = False, ""
+    else:
+        seed = prompt_user_for_seed(read_private_seed(_service_state_dir()) or "")
+        if seed is None:
+            return
+        seed = seed.strip() or None
+        enabled = True
+    try:
+        resp = _post_private(enabled, seed or "")
+    except Exception as e:
+        icon.notify(
+            f"Could not toggle the background node: {e}", title="Ephemeral Error"
+        )
+        return
+    _announce_private(icon, enabled, bool(seed), resp.get("student_url"))
+
+
 def purge_cache(icon, item_unused):
     icon.notify("Pruning unused images... this may take a moment.", title="Ephemeral Maintenance")
     startupinfo = get_startupinfo()
@@ -1138,6 +1209,10 @@ def show_about(icon, item_unused=None):
         url = current_student_url()
         if url:
             about_text += "\n\nPrivate mode student URL:\n" + url
+    if service_private_checked():
+        url = service_private_url()
+        if url:
+            about_text += "\n\nBackground service (private) student URL:\n" + url
     if HAS_GUI:
         pyperclip.copy(about_text)
     icon.notify(about_text, title="About Ephemeral-Distributed")
@@ -1263,6 +1338,9 @@ if __name__ == '__main__':
                  checked=lambda i: service_installed(),
                  visible=lambda i: sys.platform == 'win32'),
             item('Private Mode', toggle_private, checked=private_checked),
+            item('Private Background Service', toggle_private_service,
+                 checked=service_private_checked,
+                 visible=lambda i: sys.platform == 'win32' and service_installed()),
             item('Force Stop All Runs', force_stop_all),
             item('Clear Image Cache', purge_cache),
             item('Cluster Status', on_cluster_info),
