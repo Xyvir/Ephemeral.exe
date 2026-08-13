@@ -68,6 +68,42 @@ DOH_ENDPOINTS: list[str] = [
     "https://dns.google/resolve?name={name}&type=TXT",
 ]
 
+# Base URL of the hosted Web thin client. A private-swarm node prints a
+# student-ready link to this site with its seed ticket baked into the URL
+# fragment (``#seed=…``), which puts the browser client into private mode
+# (public swarm skipped). Override (e.g. a self-hosted SPA) via
+# ``EPHEMERAL_WEB_URL``.
+WEB_SPA_URL = os.getenv("EPHEMERAL_WEB_URL", "https://xyvir.github.io/Ephemeral.exe/")
+
+# Marker filename in a node's state dir that opts it into private mode
+# (skip the public swarm list at bootstrap). The tray's "Private Mode"
+# toggle creates/removes it; ``--private`` / ``EPHEMERAL_PRIVATE`` force
+# it on for the process.
+PRIVATE_MODE_MARKER = "private_mode"
+
+
+def private_student_url(ticket: str) -> str:
+    """The one-link URL students open to reach this (private) node."""
+    return f"{WEB_SPA_URL}#seed={ticket}"
+
+
+def private_mode_enabled(
+    state_dir: Path | None = None,
+    argv: Sequence[str] | None = None,
+) -> bool:
+    """
+    True when private mode is on for a node rooted at ``state_dir``.
+
+    Priority: ``EPHEMERAL_PRIVATE`` env, then a ``--private`` argv flag,
+    then a persisted ``private_mode`` marker file in the state dir. When
+    enabled, the node skips the public swarm list and is its own seed.
+    """
+    if os.getenv("EPHEMERAL_PRIVATE", "0") == "1":
+        return True
+    if argv and "--private" in argv:
+        return True
+    return ((state_dir or default_state_dir()) / PRIVATE_MODE_MARKER).exists()
+
 
 def fetch_swarm_list(urls: Sequence[str] | None = None) -> list[dict]:
     """
@@ -241,8 +277,10 @@ def parse_seed_nodes(env_value: str | None) -> list[tuple[str, str]]:
 __all__ = [
     "DEFAULT_RELAY",
     "DOH_ENDPOINTS",
+    "PRIVATE_MODE_MARKER",
     "SWARM_DNS_TXT",
     "SWARM_LIST_URLS",
+    "WEB_SPA_URL",
     "default_state_dir",
     "fetch_swarm_list",
     "fetch_swarm_list_dns",
@@ -250,4 +288,6 @@ __all__ = [
     "parse_seed_nodes",
     "parse_seeds",
     "parse_swarm_list_dns",
+    "private_mode_enabled",
+    "private_student_url",
 ]

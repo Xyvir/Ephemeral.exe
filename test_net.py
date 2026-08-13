@@ -829,6 +829,44 @@ def test_swarm_status_badge_payload():
     print("PASS: swarm status badge payload (verified-only count)")
 
 
+def test_private_mode_helpers():
+    """``--private`` / ``EPHEMERAL_PRIVATE`` / marker decide private mode,
+    and the student URL is the hosted SPA with the ticket in the fragment."""
+    import os
+
+    from ephemeral_net.swarm import (
+        PRIVATE_MODE_MARKER,
+        private_mode_enabled,
+        private_student_url,
+    )
+
+    url = private_student_url("ticket123")
+    assert url.endswith("#seed=ticket123"), url
+    assert url.startswith("http"), url
+
+    with tempfile.TemporaryDirectory() as td:
+        state = Path(td)
+        old = os.environ.pop("EPHEMERAL_PRIVATE", None)
+        try:
+            # Nothing set → public swarm (no marker, no flag).
+            assert private_mode_enabled(state, argv=[]) is False
+            # --private argv flag forces it on.
+            assert private_mode_enabled(state, argv=["x", "--private"]) is True
+            # A persisted marker file turns it on.
+            (state / PRIVATE_MODE_MARKER).touch()
+            assert private_mode_enabled(state, argv=[]) is True
+            # The env var wins even without a marker.
+            (state / PRIVATE_MODE_MARKER).unlink()
+            os.environ["EPHEMERAL_PRIVATE"] = "1"
+            assert private_mode_enabled(state, argv=[]) is True
+        finally:
+            if old is None:
+                os.environ.pop("EPHEMERAL_PRIVATE", None)
+            else:
+                os.environ["EPHEMERAL_PRIVATE"] = old
+    print("PASS: private mode helpers (flag/env/marker, student URL)")
+
+
 # ---------------------------------------------------------------------------
 # Layer 2: two-node integration test (requires iroh + local connectivity)
 # ---------------------------------------------------------------------------
@@ -1492,6 +1530,7 @@ def main():
     test_peer_table_ttl_eviction()
     test_genesis_fallback_plan()
     test_swarm_status_badge_payload()
+    test_private_mode_helpers()
     test_sanitize_strips_unsafe_and_overrides()
     test_sanitize_rejects_unknown_language()
     test_sanitize_operator_network_flag()

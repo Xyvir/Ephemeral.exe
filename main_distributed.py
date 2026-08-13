@@ -21,9 +21,13 @@ Configuration (environment variables):
                              unset, a stable identity is auto-persisted to disk
     EPHEMERAL_PORT           HTTP port (default 8787 — the Lithic-UK sidecar slot)
     EPHEMERAL_ALLOW_NETWORK  "1" to let remote jobs use network access (default "0")
+    EPHEMERAL_PRIVATE        "1" (or ``--private``) — skip the public swarm list;
+                             this node becomes its own seed for a private cluster
+                             and prints a student-ready ``#seed=`` URL
 
 Usage:
     uvicorn main_distributed:app --host 0.0.0.0 --port 8787
+    python main_distributed.py --private          # direct run, private mode
 
 Port 8787 matches the local API server and the Lithic-UK sidecar slot.
 
@@ -35,12 +39,19 @@ up by the next scheduled refresh automatically.
 from __future__ import annotations
 
 import os
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from main_api import RunResponse  # same wire contract as the local API server
 
-from ephemeral_net.swarm import load_or_create_secret, parse_seed_nodes, parse_seeds
+from ephemeral_net.swarm import (
+    load_or_create_secret,
+    parse_seed_nodes,
+    parse_seeds,
+    private_mode_enabled,
+    private_student_url,
+)
 from ephemeral_self_host import Gateway, GatewayError, RunRequest
 
 # --- Configuration -------------------------------------------------------
@@ -57,6 +68,11 @@ EPHEMERAL_SECRET = (
 )
 EPHEMERAL_ALLOW_NETWORK = os.getenv("EPHEMERAL_ALLOW_NETWORK", "0") == "1"
 
+# Private mode: skip the public swarm list — this node is its own seed for a
+# private cluster. Enable via ``--private`` (direct run) or
+# ``EPHEMERAL_PRIVATE=1`` (systemd/uvicorn).
+PRIVATE_MODE = private_mode_enabled(argv=sys.argv)
+
 
 # --- Application ---------------------------------------------------------
 
@@ -68,6 +84,7 @@ async def lifespan(app: FastAPI):
         seed_nodes=EPHEMERAL_SEED_NODES,
         seeds=EPHEMERAL_SEEDS,
         allow_network=EPHEMERAL_ALLOW_NETWORK,
+        private=PRIVATE_MODE,
     )
     try:
         await gateway.start()
@@ -84,12 +101,20 @@ async def lifespan(app: FastAPI):
     print(f"SWARM NODE_ID {node.node_id()}", flush=True)
     print(f"SWARM RELAY {node.relay_url()}", flush=True)
     print(f"SWARM SEED TICKET {node.ticket()}", flush=True)
-    print(
-        "SWARM join: no compiled seeds — this node bootstrapped from the "
-        "live swarm list (docs/swarm.json) and will be listed automatically "
-        "on the next refresh. NODE_ID/RELAY above are its stable identity.",
-        flush=True,
-    )
+    if PRIVATE_MODE:
+        print(f"SWARM PRIVATE URL {private_student_url(node.ticket())}", flush=True)
+        print(
+            "SWARM join: private mode — public swarm skipped; this node is "
+            "its own seed. Share the PRIVATE URL above with students.",
+            flush=True,
+        )
+    else:
+        print(
+            "SWARM join: no compiled seeds — this node bootstrapped from the "
+            "live swarm list (docs/swarm.json) and will be listed automatically "
+            "on the next refresh. NODE_ID/RELAY above are its stable identity.",
+            flush=True,
+        )
     yield
     await gateway.close()
 
@@ -150,3 +175,18 @@ async def health_check():
         "running" if ephemeral_core.check_podman_alive() else "stopped"
     )
     return status
+
+
+def main() -> None:
+    """Run the API server directly — ``python main_distributed.py [--private]``."""
+    import uvicorn
+
+    uvicorn.run(
+        "main_distributed:app",
+        host="0.0.0.0",
+        port=int(os.getenv("EPHEMERAL_PORT", "8787")),
+    )
+
+
+if __name__ == "__main__":
+    main()

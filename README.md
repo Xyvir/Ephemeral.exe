@@ -653,28 +653,31 @@ The **public swarm** is only a non-starter for *graded* work. For **self-directe
 
 **Stand up a classroom node in four steps:**
 
-1. **One Linux box** — any always-on server (a department machine, a cheap VPS) with Podman. Install the distributed gateway:
+1. **One Linux box** — any always-on server (a department machine, a cheap VPS) with Podman. Install the distributed gateway in **private mode** (skip the public swarm):
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/install_self_host.sh | SYSTEMD=1 bash -s -- distributed
+   curl -fsSL https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/install_self_host.sh | EPHEMERAL_PRIVATE=1 SYSTEMD=1 bash -s -- distributed
    ```
 
-2. **Keep it private** — run it with `EPHEMERAL_SEEDS` set to its own seed ticket (printed at startup) so it bootstraps privately and never appears in the public swarm list. Grab its identity from the log:
+2. **Grab the student URL** — with `EPHEMERAL_PRIVATE=1` the node is its own seed and never appears in the public list; the startup log prints a ready-to-share link:
 
    ```bash
    journalctl --user -u ephemeral-self-host | grep SWARM
    # SWARM NODE_ID …  SWARM RELAY …  SWARM SEED TICKET …
+   # SWARM PRIVATE URL https://xyvir.github.io/Ephemeral.exe/#seed=…
    ```
 
 3. **Pre-warm it once** so students never wait on an image pull: `python scripts/hydrate_images.py` (at minimum `--only python,octave` for a MATLAB-style course).
 
-4. **Students connect from the browser** — hand out one link with the ticket baked into the URL fragment, and the client runs in **private mode** (it skips the public swarm and dials only your node):
+4. **Students connect from the browser** — hand out the `SWARM PRIVATE URL` from step 2, and the client runs in **private mode** (it skips the public swarm and dials only your node):
 
    ```text
    https://xyvir.github.io/Ephemeral.exe/#seed=<the SWARM SEED TICKET from step 2>
    ```
 
    Nothing to paste and no self-hosting needed. From there it's the no-install loop: paste a codeblock, hit run, get the result.
+
+> **Desktop instead of a server?** `Ephemeral-Distributed.exe` works too: right-click the tray icon → **Private Mode**, and it flips the node off the public swarm and shows the same student URL (also listed under *About* while enabled).
 
 Honest notes: the professor's box is the trust anchor — everything executes there, so treat it like any autograder server. First-run latency is image-pull time unless you hydrated (step 3). And school firewalls may need the iroh relay hostname allowlisted, since browser↔node traffic traverses n0's public relays by default.
 

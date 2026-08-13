@@ -30,9 +30,13 @@ Cluster configuration (environment variables):
     EPHEMERAL_SECRET         hex-encoded 32-byte secret for a persistent node id;
                              unset, a stable identity is auto-persisted to disk
     EPHEMERAL_ALLOW_NETWORK  "1" to let remote jobs use network access (default "0")
+    EPHEMERAL_PRIVATE        "1" (or ``--private``) — skip the public swarm list;
+                             this node is its own seed for a private cluster
+                             (also toggled live via the tray's "Private Mode" item)
 
 Usage:
     python main_distributed_client.py                 # Tray mode
+    python main_distributed_client.py --private       # Tray mode, private swarm
     python main_distributed_client.py script.md       # One-shot mode
     python main_distributed_client.py --cli script.md # Headless CLI mode
     python main_distributed_client.py --self-check    # Print node id and exit
@@ -91,10 +95,13 @@ except ImportError:
 import ephemeral_core
 from ephemeral_net.jobs import JobDoneEvent, JobErrorEvent, JobRequest
 from ephemeral_net.swarm import (
+    PRIVATE_MODE_MARKER,
     default_state_dir,
     load_or_create_secret,
     parse_seed_nodes,
     parse_seeds,
+    private_mode_enabled,
+    private_student_url,
 )
 
 # Reuse the local client's platform plumbing (icon, clipboard, language
@@ -129,6 +136,11 @@ EPHEMERAL_SECRET: bytes | None = (
     bytes.fromhex(_hex_secret) if _hex_secret else None
 )
 EPHEMERAL_ALLOW_NETWORK = os.getenv("EPHEMERAL_ALLOW_NETWORK", "0") == "1"
+
+# Private mode (skip the public swarm list) is decided at bootstrap time via
+# ``private_mode_enabled``: ``--private`` / ``EPHEMERAL_PRIVATE=1``, or a
+# ``private_mode`` marker file in the node's state dir (toggled live from the
+# tray's "Private Mode" menu item).
 
 # Localhost port the background node's control API listens on, so
 # thin-client trays from any local user drive this node instead of
@@ -196,10 +208,13 @@ class Cluster:
             await node.bootstrap_nodes(EPHEMERAL_SEED_NODES)
         elif EPHEMERAL_SEEDS:
             await node.bootstrap(EPHEMERAL_SEEDS)
-        else:
+        elif not private_mode_enabled(argv=sys.argv):
             # No compiled-in seeds: join the public swarm via the live
             # bootstrap list (docs/swarm.json) — fully automatic.
             await node.bootstrap_from_list()
+        # private && no explicit seeds → this node is its own seed: dial
+        # nothing, just accept incoming connections (students dial us by
+        # ticket through the hosted SPA's #seed= link).
         self.node = node
 
     def stop(self) -> None:
@@ -379,6 +394,11 @@ def service_health() -> dict | None:
         return None
     info = {"status": "ok", "node_id": cluster.node.node_id()}
     try:
+        info["ticket"] = cluster.node.ticket()
+    except Exception:
+        pass
+    info["private"] = private_mode_enabled(argv=sys.argv)
+    try:
         info["peers"] = len(cluster.node.table)
     except Exception:
         pass
@@ -387,6 +407,38 @@ def service_health() -> dict | None:
     except Exception:
         pass
     return info
+
+
+def _student_url() -> str | None:
+    """The student-ready #seed= link for the current node (None if starting)."""
+    if cluster.node is None:
+        return None
+    try:
+        return private_student_url(cluster.node.ticket())
+    except Exception:
+        return None
+
+
+def current_student_url() -> str | None:
+    """Student link for the node actually serving — service or own node."""
+    if service_ok:
+        try:
+            ticket = fetch_service_status().get("ticket")
+            return private_student_url(ticket) if ticket else None
+        except Exception:
+            return None
+    return _student_url()
+
+
+def _apply_private_mode(enabled: bool) -> None:
+    """Persist private mode for the current process's node (marker file)."""
+    state_dir = default_state_dir()
+    marker = state_dir / PRIVATE_MODE_MARKER
+    if enabled:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+    else:
+        marker.unlink(missing_ok=True)
 
 
 class _ServiceHandler(BaseHTTPRequestHandler):
@@ -427,7 +479,25 @@ class _ServiceHandler(BaseHTTPRequestHandler):
         self._send_json(404, {"detail": "not found"})
 
     def do_POST(self) -> None:
-        if urllib.parse.urlparse(self.path).path != "/ephemeral/api/v1/run":
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/private":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                enabled = bool(payload.get("enabled", False))
+            except Exception as e:
+                self._send_json(400, {"detail": f"bad request: {e}"})
+                return
+            try:
+                _apply_private_mode(enabled)
+                cluster.stop()
+                cluster.start()
+            except Exception as e:
+                self._send_json(500, {"detail": f"toggle failed: {e}"})
+                return
+            self._send_json(200, {"enabled": enabled, "student_url": _student_url()})
+            return
+        if parsed.path != "/ephemeral/api/v1/run":
             self._send_json(404, {"detail": "not found"})
             return
         try:
@@ -869,6 +939,54 @@ def toggle_service(icon, item_unused=None):
         on_install_service(icon)
 
 
+def private_checked(_item=None) -> bool:
+    """True when the serving node is in private mode."""
+    if service_ok:
+        try:
+            return bool(fetch_service_status().get("private"))
+        except Exception:
+            return False
+    return private_mode_enabled(argv=sys.argv)
+
+
+def toggle_private(icon, item_unused=None):
+    """Switch the serving node between the public swarm and private mode."""
+    if service_ok:
+        try:
+            new = not bool(fetch_service_status().get("private"))
+        except Exception:
+            new = True
+        try:
+            body = json.dumps({"enabled": new}).encode("utf-8")
+            req = urllib.request.Request(
+                SERVICE_URL + "/private",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=90) as res:
+                resp = json.loads(res.read().decode("utf-8"))
+        except Exception as e:
+            icon.notify(f"Could not toggle the background node: {e}", title="Ephemeral Error")
+            return
+        url = resp.get("student_url")
+    else:
+        new = not private_mode_enabled(argv=sys.argv)
+        _apply_private_mode(new)
+        # Restart the node so the bootstrap decision takes effect.
+        cluster.stop()
+        cluster.start()
+        url = _student_url()
+    if url and HAS_GUI:
+        pyperclip.copy(url)
+    icon.notify(
+        ("Private mode ON — give students this URL:\n\n" if new
+         else "Private mode OFF (public swarm).\n\n")
+        + (url or "(node still starting — URL available shortly)"),
+        title="Ephemeral Private Mode",
+    )
+
+
 def purge_cache(icon, item_unused):
     icon.notify("Pruning unused images... this may take a moment.", title="Ephemeral Maintenance")
     startupinfo = get_startupinfo()
@@ -988,6 +1106,10 @@ def show_about(icon, item_unused=None):
                   "Version: Version number (injected from the github workflow)\n"
                   "Dev: Dunko Xyvir\nLicense: MIT License\n"
                   "URL: https://github.com/Xyvir/Ephemeral.exe")
+    if private_checked():
+        url = current_student_url()
+        if url:
+            about_text += "\n\nPrivate mode student URL:\n" + url
     if HAS_GUI:
         pyperclip.copy(about_text)
     icon.notify(about_text, title="About Ephemeral-Distributed")
@@ -1116,6 +1238,7 @@ if __name__ == '__main__':
             item('Background Service', toggle_service,
                  checked=lambda i: service_installed(),
                  visible=lambda i: sys.platform == 'win32'),
+            item('Private Mode', toggle_private, checked=private_checked),
             item('Force Stop All Runs', force_stop_all),
             item('Clear Image Cache', purge_cache),
             item('Cluster Status', on_cluster_info),

@@ -18,6 +18,9 @@
 #                 (used by CI to test the installer deterministically)
 #   EPHEMERAL_RELAY / EPHEMERAL_SEEDS / EPHEMERAL_SECRET / EPHEMERAL_ALLOW_NETWORK
 #                 distributed-tier configuration (passed to the service/command)
+#   EPHEMERAL_PRIVATE=1
+#                 skip the public swarm list — run a private classroom node
+#                 (distributed flavor only; prints a student-ready #seed= URL)
 set -euo pipefail
 
 FLAVOR="${1:-local}"
@@ -112,6 +115,7 @@ if [ "${SYSTEMD:-0}" = "1" ]; then
       [ -n "${EPHEMERAL_SEEDS:-}" ]       && echo "Environment=EPHEMERAL_SEEDS=$EPHEMERAL_SEEDS"
       [ -n "${EPHEMERAL_SECRET:-}" ]      && echo "Environment=EPHEMERAL_SECRET=$EPHEMERAL_SECRET"
       [ -n "${EPHEMERAL_ALLOW_NETWORK:-}" ] && echo "Environment=EPHEMERAL_ALLOW_NETWORK=$EPHEMERAL_ALLOW_NETWORK"
+      [ -n "${EPHEMERAL_PRIVATE:-}" ]      && echo "Environment=EPHEMERAL_PRIVATE=$EPHEMERAL_PRIVATE"
     fi
     echo "Restart=on-failure"
     echo ""
@@ -126,6 +130,6 @@ else
   echo "==> Installed. Run it with:"
   echo "    $INSTALL_DIR/.venv/bin/uvicorn $APP:app --host 0.0.0.0 --port $PORT"
   if [ "$FLAVOR" = "distributed" ]; then
-    echo "    (configure the cluster via EPHEMERAL_SEEDS / EPHEMERAL_RELAY / EPHEMERAL_SECRET / EPHEMERAL_ALLOW_NETWORK)"
+    echo "    (configure the cluster via EPHEMERAL_SEEDS / EPHEMERAL_RELAY / EPHEMERAL_SECRET / EPHEMERAL_ALLOW_NETWORK / EPHEMERAL_PRIVATE)"
   fi
 fi

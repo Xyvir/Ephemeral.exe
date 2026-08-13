@@ -72,6 +72,9 @@ class Gateway:
         allow_network: whether remote jobs may use network access.
         image_allowlist: allowed images for remote jobs; defaults to the
             ``ephemeral_core`` language map.
+        private: when True and no explicit seeds are given, skip the
+            public swarm list entirely — this node is its own seed for a
+            private cluster (students reach it via a ``#seed=`` link).
         node_factory: injectable for tests — callable returning a
             ``Node``-like object (``start``, ``close``, ``executor``,
             ``bootstrap``, ``bootstrap_nodes``, ``node_id``).
@@ -86,6 +89,7 @@ class Gateway:
         seed_nodes: Sequence[tuple[str, str]] = (),
         allow_network: bool = False,
         image_allowlist: Sequence[str] | None = None,
+        private: bool = False,
         node_factory: Callable[..., object] | None = None,
     ) -> None:
         self.secret_key = secret_key
@@ -94,6 +98,7 @@ class Gateway:
         self.seed_nodes = list(seed_nodes)
         self.allow_network = allow_network
         self.image_allowlist = image_allowlist
+        self.private = private
         self.node_factory = node_factory
         self._node = None
 
@@ -128,10 +133,13 @@ class Gateway:
             await node.bootstrap_nodes(self.seed_nodes)
         elif self.seeds:
             await node.bootstrap(self.seeds)
-        else:
+        elif not self.private:
             # No compiled-in seeds: join the public swarm via the live
             # bootstrap list (docs/swarm.json) — fully automatic.
             await node.bootstrap_from_list()
+        # private && no explicit seeds → this node is its own seed: dial
+        # nothing, just accept incoming connections (students dial us by
+        # ticket through the hosted SPA's #seed= link).
         self._node = node
 
     async def close(self) -> None:
