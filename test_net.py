@@ -37,6 +37,7 @@ from ephemeral_net.jobs import JobDoneEvent, JobErrorEvent, JobLogEvent, JobRequ
 # ---------------------------------------------------------------------------
 
 PY_IMG = "docker.io/tymills620/ephemeral-python-uv:latest"
+BASH_IMG = "docker.io/library/alpine:latest"
 NODE_IMG = "docker.io/library/node:18-alpine"
 
 
@@ -1151,15 +1152,16 @@ def test_probe_helpers():
     )
     from ephemeral_net.sandbox import sanitize_markdown
 
-    # The probe document is a minimal python run that passes sanitization
-    # on a real node (image resolves to the allowlisted python image).
+    # The probe document is a minimal bash run that passes sanitization on
+    # a real node (image resolves to the allowlisted alpine image, which
+    # every node pre-hydrates so first probes verify without a pull).
     nonce = probe_nonce("a" * 64)
     assert nonce.startswith("ephemeral-alive-") and "a" * 10 in nonce
     assert probe_nonce("a" * 64) != nonce, "nonces must be unpredictable"
     doc = build_probe_document(nonce)
-    assert f"print({nonce!r})" in doc
+    assert f"echo {nonce}" in doc
     clean, images = sanitize_markdown(doc)
-    assert images == [PY_IMG], f"probe must run on the python image, got {images}"
+    assert images == [BASH_IMG], f"probe must run on the bash image, got {images}"
     assert nonce in clean
 
     # Verdict: exit 0 AND the exact nonce in stdout — a canned/captured
@@ -1415,8 +1417,8 @@ async def _run_probe_integration() -> bool:
     from ephemeral_net.sandbox import CoreJobExecutor
 
     async def _echo_runner(markdown_text, timeout, server_mode):
-        """Simulate a real node: run the python payload, echo its print."""
-        m = re.search(r"print\('([^']+)'\)", markdown_text)
+        """Simulate a real node: run the bash payload, echo its output."""
+        m = re.search(r"echo\s+([A-Za-z0-9_-]+)", markdown_text)
         class _Result:
             stdout = (m.group(1) + "\n") if m else ""
             stderr = ""

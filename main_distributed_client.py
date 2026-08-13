@@ -592,6 +592,20 @@ class _ServiceHandler(BaseHTTPRequestHandler):
                 {"enabled": enabled, "student_url": _student_url(), "ticket": ticket},
             )
             return
+        if parsed.path == "/stop":
+            try:
+                killed = _podman_stop_all()
+                self._send_json(200, {"killed": killed})
+            except Exception as e:
+                self._send_json(500, {"detail": f"stop failed: {e}"})
+            return
+        if parsed.path == "/cache":
+            try:
+                _podman_prune_images()
+                self._send_json(200, {"ok": True})
+            except Exception as e:
+                self._send_json(500, {"detail": f"cache clear failed: {e}"})
+            return
         if parsed.path != "/ephemeral/api/v1/run":
             self._send_json(404, {"detail": "not found"})
             return
@@ -667,6 +681,46 @@ def start_local_service_api(state_dir: Path) -> None:
     logging.getLogger("ephemeral").info(
         "local API listening on http://127.0.0.1:%d", actual
     )
+
+
+# --- Maintenance helpers (shared by the service API and the tray menus) ---
+# Runs in whichever podman context the caller is in: the service process
+# (SYSTEM account) operates the service's own podman; a standalone tray
+# operates its own.
+
+
+def _podman_stop_all() -> int:
+    """Kill every running container in the caller's podman context."""
+    startupinfo = get_startupinfo()
+    killed = 0
+    try:
+        out = subprocess.run(
+            ["podman", "ps", "-q"], startupinfo=startupinfo,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        ).stdout
+        ids = [ln for ln in out.decode(errors="replace").splitlines() if ln.strip()]
+        if ids:
+            subprocess.run(
+                ["podman", "rm", "-f"] + ids,
+                startupinfo=startupinfo, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            killed = len(ids)
+    except Exception:
+        pass
+    return killed
+
+
+def _podman_prune_images() -> None:
+    """Prune unused images from the caller's podman context (best-effort)."""
+    startupinfo = get_startupinfo()
+    try:
+        subprocess.run(
+            ["podman", "image", "prune", "--all", "--force"],
+            startupinfo=startupinfo, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+    except Exception:
+        pass
 
 
 def run_logic(icon, content=None):
@@ -1208,6 +1262,18 @@ def _post_private(enabled: bool, seed: str = "") -> dict:
         return json.loads(res.read().decode("utf-8"))
 
 
+def _service_post(path: str, timeout: int = 180) -> dict:
+    """POST to a background-node control endpoint; raises on failure."""
+    req = urllib.request.Request(
+        _service_url() + path,
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as res:
+        return json.loads(res.read().decode("utf-8"))
+
+
 def submit_via_service(blob: str, timeout: int = 300) -> dict:
     """POST a job to the background node; returns its RunResponse dict."""
     body = json.dumps({"document_blob": blob, "timeout": timeout}).encode("utf-8")
@@ -1334,32 +1400,46 @@ def toggle_private(icon, item_unused=None):
 
 
 def purge_cache(icon, item_unused):
+    """Clear the image cache of whichever podman owns the live node.
+
+    With the background service installed (merged identity) the live cache
+    belongs to the service's podman — clear it through its localhost API;
+    otherwise clear the tray's own podman.
+    """
     icon.notify("Pruning unused images... this may take a moment.", title="Ephemeral Maintenance")
-    startupinfo = get_startupinfo()
     try:
-        subprocess.run(['podman', 'image', 'prune', '--all', '--force'],
-                       startupinfo=startupinfo, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if _service_installed_local():
+            _service_post("/cache", timeout=300)
+        else:
+            _podman_prune_images()
         icon.notify("Image cache cleared successfully.", title="Ephemeral")
     except Exception as e:
         icon.notify(f"Error clearing cache: {e}", title="Ephemeral Error")
 
 
 def force_stop_all(icon, item_unused):
-    """Kill every running Ephemeral container (runs execute inside the node
-    executor rather than as tracked subprocesses, so containers are the unit
-    of cancellation here — same result as the local client's force stop)."""
-    startupinfo = get_startupinfo()
+    """Kill every running Ephemeral container.
+
+    Runs execute inside the node executor rather than as tracked
+    subprocesses, so containers are the unit of cancellation here — same
+    result as the local client's force stop. With the background service
+    installed (merged identity) the live containers belong to the service's
+    podman, so stop them through its localhost API; otherwise stop them in
+    the tray's own podman.
+    """
     killed = 0
-    try:
-        out = subprocess.run(['podman', 'ps', '-q'], startupinfo=startupinfo,
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
-        ids = [ln for ln in out.decode(errors='replace').splitlines() if ln.strip()]
-        if ids:
-            subprocess.run(['podman', 'rm', '-f'] + ids,
-                           startupinfo=startupinfo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            killed = len(ids)
-    except Exception:
-        pass
+    if _service_installed_local():
+        try:
+            resp = _service_post("/stop", timeout=120)
+            killed = resp.get("killed", 0)
+        except Exception as e:
+            icon.notify(
+                f"Could not reach the background node: {e}", title="Ephemeral Error"
+            )
+            set_icon_animation_state(icon, False)
+            return
+    else:
+        killed = _podman_stop_all()
 
     set_icon_animation_state(icon, False)
     if killed > 0:

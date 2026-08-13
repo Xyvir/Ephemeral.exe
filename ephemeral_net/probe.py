@@ -8,8 +8,8 @@ compute node*: a dead-but-registered peer, a foreign iroh endpoint that
 somehow completed the handshake, or a machine whose executor stack is
 broken would all pass.
 
-So the refresh actually runs a real job — a tiny Python script that
-prints a fresh, unpredictable per-node nonce. A node is only recorded as
+So the refresh actually runs a real job — a tiny bash ``echo`` of a
+fresh, unpredictable per-node nonce. A node is only recorded as
 verified when it executed the payload and echoed the nonce back, which a
 bot that merely answers hello (or a stale entry) cannot fake.
 
@@ -60,19 +60,25 @@ DEFAULT_PROBE_TIMEOUT = 180
 
 def probe_nonce(node_id: str) -> str:
     """
-    A fresh, unpredictable token a node must print to prove it ran our code.
+    A fresh, unpredictable token a node must echo to prove it ran our code.
 
     Derived from the node id (so a log line is attributable) plus a random
     component (so a bot that echoes a captured or canned answer cannot
-    pass). ``print()`` output containing this exact string is the proof of
+    pass). ``echo`` output containing this exact string is the proof of
     life.
     """
     return f"ephemeral-alive-{node_id[:10]}-{secrets.token_hex(5)}"
 
 
 def build_probe_document(nonce: str) -> str:
-    """A tiny Markdown document whose only run prints ``nonce``."""
-    return f"```python\nprint({nonce!r})\n```\n"
+    """A tiny Markdown document whose only run echoes ``nonce``.
+
+    Bash is the canary because it is as spoof-proof as python (the nonce
+    must round-trip through a real sandboxed container) yet needs only the
+    tiny ``alpine`` image (~7 MB) that every node pre-hydrates — so a
+    fresh node verifies from second zero, with no first-run pull.
+    """
+    return f"```bash\necho {nonce}\n```\n"
 
 
 def probe_verdict(exit_code: int, stdout: str, nonce: str) -> tuple[bool, str]:
@@ -145,7 +151,7 @@ async def run_probe(
 
     ``submit`` is a callable that takes a :class:`JobRequest` and returns
     an async iterator of :class:`JobEvent` — in practice ``node.submit_job(
-    peer, request)``. Builds the probe payload (a python ``print`` of a
+    peer, request)``.    Builds the probe payload (a bash ``echo`` of a
     fresh nonce), submits it, and checks the verdict.
 
     Returns ``{"ok": bool, "detail": str, "ms": int}`` where ``ok`` is
