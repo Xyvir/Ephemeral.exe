@@ -191,6 +191,8 @@ This creates a hardened systemd service at `127.0.0.1:8787`, ready to be reverse
 Go, GolfScript, Haskell, Java, Julia, Lolcode, Lua, Nim, Node.js, OCaml, Octave, Perl, PHP, Piet,
 PowerShell, Prolog, Python, R, Ruby, Rust, Science Python, Verilog.
 
+> **Octave = MATLAB-compatible** for the intro tier — scripts, functions, and plots run as-is; licensed toolboxes and Simulink still need real MATLAB (usually on lab machines anyway). Define your own helper functions as a seeded `.m` block (see [Seed Files](#seed-files--binary-data)). Science Python resolves numpy/scipy/matplotlib on demand through the lighter default image, so you rarely need the full Anaconda pull.
+
 ### Features
 
 #### Manual Language Entry & History
@@ -683,7 +685,7 @@ Nothing to paste and no self-hosting needed: students open it in any browser and
 
 Either way, pre-warm the images once so students never wait on a pull: `python scripts/hydrate_images.py` (at minimum `--only python,octave` for a MATLAB-style course).
 
-Honest notes: the professor's box is the trust anchor — everything executes there, so treat it like any autograder server. First-run latency is image-pull time unless you pre-warmed (see above). And school firewalls may need the iroh relay hostname allowlisted, since browser↔node traffic traverses n0's public relays by default.
+Honest notes: the professor's box is the trust anchor — everything executes there, so treat it like any autograder server. First-run latency is image-pull time unless you pre-warmed (see above). And school firewalls may need the iroh relay hostname allowlisted, since browser↔node traffic traverses n0's public relays by default. The upside over a plain autograder: the swarm is **leaderless**, so run a second node (a TA's laptop or an IT VM) and the class survives any one machine going down.
 
 ### Building from Source (with Ephemeral!)
 
