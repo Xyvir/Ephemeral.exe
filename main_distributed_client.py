@@ -408,9 +408,9 @@ def current_student_url() -> str | None:
     return _student_url()
 
 
-def _apply_private_mode(enabled: bool) -> None:
-    """Persist private mode for the current process's node (marker file)."""
-    state_dir = default_state_dir()
+def _apply_private_mode(enabled: bool, state_dir: Path | None = None) -> None:
+    """Persist private mode (marker file) for a node's state dir."""
+    state_dir = state_dir or default_state_dir()
     marker = state_dir / PRIVATE_MODE_MARKER
     if enabled:
         marker.parent.mkdir(parents=True, exist_ok=True)
@@ -557,7 +557,16 @@ class _ServiceHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json(500, {"detail": f"toggle failed: {e}"})
                 return
-            self._send_json(200, {"enabled": enabled, "student_url": _student_url()})
+            ticket = None
+            if cluster.node is not None:
+                try:
+                    ticket = cluster.node.ticket()
+                except Exception:
+                    ticket = None
+            self._send_json(
+                200,
+                {"enabled": enabled, "student_url": _student_url(), "ticket": ticket},
+            )
             return
         if parsed.path != "/ephemeral/api/v1/run":
             self._send_json(404, {"detail": "not found"})
@@ -1008,42 +1017,20 @@ def _announce_private(icon, enabled, joined, url):
     )
 
 
-def toggle_private(icon, item_unused=None):
-    """Enable/disable private mode for the tray's own node. Enabling prompts
-    for a seed ticket: paste one to JOIN an existing swarm, or leave empty
-    to CREATE a new one."""
-    if private_mode_enabled(argv=sys.argv):
-        _apply_private_mode(False)
-        write_private_seed(None)
-        cluster.stop()
-        cluster.start()
-        _announce_private(icon, False, False, None)
-        return
-    seed = prompt_user_for_seed(read_private_seed() or "")
-    if seed is None:
-        return
-    seed = seed.strip() or None
-    _apply_private_mode(True)
-    write_private_seed(seed)
-    cluster.stop()
-    cluster.start()
-    _announce_private(icon, True, bool(seed), _student_url())
+def _service_installed_local() -> bool:
+    """True when a background service is installed on this (Windows) box."""
+    return sys.platform == "win32" and service_installed()
 
 
-def _service_private_marker() -> Path:
-    """The ``private_mode`` marker in the background node's own state dir.
-
-    The always-on node (``--service``) roots its state at
-    ``~/.ephemeral/service`` via ``EPHEMERAL_STATE_DIR``, so its private
-    marker lives there — independent of the tray's own node. Reading it
-    directly is deterministic (no health probe, no admin).
-    """
-    return _service_state_dir() / PRIVATE_MODE_MARKER
-
-
-def service_private_checked(_item=None) -> bool:
-    """True when the always-on background node is in private mode."""
-    return _service_private_marker().exists()
+def _service_status() -> dict | None:
+    """The background node's /health snapshot, or None when unreachable."""
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{SERVICE_PORT}/health", timeout=3
+        ) as res:
+            return json.loads(res.read().decode("utf-8"))
+    except Exception:
+        return None
 
 
 def _post_private(enabled: bool, seed: str = "") -> dict:
@@ -1062,42 +1049,79 @@ def _post_private(enabled: bool, seed: str = "") -> dict:
 
 
 def service_private_url() -> str | None:
-    """Student URL for the background node when it's running private."""
-    try:
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{SERVICE_PORT}/health", timeout=3
-        ) as res:
-            info = json.loads(res.read().decode("utf-8"))
-        ticket = (info or {}).get("ticket")
-        return private_student_url(ticket) if ticket else None
-    except Exception:
+    """Student URL for the background node when it's actually running private."""
+    status = _service_status()
+    if not status or not status.get("private"):
         return None
+    ticket = status.get("ticket")
+    return private_student_url(ticket) if ticket else None
 
 
-def toggle_private_service(icon, item_unused=None):
-    """Enable/disable private mode on the always-on background node.
+def toggle_private(icon, item_unused=None):
+    """Flip BOTH identities — the tray's own node and the background
+    service — between public and private together, so they never disagree.
+    Enabling prompts once: leave empty to CREATE a new private swarm
+    (anchored on the always-on service when installed, else the tray
+    node), or paste a ticket to JOIN an existing swarm with both nodes."""
+    enabling = not private_mode_enabled(argv=sys.argv)
 
-    The preferred classroom node: it stays in the swarm even while the
-    user is logged off, so the student URL keeps working overnight. Same
-    create-vs-join seed prompt as the tray's own node — empty creates a
-    NEW swarm, pasting a ticket JOINS an existing one.
-    """
-    if service_private_checked():
-        enabled, seed = False, ""
-    else:
-        seed = prompt_user_for_seed(read_private_seed(_service_state_dir()) or "")
-        if seed is None:
-            return
-        seed = seed.strip() or None
-        enabled = True
-    try:
-        resp = _post_private(enabled, seed or "")
-    except Exception as e:
-        icon.notify(
-            f"Could not toggle the background node: {e}", title="Ephemeral Error"
-        )
+    if not enabling:
+        _apply_private_mode(False)
+        write_private_seed(None)
+        cluster.stop()
+        cluster.start()
+        if _service_installed_local():
+            # Clear the service's persisted state directly (so it can't come
+            # back private after a reboot), then apply it live if reachable.
+            _apply_private_mode(False, _service_state_dir())
+            write_private_seed(None, state_dir=_service_state_dir())
+            try:
+                _post_private(False, "")
+            except Exception as e:
+                icon.notify(
+                    f"Could not reach the background node: {e}",
+                    title="Ephemeral Warning",
+                )
+        _announce_private(icon, False, False, None)
         return
-    _announce_private(icon, enabled, bool(seed), resp.get("student_url"))
+
+    seed = prompt_user_for_seed(read_private_seed() or "")
+    if seed is None:
+        return
+    seed = seed.strip() or None
+
+    service_ticket = None
+    service_url = None
+    if _service_installed_local():
+        # Persist the service's state directly (works even while it's down),
+        # then ask the running node to apply + restart via its localhost API.
+        _apply_private_mode(True, _service_state_dir())
+        write_private_seed(seed, state_dir=_service_state_dir())
+        try:
+            resp = _post_private(True, seed or "")
+            service_ticket = resp.get("ticket")
+            service_url = resp.get("student_url")
+        except Exception as e:
+            icon.notify(
+                f"Background node unavailable ({e}); "
+                "it will go private when it next starts.",
+                title="Ephemeral Warning",
+            )
+
+    # The tray node joins the swarm the service just anchored (create-new),
+    # joins the pasted seed (join-existing), or self-seeds (no service).
+    if seed:
+        tray_seed = seed
+    elif service_ticket:
+        tray_seed = service_ticket
+    else:
+        tray_seed = None
+
+    _apply_private_mode(True)
+    write_private_seed(tray_seed)
+    cluster.stop()
+    cluster.start()
+    _announce_private(icon, True, bool(seed), service_url or _student_url())
 
 
 def purge_cache(icon, item_unused):
@@ -1206,13 +1230,9 @@ def show_about(icon, item_unused=None):
                   "Dev: Dunko Xyvir\nLicense: MIT License\n"
                   "URL: https://github.com/Xyvir/Ephemeral.exe")
     if private_checked():
-        url = current_student_url()
+        url = service_private_url() or current_student_url()
         if url:
             about_text += "\n\nPrivate mode student URL:\n" + url
-    if service_private_checked():
-        url = service_private_url()
-        if url:
-            about_text += "\n\nBackground service (private) student URL:\n" + url
     if HAS_GUI:
         pyperclip.copy(about_text)
     icon.notify(about_text, title="About Ephemeral-Distributed")
@@ -1338,9 +1358,6 @@ if __name__ == '__main__':
                  checked=lambda i: service_installed(),
                  visible=lambda i: sys.platform == 'win32'),
             item('Private Mode', toggle_private, checked=private_checked),
-            item('Private Background Service', toggle_private_service,
-                 checked=service_private_checked,
-                 visible=lambda i: sys.platform == 'win32' and service_installed()),
             item('Force Stop All Runs', force_stop_all),
             item('Clear Image Cache', purge_cache),
             item('Cluster Status', on_cluster_info),

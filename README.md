@@ -665,7 +665,7 @@ https://xyvir.github.io/Ephemeral.exe/#seed=<the node's seed ticket>
 
 Nothing to paste and no self-hosting needed: students open it in any browser and get the no-install loop — paste a codeblock, hit run, get the result.
 
-**Prefer it always-on?** Install **Background Service** from the tray menu (it keeps the machine in the swarm even while logged off), then right-click → **Private Background Service**. Same seed prompt and student URL — but the classroom node now survives you closing the laptop, which makes it the best pick for a course that runs all week.
+**Prefer it always-on?** Install **Background Service** from the tray menu (it keeps the machine in the swarm even while logged off). **Private Mode** then flips *both* identities — your tray node and the always-on service — into the same private swarm, and the student URL it hands out points at the service, so the classroom node survives you closing the laptop.
 
 **The server way — for sysadmins.** A headless Linux gateway keeps the classroom node running even when no desktop is on:
 
