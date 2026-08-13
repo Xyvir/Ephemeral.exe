@@ -1,6 +1,6 @@
 # Ephemeral.exe
 
-**Ephemeral** is a **one-shot** sandboxed code-execution engine that parses Markdown for codeblocks, runs them in isolated Podman containers, and extracts generated artifacts. Rather than acting as a long-running daemon or task scheduler, it is a stateless, on-demand processing pipeline — much like a Jupyter Notebook cell execution for your desktop, server, or browser. It ships as a **Windows tray app**, a **Linux AppImage**, a **browser WebAssembly thin client**, and a **FastAPI server** (for remote sidecar execution), and it can run standalone or as a node in a peer-to-peer distributed compute network.
+**Ephemeral** is a **zero-friction, zero-barrier** way to run code — built for students, teachers, and analysts in math, engineering, and data science. It is a **one-shot** sandboxed code-execution engine that parses Markdown for codeblocks, runs them in isolated Podman containers, and extracts generated artifacts — a **literate-programming alternative to Jupyter notebooks** where the codeblocks live inside your **plaintext Markdown**, not a heavyweight notebook format. Rather than acting as a long-running daemon or task scheduler, it is a stateless, on-demand processing pipeline: highlight code in your notes, run it, paste the result back. It ships as a **Windows tray app**, a **Linux AppImage**, a **browser WebAssembly thin client**, and a **FastAPI server** (for remote sidecar execution), and it can run standalone or as a node in a peer-to-peer distributed compute network.
 
 ![Ephemeral Demo](ephemeral.gif)
 
@@ -10,23 +10,39 @@
 
 ### The Problem
 
-Windows is a fantastic OS, but it lacks the native "polyglot" flexibility of Linux.
+Running code should be as easy as reading it — especially for students, teachers, and analysts whose focus is math, engineering, or data, not systems administration. But today there's a wall of friction:
 
-* Installing Python, Ruby, Node, Go, Rust, and Perl just to run a quick snippet is overkill.
-* Managing multiple versions (Python 2.7 vs 3.10) is a nightmare of environment paths.
-* Copying code from a textbook, StackOverflow, or your PKMS (Obsidian/Logseq) usually involves opening a heavy IDE, creating a file, saving it, and running it.
+* **Jupyter Notebooks** are the classic literate-programming tool, but they're heavyweight: a kernel to install and keep alive, a browser UI, hidden cell state, and `.ipynb` files that don't version-control cleanly and don't live where your notes live.
+* **Languages are bolted to the machine, not the document.** Installing Python, Ruby, Node, Go, Rust, and Perl just to run a quick snippet is overkill, and managing multiple versions (Python 2.7 vs 3.10) is a nightmare of environment paths.
+* **Copying code from a textbook, lecture notes, StackOverflow, or your PKMS (Obsidian/Logseq)** usually means opening a heavy IDE, creating a file, saving it, and running it — enough friction to kill the "let me just try this" moment.
+* **In a classroom,** every student's machine is a support ticket: different OSes, missing dependencies, broken environments — before anyone has run a single line of code.
 
 ### The Ephemeral Solution
 
-Ephemeral acts as a **one-shot "Sidecar Notebook"** processing pipeline for your entire operating system. It leverages **Podman** (via WSL2 on Windows, rootless on Linux) to create instant, disposable execution environments that spin up, run your pipeline, return outputs/artifacts, and vanish.
+Ephemeral removes the barrier entirely. It is a **Jupyter-style literate-programming alternative that runs codeblocks directly inside plaintext Markdown** — a textbook, lecture notes, an Obsidian vault, a GitHub README, even a chat message. No kernel to install, no server to keep alive, no IDE, no installed languages: your notes *are* the notebook.
 
-**Why you want this:**
+Technically, it acts as a **one-shot "Sidecar Notebook"** processing pipeline for your entire operating system. It leverages **Podman** (via WSL2 on Windows, rootless on Linux) to create instant, disposable execution environments that spin up, run your pipeline, return outputs/artifacts, and vanish.
 
-1. **Language Versatility:** Run Bash, Python, Ruby, R, Julia, Octave, C++, Rust, and more without installing them locally.
-2. **Clean System:** No more `npm_modules` or stray `.py` files cluttering your desktop. The container lives for milliseconds and vanishes.
-3. **Security:** Snippets run in a sandbox (`--network none`). A malicious `rm -rf /` only deletes a temporary container, not your hard drive.
-4. **Legacy Support:** Need to test a script in Python 2.7? Just type `python:2.7`. Ephemeral pulls the specific version for that run.
-5. **Context Agnostic:** It works anywhere you can copy text.
+**Why students, teachers, and analysts want this:**
+
+1. **Zero friction:** highlight code in your notes, press a hotkey, paste the result back. No setup, no environment, no file juggling.
+2. **Language Versatility:** run Bash, Python, Ruby, R, Julia, Octave, C++, Rust, and more without installing them locally — the language is a means, not the subject.
+3. **Literate, not lock-in:** prose and code stay together in plaintext Markdown — readable, diffable, portable — with none of Jupyter's cell state or notebook format.
+4. **Clean System:** no `npm_modules` or stray `.py` files cluttering your desktop. The container lives for milliseconds and vanishes.
+5. **Security:** snippets run in a sandbox (`--network none`). A malicious `rm -rf /` only deletes a temporary container, not your hard drive.
+6. **Legacy Support:** need to test a script in Python 2.7? Just type `python:2.7`. Ephemeral pulls the specific version for that run.
+7. **Context Agnostic:** it works anywhere you can copy text.
+
+### For Students & Teachers: The Zero-Setup Browser Client
+
+The fastest way to experience Ephemeral needs no install at all — it's a web page. Open the [lite client](https://xyvir.github.io/Ephemeral.exe/) in any modern browser, paste or type a codeblock, and hit run:
+
+* **Zero setup, zero sign-in, free.** No install, no account, no payment — the same engine as the desktop apps, with none of the prerequisites.
+* **Runs anywhere.** A school Chromebook, a library computer, a phone — anything with a browser.
+* **Responsive for everyday work.** Quick calculations, data analysis, plotting, and homework checks round-trip in seconds.
+* **Backed by volunteers, not a datacenter.** Every run is executed by the community's donated compute — a robust, self-healing peer-to-peer network of nodes (see [Donating Compute](#donating-compute)) that keeps serving even as individual machines come and go.
+
+The client speaks the same wire protocol as every other tier, so your Markdown codeblocks run in the same sandboxed containers on real cluster nodes, with the full language map and artifact support (technical details in [Web thin client](#web-thin-client-ephemeral-wasm-library)).
 
 ---
 
@@ -39,6 +55,33 @@ A few design principles underpin every tier:
 * **Sandbox-first.** Containers run with `--network none`, capped memory/CPU/PIDs, and no volume mounts. Untrusted code is contained by default; network access is an explicit, opt-in `unsafe` flag — and on the distributed network, a node operator's decision, never the requester's.
 * **Privacy by default, locally.** In local-only mode, nothing ever leaves your machine.
 * **Good-faith networking.** The public distributed network exists for teaching and shared clusters. It is not security-first or trust-first — treat anything submitted as public knowledge (see the [Trust Model](#distributed-tier--trust-model)).
+
+---
+
+## Donating Compute
+
+The public swarm is a community, good-faith network — it only stays alive while people run nodes. If you have a machine that is on anyway (a home server, a spare VPS, an old laptop, or your daily desktop), please consider joining it. **The more nodes, the more resilient the network and the faster everyone's jobs run.**
+
+Running a node takes minutes and requires nothing beyond the app itself:
+
+* **Linux / DIY self-hosters:** one line installs the distributed gateway as a systemd service:
+
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/install_self_host.sh | SYSTEMD=1 bash -s -- distributed
+  ```
+
+  Or run it in Docker (see [Deployment](#deployment)).
+
+  Optionally, turn your node into a **super-seed** that already has every language image warm: run `python scripts/hydrate_images.py` once. Budget roughly **15–25 GB** of disk for the full set — most of it is the big science and typesetting images (Anaconda and the TeX-enabled pandoc image are a few GB each). Pull just the common languages with `python scripts/hydrate_images.py --only python,node` if space is tight; nodes pull images lazily anyway, so hydrating is purely a performance boost.
+
+* **Desktop / Windows users:** just run **`Ephemeral-Distributed.exe`** — the tray app joins the swarm as a compute node the moment it starts. For a truly always-on node, right-click the tray icon and choose **Install Background Service**: it registers `Ephemeral-Distributed.exe --service` as a boot-time scheduled task (running as SYSTEM), so your machine keeps serving jobs even while you're logged off.
+
+That's it — no configuration. Your node fetches the live swarm list, joins the network, and the next scheduled refresh (within ~6 h) writes it into `docs/swarm.json`, where it starts carrying jobs and offloading for other nodes.
+
+> [!WARNING]
+> **Please read this before donating a node.** The distributed network is a peer-to-peer network: jobs submitted by strangers execute on your machine, and communication traverses public iroh relays. Ephemeral applies best-effort security — receiver-side sandboxing, an image allowlist, `--network none`, memory/CPU/PID caps, and removal of requester-supplied image/network overrides — but **there is no guarantee of safety**. P2P networks and their communication carry inherent risk, and no warranty is made against malicious payloads, data exfiltration, or compromise.
+>
+> **Do not run a node on a critical or irreplaceable workstation, on a machine holding sensitive or personal data, or on a network you consider sensitive** (an employer's or client's network, for example, or anywhere a sandbox escape would be unacceptable). Only donate compute you can afford to lose, and treat anything submitted to the public swarm as public knowledge. If you need a private cluster instead, self-host with explicit `EPHEMERAL_SEEDS` / `EPHEMERAL_RELAY` (see [Deployment](#deployment)) so only your own nodes participate.
 
 ---
 
