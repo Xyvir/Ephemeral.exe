@@ -837,11 +837,28 @@ def set_icon_animation_state(icon, state):
 # --- Startup & maintenance (parity with the local tray client) -----------
 
 def get_install_path():
+    """Permanent copy the login-autostart entry runs ("Install && Run on Boot")."""
     app_data = os.getenv('LOCALAPPDATA', os.path.expanduser('~'))
     install_dir = os.path.join(app_data, 'Ephemeral-Distributed')
     is_frozen = getattr(sys, 'frozen', False)
     ext = '.exe' if is_frozen else '.py'
     return os.path.join(install_dir, f'Ephemeral-Distributed{ext}')
+
+
+def _service_staged_path():
+    """Permanent copy the background-node scheduled task runs (``--service``).
+
+    Deliberately a DIFFERENT file from the login-autostart copy
+    (get_install_path): the service copy is a running SYSTEM exe and stays
+    locked while the service is up, so autostart must never try to
+    overwrite or delete it (that was the "Permission denied" when enabling
+    startup with the service installed).
+    """
+    app_data = os.getenv('LOCALAPPDATA', os.path.expanduser('~'))
+    install_dir = os.path.join(app_data, 'Ephemeral-Distributed')
+    is_frozen = getattr(sys, 'frozen', False)
+    ext = '.exe' if is_frozen else '.py'
+    return os.path.join(install_dir, f'Ephemeral-Distributed-Service{ext}')
 
 
 def _autostart_desktop_path():
@@ -989,13 +1006,13 @@ def _service_marker() -> Path:
 def _service_command() -> str:
     """Command line the scheduled task runs to start the always-on node.
 
-    Points at the permanent staged copy under LOCALAPPDATA (see
-    install_service), never at wherever the app was launched from — so
-    moving or deleting the original exe can't break the always-on node.
+    Points at the service's own permanent staged copy under LOCALAPPDATA
+    (see install_service), never at wherever the app was launched from —
+    so moving or deleting the original exe can't break the always-on node.
     """
     state = _service_state_dir()
     if getattr(sys, "frozen", False):
-        return f'"{get_install_path()}" --service "{state}"'
+        return f'"{_service_staged_path()}" --service "{state}"'
     return f'"{sys.executable}" "{os.path.abspath(__file__)}" --service "{state}"'
 
 
@@ -1156,9 +1173,10 @@ def install_service() -> int:
     (same spot the login-autostart feature uses), so the task never points
     at a Downloads/desktop copy that could move or be deleted.
     """
-    # Stage a permanent copy so the task survives the original file moving.
+    # Stage a permanent copy (the service's OWN file — separate from the
+    # login-autostart copy) so the task survives the original moving.
     if getattr(sys, "frozen", False):
-        install_path = get_install_path()
+        install_path = _service_staged_path()
         try:
             os.makedirs(os.path.dirname(install_path), exist_ok=True)
             if os.path.abspath(sys.executable) != os.path.abspath(install_path):
@@ -1246,14 +1264,21 @@ def uninstall_service() -> int:
             f"{task.stderr.strip() or task.stdout.strip()}",
             error=True,
         )
-    # Full cleanup: drop the login-autostart entry (its target would
-    # otherwise dangle) and delete the staged exe. set_startup(False)
-    # already removes the HKCU Run value and the staged file, deferring
-    # deletion to the next reboot if the binary is still locked.
+    # Remove the service's OWN staged copy (the task no longer runs it).
+    # The login-autostart copy and its Run key are left untouched — the
+    # two features are independent, so uninstalling the service never
+    # disables "Install && Run on Boot".
     try:
-        set_startup(False)
+        staged = _service_staged_path()
+        if os.path.exists(staged):
+            try:
+                os.remove(staged)
+            except Exception:
+                MOVEFILE_DELAY_UNTIL_REBOOT = 4
+                ctypes.windll.kernel32.MoveFileExW(
+                    staged, None, MOVEFILE_DELAY_UNTIL_REBOOT)
     except Exception as e:
-        print(f"Failed to clean up startup entry: {e}")
+        print(f"Failed to remove staged service copy: {e}")
     _service_marker().unlink(missing_ok=True)
     return _service_feedback("Background node removed.")
 
