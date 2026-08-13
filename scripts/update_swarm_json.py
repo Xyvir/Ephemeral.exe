@@ -255,6 +255,27 @@ def update_dns_txt(
         return False
 
 
+def build_status_payload(nodes: list[dict]) -> dict:
+    """
+    Shields.io endpoint-badge payload for the README's live-node counter.
+
+    A README is static markdown (no JavaScript), so the "live" count is
+    rendered by a shields.io badge that fetches this small file
+    server-side on every view: ``img.shields.io/endpoint?url=…``. The
+    count is probe-verified nodes only (``probe == "ok"``) — the nodes
+    that actually executed a job this census — not merely listed entries
+    (stale entries are kept for a few runs to retry).
+    """
+    verified = sum(1 for n in nodes if n.get("probe") == "ok")
+    return {
+        "schemaVersion": 1,
+        "label": "live nodes",
+        "message": str(verified),
+        "color": "brightgreen" if verified else "red",
+        "cacheSeconds": 3600,
+    }
+
+
 def _existing_nodes(out_path: Path) -> dict[str, dict]:
     """
     Previous list entries keyed by node id.
@@ -606,6 +627,20 @@ async def main() -> None:
     tmp.replace(args.out)
     print(
         f"swarm.json updated: {len(result['nodes'])} node(s) -> {args.out}",
+        flush=True,
+    )
+
+    # Shields.io endpoint badge for the README's live-node counter: the
+    # README is static markdown (no JS), so the badge URL points at this
+    # small status file, which shields fetches server-side on every view.
+    # The bot commits it together with swarm.json each refresh.
+    status_path = args.out.parent / "swarm-status.json"
+    payload = build_status_payload(result.get("nodes") or [])
+    tmp2 = status_path.with_name(status_path.name + ".tmp")
+    tmp2.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    tmp2.replace(status_path)
+    print(
+        f"swarm-status.json: {payload['message']} verified node(s) -> {status_path}",
         flush=True,
     )
 

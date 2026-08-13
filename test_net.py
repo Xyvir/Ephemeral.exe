@@ -805,6 +805,30 @@ def test_genesis_fallback_plan():
     print("PASS: genesis fallback plan (prev-list first, anchor only as fallback)")
 
 
+def test_swarm_status_badge_payload():
+    """The README's live-node badge counts only probe-verified nodes, and
+    turns red when the swarm has none."""
+    import scripts.update_swarm_json as upd
+
+    nodes = [
+        {"node_id": "a" * 64, "probe": "ok"},
+        {"node_id": "b" * 64, "probe": "ok"},
+        {"node_id": "c" * 64, "probe": "unreachable"},
+        {"node_id": "d" * 64, "probe": "failed"},
+        {"node_id": "e" * 64, "probe": "skipped"},
+        {},
+    ]
+    payload = upd.build_status_payload(nodes)
+    assert payload["schemaVersion"] == 1
+    assert payload["label"] == "live nodes"
+    assert payload["message"] == "2", "only probe-verified nodes count"
+    assert payload["color"] == "brightgreen"
+    empty = upd.build_status_payload([])
+    assert empty["message"] == "0"
+    assert empty["color"] == "red"
+    print("PASS: swarm status badge payload (verified-only count)")
+
+
 # ---------------------------------------------------------------------------
 # Layer 2: two-node integration test (requires iroh + local connectivity)
 # ---------------------------------------------------------------------------
@@ -1467,6 +1491,7 @@ def main():
     test_job_messages()
     test_peer_table_ttl_eviction()
     test_genesis_fallback_plan()
+    test_swarm_status_badge_payload()
     test_sanitize_strips_unsafe_and_overrides()
     test_sanitize_rejects_unknown_language()
     test_sanitize_operator_network_flag()

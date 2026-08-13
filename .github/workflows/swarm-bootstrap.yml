@@ -72,7 +72,7 @@ jobs:
       run: |
         git config user.name "ephemeral-swarm-bot"
         git config user.email "actions@github.com"
-        git add docs/swarm.json
+        git add docs/swarm.json docs/swarm-status.json
         if git diff --cached --quiet; then
           echo "swarm.json unchanged — nothing to commit"
         else
