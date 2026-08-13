@@ -292,6 +292,7 @@ button.secondary:hover { background: #4a4a4a; }
 .icon-btn:hover { background: #333; color: var(--text); }
 .icon-btn svg { width: 14px; height: 14px; }
 .icon-btn.ok svg { color: var(--ok); }
+.icon-btn.active { color: var(--accent-hi); background: #333; }
 
 details.advanced { margin-top: 14px; }
 details.advanced > summary {
@@ -338,6 +339,25 @@ details.advanced .advanced-meta code { color: var(--accent-hi); }
 }
 .result-step { color: var(--muted); font-size: 12px; margin: 6px 0 4px; }
 .result-line { color: var(--text); white-space: pre-wrap; word-break: break-word; margin: 2px 0; }
+
+/* Interleaved view: the original document with each block's result slotted
+   in after it. */
+.block.source { white-space: normal; }
+.source-head {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: ui-monospace, Consolas, monospace;
+  margin: 8px 0 0;
+}
+.block.prose { white-space: normal; }
+.interleave-h1, .interleave-h2, .interleave-h3 {
+  color: var(--text);
+  font-weight: 700;
+  margin: 14px 0 4px;
+}
+.interleave-h1 { font-size: 15px; }
+.interleave-h2 { font-size: 13px; }
+.interleave-h3 { font-size: 12px; color: var(--muted); }
 .code-block {
   background: #0c0c0c;
   border: 1px solid #2b2b2b;

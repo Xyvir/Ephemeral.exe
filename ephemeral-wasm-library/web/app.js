@@ -28,6 +28,15 @@ let runArtifacts = [];
 // source rather than the flattened rendered text.
 let outputRaw = "";
 
+// Interleaved output view: shows the original document with each code
+// block's result slotted in after it (best-effort, in-order matching).
+// Captured per run; lastOutputRaw lets the results-only view be rebuilt
+// when the toggle is switched back off.
+let interleaved = false;
+let lastMarkdown = "";
+let lastResultText = "";
+let lastOutputRaw = "";
+
 // Image extensions -> mime (inline render + clipboard copy).
 const IMAGE_MIMES = {
   ".png": "image/png",
@@ -345,18 +354,141 @@ function renderResult(text) {
   return html.join("\n");
 }
 
-function appendResult(text) {
-  const box = $("output");
+// Build a `.block.result` element for a result envelope without appending,
+// so the streaming view and the interleaved view share one renderer.
+function resultElement(text) {
   const div = document.createElement("div");
   div.className = "block result";
   div.innerHTML = renderResult(text);
-  box.appendChild(div);
-  // Keep the raw markdown source so Copy output pastes the unformatted
-  // version (headers + fences), not the flattened rendered text.
-  outputRaw += (text.endsWith("\n") ? text : text + "\n") + "\n";
   if (window.hljs) {
     div.querySelectorAll("pre code").forEach((el) => hljs.highlightElement(el));
   }
+  return div;
+}
+
+function appendResult(text) {
+  $("output").appendChild(resultElement(text));
+  // Keep the raw markdown source so Copy output pastes the unformatted
+  // version (headers + fences), not the flattened rendered text.
+  outputRaw += (text.endsWith("\n") ? text : text + "\n") + "\n";
+  $("output").scrollTop = $("output").scrollHeight;
+}
+
+// --- interleaved view ------------------------------------------------------
+// Split a Markdown doc into prose / fenced-code segments (in order). Seed
+// blocks (a `.`-bearing, non-language info string — e.g. ```data.csv) are
+// flagged so results are NOT paired with them.
+function splitMarkdown(md) {
+  const segs = [];
+  const lines = md.split("\n");
+  let prose = [];
+  const flushProse = () => {
+    if (prose.length) { segs.push({ type: "prose", text: prose.join("\n") }); prose = []; }
+  };
+  let i = 0;
+  while (i < lines.length) {
+    const open = /^(`{3,}|~{3,})[ \t]*(.*)$/.exec(lines[i]);
+    if (!open) { prose.push(lines[i]); i++; continue; }
+    flushProse();
+    const fence = open[1];
+    const closeRe = new RegExp("^" + (fence[0] === "~" ? "~" : "`") + "{" + fence.length + ",}\\s*$");
+    const header = open[2].trim();
+    const lang = (header.split(/\s+/)[0] || "").toLowerCase();
+    const body = [];
+    i++;
+    while (i < lines.length && !closeRe.test(lines[i])) { body.push(lines[i]); i++; }
+    if (i < lines.length) i++; // consume the closing fence
+    segs.push({
+      type: "code",
+      header,
+      lang,
+      code: body.join("\n"),
+      isSeed: !!lang && !SUPPORTED_LANGUAGES.has(lang) && lang.includes("."),
+    });
+  }
+  flushProse();
+  return segs;
+}
+
+// Split the node's result envelope into per-block chunks on their
+// `## <Lang> Result` / `## <Lang> Run N` headers.
+function splitResults(stdout) {
+  const out = [];
+  let cur = null;
+  const header = /^## .*?\s(Result|Run \d+)\s*$/;
+  for (const line of stdout.split("\n")) {
+    if (header.test(line)) {
+      if (cur !== null) out.push(cur.join("\n"));
+      cur = [line];
+    } else if (cur !== null) {
+      cur.push(line);
+    }
+  }
+  if (cur !== null) out.push(cur.join("\n"));
+  return out;
+}
+
+function renderCodeSeg(seg) {
+  const div = document.createElement("div");
+  div.className = "block source";
+  const head = document.createElement("div");
+  head.className = "source-head";
+  head.textContent = "```" + (seg.header ? seg.header : "");
+  div.appendChild(head);
+  const pre = document.createElement("pre");
+  pre.className = "code-block";
+  const code = document.createElement("code");
+  code.className = "hljs language-" + (seg.lang || "text");
+  code.textContent = seg.code;
+  pre.appendChild(code);
+  div.appendChild(pre);
+  if (window.hljs) hljs.highlightElement(code);
+  return div;
+}
+
+function renderProseSeg(seg) {
+  const div = document.createElement("div");
+  div.className = "block prose";
+  for (const raw of seg.text.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    let el, m;
+    if ((m = /^###\s+/.exec(line))) { el = document.createElement("div"); el.className = "interleave-h3"; el.textContent = line.slice(m[0].length); }
+    else if ((m = /^##\s+/.exec(line))) { el = document.createElement("div"); el.className = "interleave-h2"; el.textContent = line.slice(m[0].length); }
+    else if ((m = /^#\s+/.exec(line))) { el = document.createElement("div"); el.className = "interleave-h1"; el.textContent = line.slice(m[0].length); }
+    else { el = document.createElement("div"); el.className = "result-line"; el.textContent = line; }
+    div.appendChild(el);
+  }
+  return div;
+}
+
+// Interleaved view: the original document with each executable code
+// block's result slotted in right after it. Best-effort: results are
+// matched positionally (in order) to non-seed code blocks.
+function renderInterleaved() {
+  const box = $("output");
+  box.textContent = "";
+  if (!lastMarkdown) return;
+  const results = splitResults(lastResultText);
+  let ri = 0;
+  for (const seg of splitMarkdown(lastMarkdown)) {
+    if (seg.type === "prose") {
+      box.appendChild(renderProseSeg(seg));
+    } else {
+      box.appendChild(renderCodeSeg(seg));
+      if (!seg.isSeed && ri < results.length) {
+        box.appendChild(resultElement(results[ri++]));
+      }
+    }
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+// Normal (results-only) view, rebuilt from the raw markdown we captured.
+function renderNormal() {
+  const box = $("output");
+  box.textContent = "";
+  if (lastOutputRaw) box.appendChild(resultElement(lastOutputRaw));
   box.scrollTop = box.scrollHeight;
 }
 
@@ -687,6 +819,8 @@ async function run() {
 
   runArtifacts = [];
   outputRaw = "";
+  lastMarkdown = markdown;
+  lastResultText = "";
   $("output").textContent = "";
   setDetail(`running on ${shortId(target.node_id)}…`);
   setBusy(true);
@@ -706,7 +840,7 @@ async function run() {
         mime: IMAGE_MIMES[ext] || "application/octet-stream",
       });
     } else if (evt.type === "job_done") {
-      if (evt.stdout) appendResult(evt.stdout);
+      if (evt.stdout) { lastResultText = evt.stdout; appendResult(evt.stdout); }
       if (evt.stderr) appendOut(evt.stderr, "err");
       if (runArtifacts.length) {
         renderArtifacts(runArtifacts, markdown);
@@ -759,6 +893,8 @@ async function run() {
     box.appendChild(note);
     box.scrollTop = box.scrollHeight;
   }
+  lastOutputRaw = outputRaw;
+  if (interleaved) renderInterleaved();
 }
 
 // Render the "unsupported language" reminder: which fences were unknown,
@@ -910,6 +1046,19 @@ $("refresh").addEventListener("click", () => { peers.clear(); refreshPeers(); })
 $("clearOutput").addEventListener("click", () => {
   $("output").textContent = "";
   outputRaw = "";
+  lastMarkdown = lastResultText = lastOutputRaw = "";
+});
+
+$("interleave").addEventListener("click", () => {
+  interleaved = !interleaved;
+  const btn = $("interleave");
+  btn.classList.toggle("active", interleaved);
+  btn.setAttribute("aria-pressed", String(interleaved));
+  btn.title = interleaved
+    ? "Interleave: on — results after each code block"
+    : "Interleave: off — results only";
+  if (interleaved && lastMarkdown) renderInterleaved();
+  else if (!interleaved && lastOutputRaw) renderNormal();
 });
 
 // Copy text to the clipboard, then flash the button green. Races the
