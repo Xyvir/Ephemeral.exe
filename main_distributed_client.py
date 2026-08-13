@@ -868,6 +868,49 @@ def service_installed() -> bool:
     return _service_marker().exists()
 
 
+#: Canary image pre-warmed at service install/boot. The swarm liveness
+#: probe is (and will stay) a bash-style job, and server_mode never waits
+#: for a first-run pull — so a node that starts cold on bash can fail its
+#: first probe by offloading to a neighbor. Warming alpine (~7 MB) makes
+#: the node advertise ``bash`` warm from second zero (list_local_images()
+#: reflects it automatically), and it doubles as a warm runtime for real
+#: ``sh``/``bash`` jobs.
+PREHYDRATE_IMAGE = "docker.io/library/alpine:latest"
+
+
+def _prehydrate_bash(timeout: int = 300) -> bool:
+    """Best-effort pull of the bash canary image (never raises).
+
+    Ensures the podman machine is up, then pulls ``PREHYDRATE_IMAGE``.
+    Returns True on success. Called at service install (elevated — warms
+    the user's podman context, which the tray shares) and at service boot
+    (warms the node's own context, which runs as a different account).
+    Failures are logged and the node falls back to on-demand pulls.
+    """
+    startupinfo = get_startupinfo()
+    try:
+        alive = subprocess.run(
+            ["podman", "info"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            startupinfo=startupinfo, timeout=30,
+        ).returncode == 0
+        if not alive:
+            subprocess.run(
+                ["podman", "machine", "start"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                startupinfo=startupinfo, timeout=timeout,
+            )
+        pull = subprocess.run(
+            ["podman", "pull", PREHYDRATE_IMAGE],
+            capture_output=True, text=True,
+            startupinfo=startupinfo, timeout=timeout,
+        )
+        return pull.returncode == 0
+    except Exception as e:
+        logging.getLogger("ephemeral").warning("bash pre-hydration failed: %s", e)
+        return False
+
+
 def _elevate(*args: str) -> None:
     """Re-launch this app elevated (UAC prompt) for a privileged action."""
     if sys.platform != "win32" or not HAS_WINREG:
@@ -936,10 +979,19 @@ def install_service() -> int:
         marker.write_text(str(int(time.time())), encoding="utf-8")
     except Exception as e:
         print(f"Failed to write service marker: {e}")
-    return _service_feedback(
+    # Pre-warm the bash canary so the node is warm on it from second zero
+    # (the probe never waits for a first-run pull). Best-effort: a podman
+    # machine that can't start just means on-demand pulls instead.
+    warmed = _prehydrate_bash()
+    msg = (
         "Background node installed and started.\n"
         "It will also run automatically at every boot (even while logged off)."
     )
+    if warmed:
+        msg += "\nBash runtime pre-warmed — first jobs (and probes) run instantly."
+    else:
+        msg += "\nNote: bash runtime could not be pre-warmed; the node will pull it on demand."
+    return _service_feedback(msg)
 
 
 def uninstall_service() -> int:
@@ -1310,6 +1362,13 @@ if __name__ == '__main__':
             logging.getLogger("ephemeral").exception(
                 "local control API failed to start: %s", e
             )
+        # Pre-warm the bash canary in the node's OWN podman context — the
+        # service runs as a different account than the tray, so its warm
+        # image set is separate. Best-effort and non-blocking: if that
+        # account's podman can't start, we just log and pull on demand.
+        threading.Thread(
+            target=_prehydrate_bash, name="ephemeral-prehydrate", daemon=True
+        ).start()
         while True:
             time.sleep(3600)
 
