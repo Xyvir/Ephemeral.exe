@@ -26,6 +26,12 @@
 //          swarm may add stable node ids here (node_id + relay) or a
 //          legacy ticket, but the public build relies on `swarmJson`.
 //
+// A private swarm can also be joined per-visit via the URL fragment
+// `#seed=<EndpointTicket|node_id@relay>` (optionally `&relay=<url>`) —
+// handled in app.js — which puts the SPA into private mode (the public
+// list is skipped). That lets a professor hand out one link to this
+// hosted build instead of editing this file or self-hosting a copy.
+//
 // There is no `ephemeral_net/swarm.py` constant to keep in sync — the
 // Python tiers bootstrap from the same docs/swarm.json list.
 export const BOOTSTRAP = {

@@ -14,6 +14,10 @@ const $ = (id) => document.getElementById(id);
 let client = null;
 // node_id -> { node_id, relay, ticket, images: [..], rtt_ms, seed: bool }
 let peers = new Map();
+// Operator-supplied bootstrap from the URL fragment (#seed=…&relay=…) —
+// set in start() before discovery. Lets a professor hand out a link to a
+// private swarm on this hosted site without editing config.js.
+const urlBootstrap = { seed: null, relay: null };
 
 // Artifacts streamed by the current run's node (one "artifact" frame per
 // file, before job_done). Cleared at the start of each run.
@@ -439,15 +443,6 @@ function dialCandidate(client, c) {
 async function refreshPeers() {
   setStatus("discovering cluster…");
 
-  // Live bootstrap list first (current members) — no compiled seeds in
-  // the public build; operator-configured ids/tickets (private swarms)
-  // are dialed too. Dedupe by node_id (falling back to ticket).
-  const swarmNodes = await fetchSwarmNodes();
-  // DNS TXT fallback when the list is unreachable (independent, tiered
-  // path — see fetchDnsMirror).
-  const dnsNodes = !swarmNodes.length && BOOTSTRAP.dnsTxt
-    ? await fetchDnsMirror(BOOTSTRAP.dnsTxt)
-    : [];
   const candidates = [];
   const seen = new Set();
   const push = (c) => {
@@ -456,16 +451,34 @@ async function refreshPeers() {
     seen.add(key);
     candidates.push(c);
   };
-  for (const n of [...swarmNodes, ...dnsNodes]) {
-    if (n && (n.node_id || n.ticket)) {
-      push({ node_id: n.node_id || null, relay: n.relay || null, ticket: n.ticket || null });
+
+  // Private-mode link (#seed=…): dial ONLY the operator's node (and the
+  // peers it reports via hello) — the public swarm list is skipped so a
+  // classroom's graded work never lands on a volunteer's machine.
+  const urlSeed = urlSeedCandidate(urlBootstrap.seed);
+  if (urlSeed) {
+    push(urlSeed);
+  } else {
+    // Live bootstrap list first (current members) — no compiled seeds in
+    // the public build; operator-configured ids/tickets (private swarms)
+    // are dialed too. Dedupe by node_id (falling back to ticket).
+    const swarmNodes = await fetchSwarmNodes();
+    // DNS TXT fallback when the list is unreachable (independent, tiered
+    // path — see fetchDnsMirror).
+    const dnsNodes = !swarmNodes.length && BOOTSTRAP.dnsTxt
+      ? await fetchDnsMirror(BOOTSTRAP.dnsTxt)
+      : [];
+    for (const n of [...swarmNodes, ...dnsNodes]) {
+      if (n && (n.node_id || n.ticket)) {
+        push({ node_id: n.node_id || null, relay: n.relay || null, ticket: n.ticket || null });
+      }
     }
-  }
-  for (const n of BOOTSTRAP.nodes || []) {
-    if (n && n.node_id) push({ node_id: n.node_id, relay: n.relay || null, ticket: null });
-  }
-  for (const t of BOOTSTRAP.seedTickets || []) {
-    push({ node_id: null, relay: null, ticket: t });
+    for (const n of BOOTSTRAP.nodes || []) {
+      if (n && n.node_id) push({ node_id: n.node_id, relay: n.relay || null, ticket: null });
+    }
+    for (const t of BOOTSTRAP.seedTickets || []) {
+      push({ node_id: null, relay: null, ticket: t });
+    }
   }
   if (!candidates.length) {
     renderCluster();
@@ -503,7 +516,75 @@ async function refreshPeers() {
   setStatus(peers.size ? "ready" : "no cluster discovered", peers.size ? "" : "err");
 }
 
+// --- URL bootstrap (private-swarm links) ----------------------------
+// A professor can hand out one link to this hosted SPA with their node's
+// bootstrap baked into the URL fragment:
+//
+//   https://…/web/#seed=<EndpointTicket>
+//   https://…/web/#seed=<node_id>@<relay_url>&relay=<relay_url>
+//
+// The fragment (not `?query`) keeps the ticket out of server/CDN logs and
+// Referer headers. These are *bootstrap* credentials (a seed ticket, or a
+// stable node id + relay) — never an identity secret. A `#seed=` link puts
+// the SPA into private mode: the public swarm list is skipped.
+
+// Split `node_id@relay_url` into { node_id, relay }; null when the value
+// isn't that shape (e.g. a bare EndpointTicket).
+function splitNodeAtRelay(seed) {
+  const at = seed.indexOf("@");
+  if (at <= 0) return null;
+  const node_id = seed.slice(0, at).trim();
+  const relay = seed.slice(at + 1).trim();
+  return /^[0-9a-f]{64}$/.test(node_id) && relay ? { node_id, relay } : null;
+}
+
+// Percent-decode a fragment param without throwing on a hand-typed `%`.
+function decodeParam(s) {
+  try { return decodeURIComponent(s); } catch (e) { return s; }
+}
+
+// Parse the location fragment for `seed` and `relay` params.
+function parseUrlBootstrap() {
+  const out = { seed: null, relay: null };
+  const raw = (location.hash || "").replace(/^#/, "");
+  if (!raw) return out;
+  for (const part of raw.split("&")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    const k = decodeParam(part.slice(0, eq)).trim();
+    const v = decodeParam(part.slice(eq + 1)).trim();
+    if (k === "seed" && v) out.seed = v;
+    else if (k === "relay" && v) out.relay = v;
+  }
+  return out;
+}
+
+// Convert a #seed value into a discovery candidate (dialCandidate shape).
+function urlSeedCandidate(seed) {
+  const nr = splitNodeAtRelay(seed);
+  if (nr) return { node_id: nr.node_id, relay: nr.relay, ticket: null };
+  if (seed) return { node_id: null, relay: null, ticket: seed };
+  return null;
+}
+
 async function start() {
+  const url = parseUrlBootstrap();
+  if (url.seed) {
+    urlBootstrap.seed = url.seed;
+    // A #seed= link is a full private-mode bootstrap: drop any stale
+    // remembered ticket/relay so a student's earlier public session can't
+    // override the operator's node.
+    localStorage.removeItem("ephemeral.ticket");
+    localStorage.removeItem("ephemeral.relay");
+    // A bare EndpointTicket also pre-fills the manual field (so run() can
+    // submit straight to it); a `node_id@relay` value is handled purely by
+    // discovery and never belongs in the ticket box.
+    if (!splitNodeAtRelay(url.seed)) localStorage.setItem("ephemeral.ticket", url.seed);
+  }
+  if (url.relay) {
+    urlBootstrap.relay = url.relay;
+    localStorage.setItem("ephemeral.relay", url.relay);
+  }
   $("ticket").value = localStorage.getItem("ephemeral.ticket") || "";
   $("relay").value = localStorage.getItem("ephemeral.relay") || BOOTSTRAP.relay || "";
   setStatus("loading wasm…");

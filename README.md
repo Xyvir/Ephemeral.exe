@@ -668,7 +668,13 @@ The **public swarm** is only a non-starter for *graded* work. For **self-directe
 
 3. **Pre-warm it once** so students never wait on an image pull: `python scripts/hydrate_images.py` (at minimum `--only python,octave` for a MATLAB-style course).
 
-4. **Students connect from the browser** — open the SPA and paste the seed ticket into the manual seed field (or host the SPA yourself with the ticket baked in). From there it's the no-install loop: paste a codeblock, hit run, get the result.
+4. **Students connect from the browser** — hand out one link with the ticket baked into the URL fragment, and the client runs in **private mode** (it skips the public swarm and dials only your node):
+
+   ```text
+   https://xyvir.github.io/Ephemeral.exe/#seed=<the SWARM SEED TICKET from step 2>
+   ```
+
+   Nothing to paste and no self-hosting needed. From there it's the no-install loop: paste a codeblock, hit run, get the result.
 
 Honest notes: the professor's box is the trust anchor — everything executes there, so treat it like any autograder server. First-run latency is image-pull time unless you hydrated (step 3). And school firewalls may need the iroh relay hostname allowlisted, since browser↔node traffic traverses n0's public relays by default.
 

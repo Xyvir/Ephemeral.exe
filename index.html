@@ -9,7 +9,9 @@
   // Same redirect as the meta refresh, but via history.replace so the SPA
   // lands in the address bar instead of a redirect hop. Served at the site
   // root when Pages deploys the repo root (see README → GitHub Pages).
-  location.replace("ephemeral-wasm-library/web/");
+  // Preserve any #seed=/#relay= fragment so a private-swarm link works
+  // from the bare site root as well as the SPA's own path.
+  location.replace("ephemeral-wasm-library/web/" + location.hash);
 </script>
 </head>
 <body>

@@ -8,7 +8,9 @@
 <script>
   // Same redirect as the meta refresh, but via history.replace so the SPA
   // lands in the address bar instead of a redirect hop.
-  location.replace("../ephemeral-wasm-library/web/");
+  // Preserve any #seed=/#relay= fragment so a private-swarm link works
+  // from /docs/ as well as the SPA's own path.
+  location.replace("../ephemeral-wasm-library/web/" + location.hash);
 </script>
 </head>
 <body>
