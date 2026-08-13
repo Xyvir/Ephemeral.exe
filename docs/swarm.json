@@ -1,5 +1,5 @@
 {
-  "updated": "2026-08-13T17:35:28Z",
+  "updated": "2026-08-13T19:09:18Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
@@ -15,12 +15,12 @@
       ],
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-13T17:35:28Z",
+      "probe_at": "2026-08-13T19:09:18Z",
       "probe_detail": "ok",
-      "probe_ms": 4624,
+      "probe_ms": 9657,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 132
+      "rtt_ms": 3186
     },
     {
       "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
@@ -84,24 +84,10 @@
         "mcr.microsoft.com/powershell:latest"
       ],
       "probe_fails": 0,
-      "seen_alive": true,
-      "probe": "ok",
-      "probe_at": "2026-08-13T17:35:28Z",
-      "probe_detail": "ok",
-      "probe_ms": 3456,
-      "misses": 0,
-      "rtt_ms": 3526
-    },
-    {
-      "node_id": "63c40de71ed3a55ede738d7bb73f32c00262aabd4459997b2ca6baa76eff74c8",
-      "relay": "https://usw1-1.relay.n0.iroh.link./",
-      "ticket": "endpointabr4idphd3j2kxw6oogxxnz7glaaeyvkxvcftgl3fstlvj3o752mqbaaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbaaxjb3qcaeadjiffgsagqaiavqiqaamq5yba",
-      "images": [],
-      "probe_fails": 0,
       "misses": 1,
-      "seen_alive": false,
+      "seen_alive": true,
       "probe": "unreachable",
-      "probe_at": "2026-08-13T17:35:28Z"
+      "probe_at": "2026-08-13T19:09:18Z"
     }
   ]
 }
