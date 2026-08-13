@@ -1,36 +1,8 @@
 {
-  "updated": "2026-08-13T01:46:01Z",
+  "updated": "2026-08-13T02:24:58Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
-    {
-      "node_id": "ad2599506ffbde7dd0785650529ac14b41f7ab2d4f5591fde22bb7c267153c9e",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointacwslgkqn75547oqpblfauu2yffud55lfvhvlep54iv3pqthcu6j4ayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs73tdadaeambkaacs4yyay",
-      "images": [],
-      "probe": "ok",
-      "probe_at": "2026-08-13T01:46:01Z",
-      "probe_detail": "ok",
-      "probe_ms": 6003,
-      "probe_fails": 0,
-      "misses": 0,
-      "seen_alive": true,
-      "rtt_ms": 187
-    },
-    {
-      "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidaayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs7ypbidaeambkaacsdykay",
-      "images": [],
-      "probe": "ok",
-      "probe_at": "2026-08-13T01:46:01Z",
-      "probe_detail": "ok",
-      "probe_ms": 5988,
-      "probe_fails": 0,
-      "misses": 0,
-      "seen_alive": true,
-      "rtt_ms": 330
-    },
     {
       "node_id": "3006f2d2e520682828a849ab89960da65027d0de902aa529a803f707d1841eed",
       "relay": "https://usw1-1.relay.n0.iroh.link./",
@@ -43,12 +15,59 @@
       ],
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-13T01:46:01Z",
+      "probe_at": "2026-08-13T02:24:58Z",
       "probe_detail": "ok",
-      "probe_ms": 5932,
+      "probe_ms": 9309,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 6329
+      "rtt_ms": 191
+    },
+    {
+      "node_id": "ad2599506ffbde7dd0785650529ac14b41f7ab2d4f5591fde22bb7c267153c9e",
+      "relay": "https://use1-1.relay.n0.iroh.link./",
+      "ticket": "endpointacwslgkqn75547oqpblfauu2yffud55lfvhvlep54iv3pqthcu6j4baaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs74xoycaeaevjzmx64yyaybadakqaauxggag",
+      "images": [],
+      "seen_alive": true,
+      "probe": "failed",
+      "probe_at": "2026-08-13T02:24:58Z",
+      "probe_detail": "probe failed: offload to neighbor failed: ",
+      "probe_ms": 112375,
+      "probe_fails": 1,
+      "misses": 0,
+      "rtt_ms": 3129
+    },
+    {
+      "node_id": "12f1496041f0054e44834dbd727b81ddf48c97f94a579e274f446e3520dbb08d",
+      "relay": "https://use1-1.relay.n0.iroh.link./",
+      "ticket": "endpointaajpcslaihyaktseqng324t3qho7jdex7fffphrhj5cg4nja3oyi2baaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs743wydaeaevjzmx7g6uaybadakqaauzxvag",
+      "images": [],
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-13T02:24:58Z"
+    },
+    {
+      "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
+      "relay": "https://use1-1.relay.n0.iroh.link./",
+      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs7ypbidaeaevjzmx6h5waybadakqaauq6cqg",
+      "images": [],
+      "seen_alive": true,
+      "probe_fails": 0,
+      "misses": 1,
+      "probe": "unreachable",
+      "probe_at": "2026-08-13T02:24:58Z"
+    },
+    {
+      "node_id": "3259979d48dd4967e6eb73c9308882631ccc1bd3558fc2669610c72dbe2c4754",
+      "relay": "https://usw1-1.relay.n0.iroh.link./",
+      "ticket": "endpointaazftf45jdousz7g5nz4smeiqjrrzta32nky7qtgsyimoln6frdvibaaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbacuitsqcaeadj6xtekadqaiavqiqaamjziba",
+      "images": [],
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-13T02:24:58Z"
     }
   ]
 }
