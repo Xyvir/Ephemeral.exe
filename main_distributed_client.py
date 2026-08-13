@@ -2,8 +2,14 @@
 Ephemeral Distributed Client — Windows tray application (``ephemeral-distributed.exe``).
 
 A portable Windows tray utility packaged with the ``iroh`` Python extension.
-It joins the ephemeral cluster as a compute node and runs clipboard-driven
-code with intelligent nearest-neighbor offloading:
+
+Hybrid node model (one identity per machine): when the always-on background
+node (``--service``, installed from the tray menu) is running, the tray is a
+thin client — it submits jobs to that node over localhost and starts no node
+of its own, so a machine contributes a single identity to the swarm. When no
+service is reachable, the tray falls back to running its own compute node
+exactly like the original client (no admin, no service required). Either way
+it runs clipboard-driven code with intelligent nearest-neighbor offloading:
 
 * jobs execute through the node's sandboxed executor (image allowlist,
   ``unsafe`` stripped, hard container limits) — locally when the image is
@@ -33,12 +39,19 @@ Usage:
     python main_distributed_client.py --service       # Always-on node (background service)
     python main_distributed_client.py --install-service   # (elevated) register the service
     python main_distributed_client.py --uninstall-service # (elevated) remove the service
+
+Localhost control API (in ``--service`` mode): the background node listens
+on ``127.0.0.1:8788`` (override ``EPHEMERAL_SERVICE_PORT``) exposing
+``GET /health``, ``POST /ephemeral/api/v1/run``, and ``GET /artifact`` so
+any local user's tray can drive it without running its own node.
 """
 from __future__ import annotations
 
 import asyncio
 import base64
 import ctypes
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 import logging
 import os
 from pathlib import Path
@@ -47,8 +60,12 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 # GUI deps are optional (CLI/self-check work without them).
 try:
@@ -105,10 +122,19 @@ if EPHEMERAL_SEEDS:
     # Explicit tickets (private network) replace the default swarm nodes.
     EPHEMERAL_SEED_NODES = []
 _hex_secret = os.getenv("EPHEMERAL_SECRET", "")
-EPHEMERAL_SECRET = (
-    bytes.fromhex(_hex_secret) if _hex_secret else load_or_create_secret()
+# Lazy: the tray only materializes an identity when it actually starts its
+# own node (standalone fallback / service). Thin-client mode never touches
+# the secret, so no second identity is ever created on disk.
+EPHEMERAL_SECRET: bytes | None = (
+    bytes.fromhex(_hex_secret) if _hex_secret else None
 )
 EPHEMERAL_ALLOW_NETWORK = os.getenv("EPHEMERAL_ALLOW_NETWORK", "0") == "1"
+
+# Localhost port the background node's control API listens on, so
+# thin-client trays from any local user drive this node instead of
+# starting their own (one identity per machine).
+SERVICE_PORT = int(os.getenv("EPHEMERAL_SERVICE_PORT", "8788"))
+SERVICE_URL = f"http://127.0.0.1:{SERVICE_PORT}"
 
 
 # --- Cluster lifecycle (dedicated event loop thread) ---------------------
@@ -154,7 +180,7 @@ class Cluster:
         from ephemeral_net.sandbox import CoreJobExecutor
 
         node = Node(
-            secret_key=EPHEMERAL_SECRET,
+            secret_key=EPHEMERAL_SECRET or load_or_create_secret(),
             relay=EPHEMERAL_RELAY,
         )
         local = CoreJobExecutor(
@@ -245,6 +271,210 @@ def rebuild_markdown(blocks: list[dict]) -> str:
     return "\n".join(parts)
 
 
+# --- Hybrid execution: background service preferred, own node fallback ----
+# One identity per machine: when the always-on background node answers, the
+# tray is a thin client driving it over localhost. Otherwise the tray runs
+# its own node (standalone) exactly like the original client.
+
+service_ok = False  # True when the installed background node answers /health
+
+
+def run_through_cluster(blob: str, timeout: int) -> dict:
+    """Run a base64 markdown document through the local cluster node.
+
+    Returns a RunResponse dict (``exit_code``/``stdout``/``stderr``/
+    ``artifact_file``/``artifact_ext``); ``artifact_path`` is additionally
+    set in standalone mode, where the produced file is on this machine.
+    Raises RuntimeError on job rejection or a missing result.
+    """
+    request = JobRequest(
+        job_id=f"local-{int(time.time() * 1000)}",
+        document_blob=blob,
+        timeout=timeout,
+    )
+    events = cluster.submit(request)
+    errors = [e for e in events if isinstance(e, JobErrorEvent)]
+    if errors:
+        raise RuntimeError(errors[0].message)
+    dones = [e for e in events if isinstance(e, JobDoneEvent)]
+    if not dones:
+        raise RuntimeError("job ended without a result")
+    done = dones[-1]
+    result = {
+        "exit_code": done.exit_code,
+        "stdout": done.stdout or "",
+        "stderr": done.stderr or "",
+        "artifact_file": done.artifact_file,
+        "artifact_ext": (
+            os.path.splitext(done.artifact_file or "")[1].lstrip(".") or None
+        ),
+    }
+    if done.artifact_path and os.path.isfile(done.artifact_path):
+        result["artifact_path"] = done.artifact_path
+    return result
+
+
+def _ensure_cluster() -> None:
+    """Start the tray's own node (standalone fallback), if not already up."""
+    if cluster.node is None:
+        cluster.start()
+
+
+def service_available() -> bool:
+    """True when the installed background node's localhost API answers."""
+    try:
+        with urllib.request.urlopen(SERVICE_URL + "/health", timeout=2) as res:
+            return res.status == 200
+    except Exception:
+        return False
+
+
+def fetch_service_status() -> dict:
+    """Health/identity snapshot from the background node."""
+    with urllib.request.urlopen(SERVICE_URL + "/health", timeout=3) as res:
+        return json.loads(res.read().decode("utf-8"))
+
+
+def submit_via_service(blob: str, timeout: int = 300) -> dict:
+    """POST a job to the background node; returns its RunResponse dict."""
+    body = json.dumps({"document_blob": blob, "timeout": timeout}).encode("utf-8")
+    req = urllib.request.Request(
+        SERVICE_URL + "/ephemeral/api/v1/run",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout + 60) as res:
+            return json.loads(res.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read().decode("utf-8")).get("detail", str(e))
+        except Exception:
+            detail = str(e)
+        raise RuntimeError(detail) from e
+
+
+def download_artifact(name: str) -> Path:
+    """Fetch an artifact produced by the background node into a temp file."""
+    dest_dir = Path(tempfile.gettempdir()) / "ephemeral-service-artifacts"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / os.path.basename(name)
+    url = f"{SERVICE_URL}/artifact?name={urllib.parse.quote(os.path.basename(name))}"
+    with urllib.request.urlopen(url, timeout=120) as res, open(dest, "wb") as f:
+        shutil.copyfileobj(res, f)
+    return dest
+
+
+# --- Localhost control API (runs inside --service; stdlib only) -----------
+# Kept dependency-free on purpose: the distributed EXE must not grow a
+# FastAPI/uvicorn dependency just to serve its own tray.
+
+SERVICE_ARTIFACTS_DIR: Path | None = None
+
+
+def service_health() -> dict | None:
+    """Server-side health snapshot; None while the node is still starting."""
+    if cluster.node is None:
+        return None
+    info = {"status": "ok", "node_id": cluster.node.node_id()}
+    try:
+        info["peers"] = len(cluster.node.table)
+    except Exception:
+        pass
+    try:
+        info["warm_images"] = sorted(cluster.node.warm_images() or [])
+    except Exception:
+        pass
+    return info
+
+
+class _ServiceHandler(BaseHTTPRequestHandler):
+    """Minimal stdlib HTTP API for thin-client trays."""
+
+    server_version = "Ephemeral-Service/1.0"
+
+    def log_message(self, fmt, *args):  # keep tray consoles quiet
+        pass
+
+    def _send_json(self, code: int, obj: dict) -> None:
+        body = json.dumps(obj).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/health":
+            info = service_health()
+            self._send_json(200 if info else 503, info or {"status": "starting"})
+            return
+        if parsed.path == "/artifact":
+            name = (urllib.parse.parse_qs(parsed.query).get("name") or [""])[0]
+            path = (SERVICE_ARTIFACTS_DIR or Path()) / os.path.basename(name)
+            if not name or not path.is_file():
+                self._send_json(404, {"detail": "artifact not found"})
+                return
+            body = path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self._send_json(404, {"detail": "not found"})
+
+    def do_POST(self) -> None:
+        if urllib.parse.urlparse(self.path).path != "/ephemeral/api/v1/run":
+            self._send_json(404, {"detail": "not found"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            blob = payload.get("document_blob") or ""
+            timeout = int(payload.get("timeout") or 300)
+        except Exception as e:
+            self._send_json(400, {"detail": f"bad request: {e}"})
+            return
+        try:
+            result = run_through_cluster(blob, timeout)
+        except RuntimeError as e:
+            self._send_json(422, {"detail": str(e)})
+            return
+        except Exception as e:
+            self._send_json(500, {"detail": f"unexpected error: {e}"})
+            return
+        # Copy the artifact into the user-profile dir so any local tray
+        # (any user on this machine) can fetch it over HTTP.
+        if result.get("artifact_path") and os.path.isfile(result["artifact_path"]):
+            name = os.path.basename(result["artifact_path"])
+            try:
+                shutil.copy2(
+                    result["artifact_path"], (SERVICE_ARTIFACTS_DIR or Path()) / name
+                )
+                result["artifact_file"] = name
+            except Exception:
+                pass
+        result.pop("artifact_path", None)
+        self._send_json(200, result)
+
+
+def start_local_service_api(state_dir: Path) -> None:
+    """Expose the background node over localhost for thin-client trays."""
+    global SERVICE_ARTIFACTS_DIR
+    SERVICE_ARTIFACTS_DIR = state_dir / "artifacts"
+    SERVICE_ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    server = ThreadingHTTPServer(("127.0.0.1", SERVICE_PORT), _ServiceHandler)
+    threading.Thread(
+        target=server.serve_forever, daemon=True, name="ephemeral-local-api"
+    ).start()
+    logging.getLogger("ephemeral").info(
+        "local API listening on http://127.0.0.1:%d", SERVICE_PORT
+    )
+
+
 def run_logic(icon, content=None):
     """Clipboard-driven execution through the cluster node."""
     if content is None:
@@ -280,61 +510,76 @@ def run_logic(icon, content=None):
         icon.notify("Clipboard only contains seed files.", title="Ephemeral Error")
         return
 
+    global service_ok
+
     markdown = rebuild_markdown(blocks)
-    request = JobRequest(
-        job_id=f"local-{int(time.time() * 1000)}",
-        document_blob=base64.b64encode(markdown.encode("utf-8")).decode("ascii"),
-        timeout=300,
-    )
+    blob = base64.b64encode(markdown.encode("utf-8")).decode("ascii")
+
+    if not service_ok:
+        try:
+            _ensure_cluster()
+        except Exception as e:
+            show_post_mortem_error(f"Cluster execution error:\n{e}")
+            icon.notify("Cluster execution failed.", title="Ephemeral Failed")
+            return
 
     set_icon_animation_state(icon, True)
+    result = None
     try:
-        events = cluster.submit(request)
+        if service_ok:
+            result = submit_via_service(blob, timeout=300)
+        else:
+            result = run_through_cluster(blob, timeout=300)
     except Exception as e:
-        show_post_mortem_error(f"Cluster execution error:\n{e}")
-        icon.notify("Cluster execution failed.", title="Ephemeral Failed")
-        return
+        # The service may have gone down mid-run: fall back to the tray's
+        # own node once before surfacing the error.
+        if service_ok:
+            service_ok = False
+            try:
+                _ensure_cluster()
+                result = run_through_cluster(blob, timeout=300)
+            except Exception as e2:
+                show_post_mortem_error(f"Cluster execution error:\n{e2}")
+                icon.notify("Cluster execution failed.", title="Ephemeral Failed")
+                return
+        else:
+            show_post_mortem_error(f"Cluster execution error:\n{e}")
+            icon.notify("Cluster execution failed.", title="Ephemeral Failed")
+            return
     finally:
         set_icon_animation_state(icon, False)
 
-    errors = [e for e in events if isinstance(e, JobErrorEvent)]
-    if errors:
-        show_post_mortem_error(f"Ephemeral Error:\n{errors[0].message}")
-        icon.notify("Execution rejected.", title="Ephemeral Error")
-        return
+    artifact_local = result.get("artifact_path")
+    if not artifact_local and result.get("artifact_file"):
+        # Artifact produced on the background node — fetch it over localhost.
+        try:
+            artifact_local = str(download_artifact(result["artifact_file"]))
+        except Exception as e:
+            icon.notify(f"Artifact download failed: {e}", title="Ephemeral Error")
 
-    dones = [e for e in events if isinstance(e, JobDoneEvent)]
-    if not dones:
-        icon.notify("Job ended without a result.", title="Ephemeral Error")
-        return
-    done = dones[-1]
-
-    # Route artifacts when they were produced on this node.
-    if done.artifact_path and os.path.exists(done.artifact_path):
-        result = ephemeral_core.ExecutionResult(
-            stdout=done.stdout,
-            stderr=done.stderr,
-            exit_code=done.exit_code,
-            artifact_paths=[done.artifact_path],
-            artifact_dir=os.path.dirname(done.artifact_path),
+    if artifact_local:
+        routed = ephemeral_core.ExecutionResult(
+            stdout=result.get("stdout", ""),
+            stderr=result.get("stderr", ""),
+            exit_code=result.get("exit_code", 0),
+            artifact_paths=[artifact_local],
+            artifact_dir=os.path.dirname(artifact_local),
         )
-        route_artifacts_local(result, "distributed", icon)
-    elif done.artifact_file:
-        icon.notify(
-            f"Artifact generated on the compute node: {done.artifact_file}",
-            title="Ephemeral",
-        )
+        route_artifacts_local(routed, "distributed", icon)
 
-    if done.exit_code != 0:
-        show_post_mortem_error(done.stderr or f"Exit code {done.exit_code}")
+    if result.get("exit_code") != 0:
+        show_post_mortem_error(
+            result.get("stderr") or f"Exit code {result.get('exit_code')}"
+        )
         icon.notify("Execution Failed. Debug window opened.", title="Ephemeral Error")
         return
 
-    if done.stdout:
+    stdout = result.get("stdout") or ""
+    if stdout:
         if CLI_MODE:
-            print(done.stdout)
+            print(stdout)
         else:
-            pyperclip.copy(done.stdout)
+            pyperclip.copy(stdout)
         icon.notify("Execution Finished. Results copied.", title="Ephemeral")
 
 
@@ -581,6 +826,19 @@ def on_uninstall_service(icon, item_unused=None):
                 title="Ephemeral")
 
 
+def toggle_service(icon, item_unused=None):
+    """One menu item that installs or removes the background node.
+
+    Shows a checkmark while the scheduled task exists (same pattern as the
+    "Install && Run on Boot" toggle); clicking always re-prompts UAC and
+    flips the state.
+    """
+    if service_installed():
+        on_uninstall_service(icon)
+    else:
+        on_install_service(icon)
+
+
 def purge_cache(icon, item_unused):
     icon.notify("Pruning unused images... this may take a moment.", title="Ephemeral Maintenance")
     startupinfo = get_startupinfo()
@@ -625,7 +883,23 @@ def on_hotkey(icon):
 
 
 def on_cluster_info(icon, item_unused=None):
-    icon.notify(cluster.info(), title="Ephemeral Cluster")
+    global service_ok
+    if service_ok:
+        try:
+            info = fetch_service_status()
+        except Exception:
+            info = None
+        if info:
+            lines = ["Mode: background service (one identity per machine)"]
+            lines.append(f"Node:     {info.get('node_id')}")
+            lines.append(f"Peers:    {info.get('peers', '?')}")
+            lines.append(f"Warm images: {len(info.get('warm_images') or [])}")
+            icon.notify("\n".join(lines), title="Ephemeral Cluster")
+            return
+        service_ok = False  # service vanished — fall back to the local node
+    lines = ["Mode: standalone (tray's own node)"]
+    lines.append(cluster.info())
+    icon.notify("\n".join(lines), title="Ephemeral Cluster")
 
 
 def quit_app(icon, item_unused=None):
@@ -754,15 +1028,28 @@ if __name__ == '__main__':
             "background node started: node_id=%s",
             cluster.node.node_id() if cluster.node else "?",
         )
+        # Thin-client trays (any local user) drive this node over localhost
+        # instead of starting their own — one identity per machine.
+        try:
+            start_local_service_api(service_state)
+        except Exception as e:
+            logging.getLogger("ephemeral").exception(
+                "local control API failed to start: %s", e
+            )
         while True:
             time.sleep(3600)
 
-    # Start the cluster node before doing anything else.
-    try:
-        cluster.start()
-    except Exception as e:
-        print(f"Cluster start failed: {e}")
-        sys.exit(1)
+    # Hybrid identity: prefer the installed background node (one identity
+    # per machine — thin client). Only when no service is reachable do we
+    # start the tray's own node, preserving the zero-admin standalone
+    # behavior of the original client.
+    service_ok = service_available()
+    if not service_ok:
+        try:
+            cluster.start()
+        except Exception as e:
+            print(f"Cluster start failed: {e}")
+            sys.exit(1)
 
     if len(sys.argv) > 1 and os.path.exists(sys.argv[-1]):
         file_target = sys.argv[-1]
@@ -796,10 +1083,9 @@ if __name__ == '__main__':
         menu = (
             item('Run Clipboard', lambda icon, i: on_hotkey(icon), default=True),
             item('Install && Run on Boot', toggle_startup, checked=lambda item: check_startup()),
-            item('Install Background Service', on_install_service,
-                 visible=lambda i: sys.platform == 'win32' and not service_installed()),
-            item('Uninstall Background Service', on_uninstall_service,
-                 visible=lambda i: sys.platform == 'win32' and service_installed()),
+            item('Background Service', toggle_service,
+                 checked=lambda i: service_installed(),
+                 visible=lambda i: sys.platform == 'win32'),
             item('Force Stop All Runs', force_stop_all),
             item('Clear Image Cache', purge_cache),
             item('Cluster Status', on_cluster_info),
