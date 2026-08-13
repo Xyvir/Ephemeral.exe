@@ -219,29 +219,67 @@ function highlightCodeHeaders() {
   }
 }
 
-function setStatus(text, cls) {
-  const el = $("status");
-  el.textContent = text;
-  el.className = "status" + (cls ? " " + cls : "");
+// One status pill in the header: it communicates both the network mode
+// (public/private) and the connection lifecycle (joining… → Public/Private),
+// with errors shown in red. Transient detail (node counts, job progress)
+// lives in the pill's hover tooltip, keeping the header to one element.
+let modePrivate = false;
+let connState = "connecting";   // "connecting" | "ready" | "error"
+let pillErr = "";
+
+function renderMode() {
+  const el = $("mode");
+  let label, cls;
+  if (connState === "error") {
+    label = pillErr;
+    cls = "mode mode-err";
+  } else if (connState === "ready") {
+    label = modePrivate ? "Private" : "Public";
+    cls = modePrivate ? "mode mode-private" : "mode mode-public";
+  } else {
+    label = modePrivate ? "joining private…" : "joining public…";
+    cls = (modePrivate ? "mode mode-private" : "mode mode-public") + " mode-joining";
+  }
+  el.textContent = label;
+  el.className = cls;
 }
 
-// PUBLIC / PRIVATE network indicator: a `#seed=` link puts the SPA in
-// private mode (public swarm skipped), which flips the header badge and
-// the disclaimer under the Run button.
+// Connection/validation status: updates the tooltip and drives the pill.
+// Errors are sticky-red; "ready" resolves to Public/Private; other
+// transient text keeps the pill in its joining state (but never demotes
+// an already-ready pill back to "joining…" during a post-run re-sync).
+function setStatus(text, cls) {
+  $("mode").title = text;
+  if (cls === "err") {
+    connState = "error";
+    pillErr = text;
+  } else if (text === "ready") {
+    connState = "ready";
+  } else if (connState !== "ready") {
+    connState = "connecting";
+  }
+  renderMode();
+}
+
+// Tooltip-only detail (job progress / outcome): the pill keeps showing
+// mode + connection state; the hover title carries the specifics.
+function setDetail(text) {
+  $("mode").title = text;
+}
+
+// A `#seed=` link puts the SPA in private mode (public swarm skipped):
+// it flips the pill's mode and the disclaimer under the Run button.
 function setMode(privateMode) {
-  const modeEl = $("mode");
+  modePrivate = privateMode;
   const noteEl = $("runNote");
   if (privateMode) {
-    modeEl.textContent = "PRIVATE";
-    modeEl.className = "mode mode-private";
     noteEl.className = "run-note private";
     noteEl.innerHTML = "<strong class=\"caps\">Private network</strong> — jobs run only on the node(s) you connected to, not the public swarm.";
   } else {
-    modeEl.textContent = "PUBLIC";
-    modeEl.className = "mode mode-public";
     noteEl.className = "run-note";
     noteEl.innerHTML = "<strong class=\"caps\">Public network</strong> — anything you submit is <strong>public knowledge</strong>. No privacy guarantee. For private use, self-host.";
   }
+  renderMode();
 }
 
 // Spin the icon inside the Run button (and disable the button) while a
@@ -645,7 +683,7 @@ async function run() {
   runArtifacts = [];
   outputRaw = "";
   $("output").textContent = "";
-  setStatus(`running on ${shortId(target.node_id)}…`);
+  setDetail(`running on ${shortId(target.node_id)}…`);
   setBusy(true);
 
   const onEvent = (jsonStr) => {
@@ -671,11 +709,10 @@ async function run() {
         // Legacy nodes that only report metadata, not bytes.
         appendOut(`[artifact: ${evt.artifact_file}${evt.artifact_ext || ""}]`, "done");
       }
-      setStatus(evt.exit_code === 0 ? "done (exit 0)" : `failed (exit ${evt.exit_code})`,
-                evt.exit_code === 0 ? "" : "err");
+      setDetail(evt.exit_code === 0 ? "done (exit 0)" : `failed (exit ${evt.exit_code})`);
     } else if (evt.type === "error") {
       appendOut(evt.message, "err");
-      setStatus("rejected", "err");
+      setDetail("rejected");
     }
   };
   // iroh-native dial by stable node id + relay; ticket only as a
@@ -688,7 +725,7 @@ async function run() {
     await submit();
     refreshPeers(); // re-sync the peer table after each run (non-blocking)
   } catch (e) {
-    setStatus("error", "err");
+    setDetail("error");
     appendOut(String(e), "err");
   } finally {
     setBusy(false);

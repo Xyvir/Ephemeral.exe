@@ -45,22 +45,24 @@ h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em; color: v
 
 .meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 #nodeId { color: var(--text); }
-.status { color: var(--muted); }
-.status.err { color: var(--err); }
 
-/* PUBLIC / PRIVATE network badge in the header (flipped by #seed=). */
+/* Single header pill: connection status + mode (joining… → Public/Private),
+   with errors in red and transient detail in the hover tooltip. */
 .mode {
   display: inline-block;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .08em;
-  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  padding: 3px 9px;
   border-radius: 999px;
-  text-transform: uppercase;
   line-height: 1;
+  white-space: nowrap;
+  cursor: default;
 }
 .mode-public { color: #e6a23c; border: 1px solid #e6a23c; }
 .mode-private { color: var(--ok); border: 1px solid var(--ok); }
+.mode-joining { border-style: dashed; opacity: .75; }
+.mode-err { color: var(--err); border: 1px solid var(--err); }
 
 section {
   background: var(--panel);
