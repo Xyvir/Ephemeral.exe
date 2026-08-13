@@ -81,6 +81,12 @@ WEB_SPA_URL = os.getenv("EPHEMERAL_WEB_URL", "https://xyvir.github.io/Ephemeral.
 # it on for the process.
 PRIVATE_MODE_MARKER = "private_mode"
 
+# Marker filename holding the seed a private node JOINS (an EndpointTicket
+# or ``node_id@relay``). When private mode is on and this is empty, the
+# node is its own seed (a NEW swarm); when set, it bootstraps from that
+# existing swarm.
+PRIVATE_SEED_MARKER = "private_seed"
+
 
 def private_student_url(ticket: str) -> str:
     """The one-link URL students open to reach this (private) node."""
@@ -103,6 +109,39 @@ def private_mode_enabled(
     if argv and "--private" in argv:
         return True
     return ((state_dir or default_state_dir()) / PRIVATE_MODE_MARKER).exists()
+
+
+def read_private_seed(state_dir: Path | None = None) -> str | None:
+    """The persisted seed (ticket or ``node_id@relay``) a private node
+    joins — ``None`` when none is set (self-seed / create a new swarm)."""
+    p = (state_dir or default_state_dir()) / PRIVATE_SEED_MARKER
+    try:
+        val = p.read_text(encoding="utf-8").strip()
+        return val or None
+    except OSError:
+        return None
+
+
+def write_private_seed(seed: str | None, state_dir: Path | None = None) -> None:
+    """Persist the private swarm's join seed, or clear it when None/empty."""
+    p = (state_dir or default_state_dir()) / PRIVATE_SEED_MARKER
+    if seed:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(seed, encoding="utf-8")
+    else:
+        try:
+            p.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def parse_private_seed(seed: str) -> tuple[list[str], list[tuple[str, str]]]:
+    """Split a private seed value into ``(seeds, seed_nodes)`` for bootstrap."""
+    if not seed:
+        return [], []
+    if "@" in seed:
+        return [], parse_seed_nodes(seed)
+    return parse_seeds(seed), []
 
 
 def fetch_swarm_list(urls: Sequence[str] | None = None) -> list[dict]:
@@ -278,6 +317,7 @@ __all__ = [
     "DEFAULT_RELAY",
     "DOH_ENDPOINTS",
     "PRIVATE_MODE_MARKER",
+    "PRIVATE_SEED_MARKER",
     "SWARM_DNS_TXT",
     "SWARM_LIST_URLS",
     "WEB_SPA_URL",
@@ -285,9 +325,12 @@ __all__ = [
     "fetch_swarm_list",
     "fetch_swarm_list_dns",
     "load_or_create_secret",
+    "parse_private_seed",
     "parse_seed_nodes",
     "parse_seeds",
     "parse_swarm_list_dns",
     "private_mode_enabled",
     "private_student_url",
+    "read_private_seed",
+    "write_private_seed",
 ]

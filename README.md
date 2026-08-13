@@ -679,6 +679,8 @@ Nothing to paste and no self-hosting needed: students open it in any browser and
 
 3. Hand out the `SWARM PRIVATE URL` — same as the desktop flow above.
 
+**Join an existing private swarm instead of starting one:** the swarm owner's `SWARM SEED TICKET` log line is the key. On the desktop, click **Private Mode** and *paste that ticket* when prompted (leave it empty to start a new swarm); on a server, set `EPHEMERAL_SEEDS=<the owner's ticket>` (optionally alongside `EPHEMERAL_PRIVATE=1`). Either way the node bootstraps from that seed and stays off the public list.
+
 Either way, pre-warm the images once so students never wait on a pull: `python scripts/hydrate_images.py` (at minimum `--only python,octave` for a MATLAB-style course).
 
 Honest notes: the professor's box is the trust anchor — everything executes there, so treat it like any autograder server. First-run latency is image-pull time unless you pre-warmed (see above). And school firewalls may need the iroh relay hostname allowlisted, since browser↔node traffic traverses n0's public relays by default.

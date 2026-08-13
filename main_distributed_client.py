@@ -98,10 +98,13 @@ from ephemeral_net.swarm import (
     PRIVATE_MODE_MARKER,
     default_state_dir,
     load_or_create_secret,
+    parse_private_seed,
     parse_seed_nodes,
     parse_seeds,
     private_mode_enabled,
     private_student_url,
+    read_private_seed,
+    write_private_seed,
 )
 
 # Reuse the local client's platform plumbing (icon, clipboard, language
@@ -208,13 +211,19 @@ class Cluster:
             await node.bootstrap_nodes(EPHEMERAL_SEED_NODES)
         elif EPHEMERAL_SEEDS:
             await node.bootstrap(EPHEMERAL_SEEDS)
-        elif not private_mode_enabled(argv=sys.argv):
+        elif private_mode_enabled(argv=sys.argv):
+            # Private mode: join an existing swarm when a seed is persisted,
+            # otherwise this node is its own seed (a NEW swarm) — dial
+            # nothing, just accept incoming connections.
+            seeds, seed_nodes = parse_private_seed(read_private_seed() or "")
+            if seed_nodes:
+                await node.bootstrap_nodes(seed_nodes)
+            elif seeds:
+                await node.bootstrap(seeds)
+        else:
             # No compiled-in seeds: join the public swarm via the live
             # bootstrap list (docs/swarm.json) — fully automatic.
             await node.bootstrap_from_list()
-        # private && no explicit seeds → this node is its own seed: dial
-        # nothing, just accept incoming connections (students dial us by
-        # ticket through the hosted SPA's #seed= link).
         self.node = node
 
     def stop(self) -> None:
@@ -441,6 +450,83 @@ def _apply_private_mode(enabled: bool) -> None:
         marker.unlink(missing_ok=True)
 
 
+def prompt_user_for_seed(current_seed: str = "") -> str | None:
+    """Ask for a seed ticket (or ``node_id@relay``) to join a private swarm.
+
+    Empty input means "create a new swarm" (self-seed). Returns ``None``
+    when the prompt could not be shown. Windows uses a cmd.exe console;
+    Linux uses zenity -> kdialog -> tkinter -> stdin.
+    """
+    prompt = (
+        "Paste the swarm's seed ticket (or node_id@relay) to JOIN it,\n"
+        "or leave empty to CREATE a new private swarm."
+    )
+    if current_seed:
+        prompt += f"\n\nCurrent seed: {current_seed}"
+    if sys.platform != "win32":
+        return _prompt_user_for_seed_linux(prompt)
+    fd_out, path_out = tempfile.mkstemp(suffix=".txt")
+    os.close(fd_out)
+    fd_bat, path_bat = tempfile.mkstemp(suffix=".bat")
+    os.close(fd_bat)
+    try:
+        with open(path_bat, "w") as f:
+            f.write("@echo off\n")
+            f.write("title Ephemeral: Private swarm\n")
+            f.write("cls\n")
+            f.write("echo.\n")
+            for line in prompt.split("\n"):
+                f.write(f"echo  {line}\n")
+            f.write("echo.\n")
+            f.write('set /p "seed= Seed (empty = create new): "\n')
+            f.write(f'echo %seed%> "{path_out}"\n')
+        subprocess.run(path_bat, creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+        if os.path.exists(path_out):
+            with open(path_out, "r") as f:
+                return f.read().strip() or ""
+    except Exception as e:
+        print(f"Input error: {e}")
+        return None
+    finally:
+        if os.path.exists(path_out):
+            os.remove(path_out)
+        if os.path.exists(path_bat):
+            os.remove(path_bat)
+    return None
+
+
+def _prompt_user_for_seed_linux(prompt: str) -> str | None:
+    try:
+        if shutil.which("zenity"):
+            out = subprocess.run(
+                ["zenity", "--entry", "--title=Ephemeral", "--text=" + prompt],
+                capture_output=True, text=True, timeout=120,
+            )
+            if out.returncode == 0:
+                return out.stdout.strip()
+        if shutil.which("kdialog"):
+            out = subprocess.run(
+                ["kdialog", "--inputbox", prompt, ""],
+                capture_output=True, text=True, timeout=120,
+            )
+            if out.returncode == 0:
+                return out.stdout.strip()
+        try:
+            import tkinter as _tk
+            from tkinter import simpledialog
+            root = _tk.Tk()
+            root.withdraw()
+            val = simpledialog.askstring("Ephemeral", prompt)
+            root.destroy()
+            return (val or "").strip()
+        except Exception:
+            pass
+        return input(prompt + " ").strip()
+    except Exception as e:
+        print(f"Input error: {e}")
+        return None
+
+
 class _ServiceHandler(BaseHTTPRequestHandler):
     """Minimal stdlib HTTP API for thin-client trays."""
 
@@ -485,11 +571,18 @@ class _ServiceHandler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", "0"))
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
                 enabled = bool(payload.get("enabled", False))
+                seed = payload.get("seed")
             except Exception as e:
                 self._send_json(400, {"detail": f"bad request: {e}"})
                 return
             try:
                 _apply_private_mode(enabled)
+                # Join an existing swarm (non-empty seed), or clear the
+                # seed when leaving private mode entirely.
+                if enabled:
+                    write_private_seed((seed or "").strip() or None)
+                else:
+                    write_private_seed(None)
                 cluster.stop()
                 cluster.start()
             except Exception as e:
@@ -949,42 +1042,79 @@ def private_checked(_item=None) -> bool:
     return private_mode_enabled(argv=sys.argv)
 
 
+def _post_private(icon, enabled, seed):
+    """Toggle the background node's private mode (and optional join seed)."""
+    payload = {"enabled": enabled}
+    if seed is not None:
+        payload["seed"] = seed
+    req = urllib.request.Request(
+        SERVICE_URL + "/private",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=90) as res:
+        return json.loads(res.read().decode("utf-8"))
+
+
+def _announce_private(icon, enabled, joined, url):
+    """Copy + notify the private-mode result and (when on) the student URL."""
+    if url and HAS_GUI:
+        pyperclip.copy(url)
+    if enabled:
+        header = "Joined existing private swarm" if joined else "Private mode ON — created a new swarm"
+    else:
+        header = "Private mode OFF (public swarm)"
+    icon.notify(
+        header + (("\n\nGive students this URL:\n" + url) if url else ""),
+        title="Ephemeral Private Mode",
+    )
+
+
 def toggle_private(icon, item_unused=None):
-    """Switch the serving node between the public swarm and private mode."""
+    """Enable/disable private mode. Enabling prompts for a seed ticket:
+    paste one to JOIN an existing swarm, or leave empty to CREATE a new one."""
     if service_ok:
         try:
-            new = not bool(fetch_service_status().get("private"))
+            currently = bool(fetch_service_status().get("private"))
         except Exception:
-            new = True
+            currently = False
+        if currently:
+            try:
+                _post_private(icon, False, None)
+            except Exception as e:
+                icon.notify(f"Could not toggle the background node: {e}", title="Ephemeral Error")
+                return
+            _announce_private(icon, False, False, None)
+            return
+        seed = prompt_user_for_seed()
+        if seed is None:
+            return
+        seed = seed.strip() or None
         try:
-            body = json.dumps({"enabled": new}).encode("utf-8")
-            req = urllib.request.Request(
-                SERVICE_URL + "/private",
-                data=body,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=90) as res:
-                resp = json.loads(res.read().decode("utf-8"))
+            resp = _post_private(icon, True, seed or "")
         except Exception as e:
             icon.notify(f"Could not toggle the background node: {e}", title="Ephemeral Error")
             return
-        url = resp.get("student_url")
-    else:
-        new = not private_mode_enabled(argv=sys.argv)
-        _apply_private_mode(new)
-        # Restart the node so the bootstrap decision takes effect.
+        _announce_private(icon, True, bool(seed), resp.get("student_url"))
+        return
+
+    if private_mode_enabled(argv=sys.argv):
+        _apply_private_mode(False)
+        write_private_seed(None)
         cluster.stop()
         cluster.start()
-        url = _student_url()
-    if url and HAS_GUI:
-        pyperclip.copy(url)
-    icon.notify(
-        ("Private mode ON — give students this URL:\n\n" if new
-         else "Private mode OFF (public swarm).\n\n")
-        + (url or "(node still starting — URL available shortly)"),
-        title="Ephemeral Private Mode",
-    )
+        _announce_private(icon, False, False, None)
+        return
+    seed = prompt_user_for_seed(read_private_seed() or "")
+    if seed is None:
+        return
+    seed = seed.strip() or None
+    _apply_private_mode(True)
+    write_private_seed(seed)
+    cluster.stop()
+    cluster.start()
+    _announce_private(icon, True, bool(seed), _student_url())
 
 
 def purge_cache(icon, item_unused):

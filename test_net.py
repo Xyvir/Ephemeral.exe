@@ -836,8 +836,11 @@ def test_private_mode_helpers():
 
     from ephemeral_net.swarm import (
         PRIVATE_MODE_MARKER,
+        parse_private_seed,
         private_mode_enabled,
         private_student_url,
+        read_private_seed,
+        write_private_seed,
     )
 
     url = private_student_url("ticket123")
@@ -864,7 +867,22 @@ def test_private_mode_helpers():
                 os.environ.pop("EPHEMERAL_PRIVATE", None)
             else:
                 os.environ["EPHEMERAL_PRIVATE"] = old
-    print("PASS: private mode helpers (flag/env/marker, student URL)")
+
+        # Private swarm join seed: persist/clear + parse into bootstrap args.
+        assert read_private_seed(state) is None
+        write_private_seed("endpoint-ticket-abc", state)
+        assert read_private_seed(state) == "endpoint-ticket-abc"
+        seeds, seed_nodes = parse_private_seed(read_private_seed(state))
+        assert seeds == ["endpoint-ticket-abc"] and seed_nodes == []
+        # node_id@relay parses as a node-id bootstrap.
+        nid = "a" * 64
+        write_private_seed(f"{nid}@https://relay.example.com.", state)
+        seeds, seed_nodes = parse_private_seed(read_private_seed(state))
+        assert seeds == [] and seed_nodes == [(nid, "https://relay.example.com.")]
+        # Clearing removes the marker.
+        write_private_seed(None, state)
+        assert read_private_seed(state) is None
+    print("PASS: private mode helpers (flag/env/marker, join seed, student URL)")
 
 
 # ---------------------------------------------------------------------------
