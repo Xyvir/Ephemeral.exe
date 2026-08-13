@@ -128,7 +128,12 @@ const DROPPED_OVERRIDES = ["image", "cmd", "entrypoint"];
 // (flags like `unsafe chain`, overrides like `image=...`).
 function fenceInfo(markdown) {
   const out = [];
-  const re = /```\s*([^\n`]*)/g;
+  // `[ \t]*` (not `\s*`) matters: a fence header lives on the same line
+  // as its opening fence. With `\s*` a closing ``` fence swallows the
+  // following newlines and the next Markdown heading (e.g. `## Node
+  // Example`) gets misread as a fence header — literate-programming prose
+  // would then show up as bogus `##`/`Node`/`Example` language chips.
+  const re = /```[ \t]*([^\n`]*)/g;
   let m;
   while ((m = re.exec(markdown)) !== null) {
     const tokens = m[1].trim().split(/\s+/).filter(Boolean);
