@@ -403,6 +403,7 @@ function splitMarkdown(md) {
       header,
       lang,
       code: body.join("\n"),
+      fence,
       isSeed: !!lang && !SUPPORTED_LANGUAGES.has(lang) && lang.includes("."),
     });
   }
@@ -433,7 +434,7 @@ function renderCodeSeg(seg) {
   div.className = "block source";
   const head = document.createElement("div");
   head.className = "source-head";
-  head.textContent = "```" + (seg.header ? seg.header : "");
+  head.textContent = seg.header || seg.lang || "code";
   div.appendChild(head);
   const pre = document.createElement("pre");
   pre.className = "code-block";
@@ -468,6 +469,7 @@ function renderProseSeg(seg) {
 function renderInterleaved() {
   const box = $("output");
   box.textContent = "";
+  box.classList.add("interleaved");
   if (!lastMarkdown) return;
   const results = splitResults(lastResultText);
   let ri = 0;
@@ -488,8 +490,27 @@ function renderInterleaved() {
 function renderNormal() {
   const box = $("output");
   box.textContent = "";
+  box.classList.remove("interleaved");
   if (lastOutputRaw) box.appendChild(resultElement(lastOutputRaw));
   box.scrollTop = box.scrollHeight;
+}
+
+// The interleaved document as plain Markdown: the original source with each
+// block's result spliced in after its code fence. Copy uses this while the
+// interleave toggle is on, so the clipboard matches what's on screen.
+function interleavedMarkdown() {
+  const parts = [];
+  const results = splitResults(lastResultText);
+  let ri = 0;
+  for (const seg of splitMarkdown(lastMarkdown)) {
+    if (seg.type === "prose") {
+      parts.push(seg.text);
+    } else {
+      parts.push(seg.fence + seg.header + "\n" + seg.code + "\n" + seg.fence);
+      if (!seg.isSeed && ri < results.length) parts.push(results[ri++]);
+    }
+  }
+  return parts.join("\n").replace(/\n+$/, "");
 }
 
 // btoa on a UTF-8 string (document_blob is base64-encoded UTF-8 Markdown).
@@ -822,6 +843,7 @@ async function run() {
   lastMarkdown = markdown;
   lastResultText = "";
   $("output").textContent = "";
+  $("output").classList.remove("interleaved");
   setDetail(`running on ${shortId(target.node_id)}…`);
   setBusy(true);
 
@@ -1092,7 +1114,10 @@ async function copyText(text, btn, restoreTitle) {
 }
 
 $("copyOutput").addEventListener("click", () => {
-  copyText(outputRaw.replace(/\n+$/, ""), $("copyOutput"), "Copy output");
+  const text = interleaved && lastMarkdown
+    ? interleavedMarkdown()
+    : outputRaw.replace(/\n+$/, "");
+  copyText(text, $("copyOutput"), "Copy output");
 });
 $("copyCode").addEventListener("click", () => {
   copyText(editor.getValue(), $("copyCode"), "Copy code");

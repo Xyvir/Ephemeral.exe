@@ -358,6 +358,16 @@ details.advanced .advanced-meta code { color: var(--accent-hi); }
 .interleave-h1 { font-size: 15px; }
 .interleave-h2 { font-size: 13px; }
 .interleave-h3 { font-size: 12px; color: var(--muted); }
+
+/* Source vs result: source code panels get a blue-tinted background, and
+   result blocks indent underneath their source block as children. */
+#output.interleaved .block.source .code-block { background: #131a22; border-color: #2a3644; }
+#output.interleaved .block.result {
+  margin-left: 18px;
+  border-left: 2px solid #2b2b2b;
+  padding-left: 10px;
+}
+#output.interleaved .block.result .code-block { background: #0d0d0f; border-color: #26282c; }
 .code-block {
   background: #0c0c0c;
   border: 1px solid #2b2b2b;
