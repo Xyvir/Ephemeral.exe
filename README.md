@@ -2,7 +2,7 @@
 
 ![Live swarm nodes](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FXyvir%2FEphemeral.exe%2Fmain%2Fdocs%2Fswarm-status.json&label=live%20nodes)
 
-**Ephemeral** is a **zero-friction, zero-barrier** way to run code — built for students, teachers, and analysts in math, engineering, and data science. It is a **one-shot** sandboxed code-execution engine that parses Markdown for codeblocks, runs them in isolated Podman containers, and extracts generated artifacts — a **literate-programming alternative to Jupyter notebooks** where the codeblocks live inside your **plaintext Markdown**, not a heavyweight notebook format. Rather than acting as a long-running daemon or task scheduler, it is a stateless, on-demand processing pipeline: highlight code in your notes, run it, paste the result back. It ships as a **Windows tray app**, a **Linux AppImage**, a **browser WebAssembly thin client**, and a **FastAPI server** (for remote sidecar execution), and it can run standalone or as a node in a peer-to-peer distributed compute network.
+**Ephemeral** is a **zero-friction, zero-barrier** way to run code — built for learners: students, teachers, self-taught experimenters, and analysts in math, engineering, and data science. It is a **one-shot** sandboxed code-execution engine that parses Markdown for codeblocks, runs them in isolated Podman containers, and extracts generated artifacts — a **literate-programming alternative to Jupyter notebooks** where the codeblocks live inside your **plaintext Markdown**, not a heavyweight notebook format. Rather than acting as a long-running daemon or task scheduler, it is a stateless, on-demand processing pipeline: highlight code in your notes, run it, paste the result back. It ships as a **Windows tray app**, a **Linux AppImage**, a **browser WebAssembly thin client**, and a **FastAPI server** (for remote sidecar execution), and it can run standalone or as a node in a peer-to-peer distributed compute network.
 
 ![Ephemeral Demo](ephemeral.gif)
 
@@ -12,12 +12,12 @@
 
 ### The Problem
 
-Running code should be as easy as reading it — especially for students, teachers, and analysts whose focus is math, engineering, or data, not systems administration. But today there's a wall of friction:
+Running code should be as easy as reading it — whether you're a student in a course, a teacher preparing notes, a self-taught learner experimenting on your own, or an analyst whose focus is math, engineering, or data rather than systems administration. But today there's a wall of friction:
 
 * **Jupyter Notebooks** are the classic literate-programming tool, but they're heavyweight: a kernel to install and keep alive, a browser UI, hidden cell state, and `.ipynb` files that don't version-control cleanly and don't live where your notes live.
 * **Languages are bolted to the machine, not the document.** Installing Python, Ruby, Node, Go, Rust, and Perl just to run a quick snippet is overkill, and managing multiple versions (Python 2.7 vs 3.10) is a nightmare of environment paths.
 * **Copying code from a textbook, lecture notes, StackOverflow, or your PKMS (Obsidian/Logseq)** usually means opening a heavy IDE, creating a file, saving it, and running it — enough friction to kill the "let me just try this" moment.
-* **In a classroom,** every student's machine is a support ticket: different OSes, missing dependencies, broken environments — before anyone has run a single line of code.
+* **In a classroom, every student's machine is a support ticket** — different OSes, missing dependencies, broken environments — and self-taught learners hit the same wall alone, with no lab or instructor to ask, before anyone has run a single line of code.
 
 ### The Ephemeral Solution
 
@@ -25,7 +25,7 @@ Ephemeral removes the barrier entirely. It is a **Jupyter-style literate-program
 
 Technically, it acts as a **one-shot "Sidecar Notebook"** processing pipeline for your entire operating system. It leverages **Podman** (via WSL2 on Windows, rootless on Linux) to create instant, disposable execution environments that spin up, run your pipeline, return outputs/artifacts, and vanish.
 
-**Why students, teachers, and analysts want this:**
+**Why learners want this:**
 
 1. **Zero friction:** highlight code in your notes, press a hotkey, paste the result back. No setup, no environment, no file juggling.
 2. **Language Versatility:** run Bash, Python, Ruby, R, Julia, Octave, C++, Rust, and more without installing them locally — the language is a means, not the subject.
@@ -35,9 +35,15 @@ Technically, it acts as a **one-shot "Sidecar Notebook"** processing pipeline fo
 6. **Legacy Support:** need to test a script in Python 2.7? Just type `python:2.7`. Ephemeral pulls the specific version for that run.
 7. **Context Agnostic:** it works anywhere you can copy text.
 
-### For Students & Teachers: The Zero-Setup Browser Client
+### Self-Directed Learners & Code Golfers
 
-The fastest way to experience Ephemeral needs no install at all — it's a web page. Open the [lite client](https://xyvir.github.io/Ephemeral.exe/) in any modern browser, paste or type a codeblock, and hit run:
+Teaching yourself? Ephemeral is a **free, zero-setup lab bench**: open the [lite client](https://xyvir.github.io/Ephemeral.exe/) in any browser, paste a codeblock, hit run. No install, no account, no payment, no institution to answer to — tweak, break, and iterate on real codeblocks in the live language map, submit experiments from anywhere, and move at your own pace.
+
+It's also a natural home for **code golfers and esolang enthusiasts**. The language map ships a full esoteric shelf — **Brainfuck, Lolcode, Piet, GolfScript, CJam, 05AB1E, Shakespeare, Fish (`><>`),** and more — each running in its own disposable container. Golf a snippet and verify it byte-for-byte against the real interpreter with zero toolchain setup.
+
+### The Zero-Setup Browser Client
+
+The fastest way to experience Ephemeral needs no install at all — it's a web page:
 
 * **Zero setup, zero sign-in, free.** No install, no account, no payment — the same engine as the desktop apps, with none of the prerequisites.
 * **Runs anywhere.** A school Chromebook, a library computer, a phone — anything with a browser.
@@ -46,11 +52,7 @@ The fastest way to experience Ephemeral needs no install at all — it's a web p
 
 The client speaks the same wire protocol as every other tier, so your Markdown codeblocks run in the same sandboxed containers on real cluster nodes, with the full language map and artifact support (technical details in [Web thin client](#web-thin-client-ephemeral-wasm-library)).
 
-### Self-Directed Learners & Code Golfers
-
-The privacy calculus flips when you're learning on your own: with no institution, no FERPA, and no grade to protect, the public swarm stops being a liability and becomes what it actually is — a **free, zero-setup lab bench**. Tweak, break, and iterate on real codeblocks in the live language map, submit experiments from anywhere with a browser, and move at your own pace. Nothing to install, pay for, or sign up to.
-
-It's also a natural home for **code golfers and esolang enthusiasts**. The language map ships a full esoteric shelf — **Brainfuck, Lolcode, Piet, GolfScript, CJam, 05AB1E, Shakespeare, Fish (`><>`),** and more — each running in its own disposable container. Golf a snippet and verify it byte-for-byte against the real interpreter with zero toolchain setup.
+Students and teachers use the exact same client. For graded coursework, where the code runs matters — see [Classroom deployment](#classroom-deployment--three-privacy-dials).
 
 ---
 
@@ -61,8 +63,8 @@ A few design principles underpin every tier:
 * **One-shot, stateless, on-demand.** Ephemeral is not a daemon or scheduler — it spins up, runs, returns, and vanishes. Every run starts from a clean environment, which keeps results reproducible.
 * **Self-contained codeblocks.** Ephemeral deliberately has **no host-file mounting** (aside from the secure `/output` drop folder). Data must be declared inside the Markdown via seed files, which guarantees a snippet runs the same on any machine without hidden external file structures.
 * **Sandbox-first.** Containers run with `--network none`, capped memory/CPU/PIDs, and no volume mounts. Untrusted code is contained by default; network access is an explicit, opt-in `unsafe` flag — and on the distributed network, a node operator's decision, never the requester's.
-* **Privacy by default, locally.** In local-only mode, nothing ever leaves your machine.
-* **Good-faith networking.** The public distributed network exists for teaching and shared clusters. It is not security-first or trust-first — treat anything submitted as public knowledge (see the [Trust Model](#distributed-tier--trust-model)).
+* **Privacy is a deployment choice.** Where your code runs is up to you: local mode never leaves your machine, the public swarm is public by design, and a self-hosted node sits anywhere in between (see [Classroom deployment](#classroom-deployment--three-privacy-dials)).
+* **Good-faith networking.** The public distributed network exists for open, low-stakes compute — self-directed learning, code golfing, teaching, and shared clusters. It is not security-first or trust-first — treat anything submitted as public knowledge (see the [Trust Model](#distributed-tier--trust-model)).
 
 ---
 
@@ -129,9 +131,9 @@ That's it — no configuration. Your node fetches the live swarm list, joins the
 | **Network flag** | `unsafe` opt-in per block (local) | `unsafe` stripped receiver-side — network is a node-operator setting (`EPHEMERAL_ALLOW_NETWORK`), never the requester's |
 | **Custom images** | Any Podman/Docker image via the `image=`/`cmd=` header (Declarative Image Mode) | **Disabled** — `image=`/`cmd=`/`entrypoint=` overrides are dropped receiver-side; only the node's allowlisted images (default: the built-in language map) run |
 | **Config** | None | `EPHEMERAL_SEEDS` / `EPHEMERAL_RELAY` / `EPHEMERAL_SECRET` / `EPHEMERAL_ALLOW_NETWORK` |
-| **Best for** | Private/sensitive work, offline, Lithic-UK sidecar | Teaching, shared clusters, browser access, heterogeneous images |
+| **Best for** | Private/sensitive work, offline, Lithic-UK sidecar | Self-directed learning, code golfing, teaching, shared clusters, browser access |
 
-**In short:** if your code or data is sensitive, use a local-only flavor — the distributed network is good-faith, not private. If you want a browser-based classroom cluster where anyone's node can help run anyone's snippet, use the distributed tiers and assume everything you submit is public.
+**In short:** choose by where you want the code to run — sensitive or offline work stays on a local-only flavor, while anything you run on the distributed network executes on volunteers' machines and should be treated as public.
 
 ### Tray usage
 
@@ -540,7 +542,7 @@ Ephemeral expands into a multi-tier distributed architecture built on the [iroh]
 | `ephemeral-local` | Local-only desktop tray app (clipboard-driven, Podman) | Windows EXE + Linux AppImage | **Private** — nothing ever leaves the machine |
 
 > **Trust Model & Privacy — please read before using the distributed tiers.**
-> The public distributed network is a *good-faith* model designed for teaching (e.g., college students and professors running code snippets). **Anything you submit to the public ephemeral cloud should be treated as public knowledge — there is no privacy guarantee.** It is not security-first or trust-first: other network participants may be able to observe submitted code and outputs, and the shared public relays carry no uptime or performance guarantees.
+> The public distributed network is a *good-faith* model designed for open, low-stakes compute — self-directed learners, code golfers, teaching (e.g., students and professors running snippets), and demos. **Anything you submit to the public ephemeral cloud should be treated as public knowledge — there is no privacy guarantee.** It is not security-first or trust-first: other network participants may be able to observe submitted code and outputs, and the shared public relays carry no uptime or performance guarantees.
 > If you need privacy, **self-host instead** and use the non-distributed packages (`main_local.py` / `main_api.py`, or `ephemeral-self-host-distributed` on infrastructure you control).
 
 ### The default swarm (one big implicit network)
