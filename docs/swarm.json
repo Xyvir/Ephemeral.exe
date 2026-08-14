@@ -1,25 +1,8 @@
 {
-  "updated": "2026-08-14T14:44:01Z",
+  "updated": "2026-08-14T19:01:10Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
-    {
-      "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs7zjhadaeaevjzmx6e5aaybacwbyqabrhiagaiaycuaafej2abq",
-      "images": [
-        "docker.io/catthehacker/ubuntu:act-latest",
-        "docker.io/library/alpine:latest"
-      ],
-      "misses": 0,
-      "seen_alive": true,
-      "probe": "ok",
-      "probe_at": "2026-08-14T14:44:01Z",
-      "probe_detail": "ok",
-      "probe_ms": 4970,
-      "probe_fails": 0,
-      "rtt_ms": 933
-    },
     {
       "node_id": "3006f2d2e520682828a849ab89960da65027d0de902aa529a803f707d1841eed",
       "relay": "https://usw1-1.relay.n0.iroh.link./",
@@ -32,26 +15,26 @@
       ],
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-14T14:44:01Z",
+      "probe_at": "2026-08-14T19:01:10Z",
       "probe_detail": "ok",
-      "probe_ms": 2147,
+      "probe_ms": 6344,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 2460
+      "rtt_ms": 3055
     },
     {
-      "node_id": "8f44839b869972d64259574f5b31da90deb527575db623151503a32117712bdf",
+      "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointachuja43q2mxfvsclflu6wzr3kin5njhk5o3miyvcub2giixoev56biaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs7yxsydaeaevjzmx7yocaybacwbyqabrpfqgaiaycuaafelzmbq",
+      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs7zjhadaeaevjzmx6e5aaybacwbyqabrhiagaiaycuaafej2abq",
       "images": [
         "docker.io/catthehacker/ubuntu:act-latest",
         "docker.io/library/alpine:latest"
       ],
       "probe_fails": 0,
       "misses": 1,
-      "seen_alive": false,
+      "seen_alive": true,
       "probe": "unreachable",
-      "probe_at": "2026-08-14T14:44:01Z"
+      "probe_at": "2026-08-14T19:01:10Z"
     }
   ]
 }
