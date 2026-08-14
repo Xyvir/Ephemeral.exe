@@ -1190,6 +1190,14 @@ function renderArtifacts(artifacts, markdown) {
 }
 
 $("run").addEventListener("click", run);
+// Ctrl+Enter (Cmd+Enter on Mac) anywhere on the page runs the current
+// document — same path as the button, re-entry-guarded inside run().
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    e.preventDefault();
+    run();
+  }
+});
 $("refresh").addEventListener("click", () => { peers.clear(); refreshPeers(); });
 
 // The trailing (i) pill shown at the end of the language-chip row. Built
