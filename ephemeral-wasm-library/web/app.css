@@ -148,6 +148,7 @@ textarea { min-height: 150px; resize: vertical; }
 .lang-chip.ok { border-color: #2d5a2d; color: var(--ok); }
 .lang-chip.bad { border-color: #8a5a1e; color: #ffb86b; }
 .lang-chip.file { border-color: #444; color: var(--muted); }
+.lang-chip.artifact { border-color: #1e4a6e; color: #6db3ff; }
 
 /* Disclaimer directly under the Run buttons. */
 .run-note {
@@ -277,7 +278,80 @@ button.secondary:hover { background: #4a4a4a; }
   justify-content: space-between;
 }
 .section-head h2 { margin: 18px 0 8px; }
-.head-actions { display: flex; gap: 2px; margin-bottom: 6px; }
+.head-actions {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 6px;
+  align-items: center;
+}
+
+/* Static (i) help pill in the Run-code header: lists every supported
+   language (canonical + aliases) and the /output artifact contract on
+   hover or click. */
+.lang-help-wrap { position: relative; }
+.lang-help-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  border-radius: 50%;
+  border: 1px solid #555;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  padding: 0;
+}
+.lang-help-btn:hover,
+.lang-help-btn.active {
+  color: var(--text);
+  border-color: var(--accent-hi);
+  background: #333;
+}
+.lang-help-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  width: 340px;
+  max-width: 85vw;
+  max-height: 60vh;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .5);
+  white-space: normal;
+}
+.lang-help-pop[hidden] { display: none; }
+.lang-help-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.lang-help-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 10px;
+  font: 12px/1.5 ui-monospace, Consolas, monospace;
+}
+.lang-help-item code { color: var(--text); }
+.lang-help-item .als { color: var(--muted); }
+.lang-help-note {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #333;
+  font-size: 12px;
+  color: var(--muted);
+}
+.lang-help-note code { color: var(--accent-hi); }
 .icon-btn {
   display: inline-flex;
   align-items: center;

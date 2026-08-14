@@ -132,9 +132,11 @@ const CHAIN_FLAGS = new Set(["chain", "pipe", "piping"]);
 const NO_CHAIN_FLAGS = new Set(["nopipe", "nopiping"]);
 const DROPPED_OVERRIDES = ["image", "cmd", "entrypoint"];
 
-// Every fence's (language, params) from a markdown doc — the first token
-// of each fence header is the language, the rest are ephemeral params
-// (flags like `unsafe chain`, overrides like `image=...`).
+// Every fence's (language, params, body) from a markdown doc — the first
+// token of each fence header is the language, the rest are ephemeral params
+// (flags like `unsafe chain`, overrides like `image=...`); `body` is the
+// code between the opening and closing fences (or the rest of the doc when
+// the fence is still unclosed, so chips keep showing while typing).
 function fenceInfo(markdown) {
   const out = [];
   // `[ \t]*` (not `\s*`) matters: a fence header lives on the same line
@@ -147,7 +149,15 @@ function fenceInfo(markdown) {
   while ((m = re.exec(markdown)) !== null) {
     const tokens = m[1].trim().split(/\s+/).filter(Boolean);
     if (!tokens.length) continue; // bare fence, no header
-    out.push({ lang: tokens[0].toLowerCase(), params: tokens.slice(1) });
+    // Body: everything after this fence header up to the next closing
+    // fence (or end of input if unclosed — chips must still show while
+    // typing). Used to flag blocks that write artifacts to /output.
+    const bodyStart = re.lastIndex;
+    const closeIdx = markdown.indexOf("```", bodyStart);
+    const body = closeIdx === -1
+      ? markdown.slice(bodyStart)
+      : markdown.slice(bodyStart, closeIdx);
+    out.push({ lang: tokens[0].toLowerCase(), params: tokens.slice(1), body });
   }
   return out;
 }
@@ -175,6 +185,17 @@ function updateLangStatus() {
         ? "file/seed block — not a language"
         : "not in the language map — this block will be rejected";
     el.appendChild(chip);
+    // Artifact chip: the block references /output, so the run is expected
+    // to return a downloadable artifact (single images preview inline).
+    if (/(?<![\w/])\/output(?=[/'"\s]|$)/.test(f.body || "")) {
+      const achip = document.createElement("span");
+      achip.className = "lang-chip artifact";
+      achip.textContent = "📦 artifact";
+      achip.title =
+        "writes to /output — the result is returned as a downloadable " +
+        "artifact (images preview inline)";
+      el.appendChild(achip);
+    }
     // Ephemeral parameter chips: ✗ for what the distributed network
     // strips, ✓ for what it honors, neutral for unknown tokens.
     for (const raw of f.params) {
@@ -1100,6 +1121,47 @@ function renderArtifacts(artifacts, markdown) {
 
 $("run").addEventListener("click", run);
 $("refresh").addEventListener("click", () => { peers.clear(); refreshPeers(); });
+
+// Static (i) pill in the Run-code header: on hover or click, list every
+// supported language (canonical + aliases) and the /output artifact
+// contract. Click toggles; hover shows; clicking elsewhere closes.
+function buildLangHelp() {
+  const list = $("langHelpList");
+  list.textContent = "";
+  for (const l of CANONICAL_LANGUAGES) {
+    const span = document.createElement("span");
+    span.className = "lang-help-item";
+    const code = document.createElement("code");
+    code.textContent = l;
+    span.appendChild(code);
+    const als = ALIAS_MAP[l] || [];
+    if (als.length) {
+      const s = document.createElement("span");
+      s.className = "als";
+      s.textContent = " (" + als.join(", ") + ")";
+      span.appendChild(s);
+    }
+    list.appendChild(span);
+  }
+  const btn = $("langHelp");
+  const pop = $("langHelpPop");
+  const setOpen = (open) => {
+    pop.hidden = !open;
+    btn.classList.toggle("active", open);
+    btn.setAttribute("aria-expanded", String(open));
+  };
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setOpen(pop.hidden);
+  });
+  btn.addEventListener("mouseenter", () => setOpen(true));
+  pop.addEventListener("mouseleave", () => setOpen(false));
+  document.addEventListener("click", () => setOpen(false));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") setOpen(false);
+  });
+}
+buildLangHelp();
 $("clearOutput").addEventListener("click", () => {
   $("output").textContent = "";
   outputRaw = "";
