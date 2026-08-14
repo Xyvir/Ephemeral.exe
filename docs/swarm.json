@@ -1,5 +1,5 @@
 {
-  "updated": "2026-08-14T07:40:09Z",
+  "updated": "2026-08-14T13:17:42Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
@@ -15,12 +15,12 @@
       ],
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-14T07:40:09Z",
+      "probe_at": "2026-08-14T13:17:42Z",
       "probe_detail": "ok",
-      "probe_ms": 5895,
+      "probe_ms": 6570,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 6201
+      "rtt_ms": 12371
     },
     {
       "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
@@ -84,10 +84,10 @@
         "mcr.microsoft.com/powershell:latest"
       ],
       "probe_fails": 0,
-      "misses": 3,
+      "misses": 4,
       "seen_alive": true,
       "probe": "unreachable",
-      "probe_at": "2026-08-14T07:40:09Z"
+      "probe_at": "2026-08-14T13:17:42Z"
     }
   ]
 }
