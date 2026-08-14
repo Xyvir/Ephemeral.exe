@@ -1769,13 +1769,15 @@ if __name__ == '__main__':
         menu = (
             item('Run Clipboard', lambda icon, i: on_hotkey(icon), default=True),
             item('Install && Run on Boot', toggle_startup, checked=lambda item: check_startup()),
-            item('Background Service', toggle_service,
-                 checked=lambda i: service_installed(),
-                 visible=lambda i: sys.platform == 'win32'),
-            item('Private Mode', toggle_private, checked=private_checked),
+            item('Distributed', pystray.Menu(
+                item('Cluster Status', on_cluster_info),
+                item('Background Service', toggle_service,
+                     checked=lambda i: service_installed(),
+                     visible=lambda i: sys.platform == 'win32'),
+                item('Private Mode', toggle_private, checked=private_checked),
+            )),
             item('Force Stop All Runs', force_stop_all),
             item('Clear Image Cache', purge_cache),
-            item('Cluster Status', on_cluster_info),
             item('About', show_about),
             item('Quit', quit_app),
         )
