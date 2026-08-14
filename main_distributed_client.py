@@ -96,6 +96,7 @@ except ImportError:
     HAS_WINREG = False
 
 import ephemeral_core
+from ephemeral_core.config import mapped_images
 from ephemeral_net.jobs import JobDoneEvent, JobErrorEvent, JobRequest
 from ephemeral_net.swarm import (
     PRIVATE_MODE_MARKER,
@@ -606,6 +607,18 @@ class _ServiceHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_json(500, {"detail": f"cache clear failed: {e}"})
             return
+        if parsed.path == "/hydrate":
+            # Long-running: return immediately and pull in the background so
+            # the localhost API (and the tray calling it) never blocks.
+            try:
+                threading.Thread(
+                    target=_hydrate_all_images,
+                    name="ephemeral-hydrate", daemon=True,
+                ).start()
+                self._send_json(200, {"started": True})
+            except Exception as e:
+                self._send_json(500, {"detail": f"hydrate failed to start: {e}"})
+            return
         if parsed.path != "/ephemeral/api/v1/run":
             self._send_json(404, {"detail": "not found"})
             return
@@ -721,6 +734,239 @@ def _podman_prune_images() -> None:
         )
     except Exception:
         pass
+
+
+# --- Pre-hydrate all images ("super-seed") -------------------------------
+# Rough compressed-size estimates (GB) for the confirmation warning. These
+# anchor the full language set to the README's ~15-25 GB figure without
+# hitting the registry; per-image, first matching token wins.
+_HYDRATE_EST_GB: tuple[tuple[str, float], ...] = (
+    ("catthehacker", 4.0),      # ubuntu:act-22.04 runner image
+    ("pywine", 2.5),            # python + wine
+    ("anaconda3", 2.0),         # continuumio/anaconda3 (science)
+    ("pandoc/extra", 2.0),      # TeX Live / pandoc
+    ("octave-forge", 1.5),
+    ("haskell", 1.0),
+    ("gcc", 0.9),
+    ("r-base", 0.8),
+    ("ocaml/opam", 0.8),
+    ("powershell", 0.6),
+    ("ephemeral-python-uv", 0.6),
+    ("rust", 0.4),
+    ("eclipse-temurin", 0.3),
+    ("clojure", 0.3),
+    ("golang", 0.2),
+    ("julia", 0.2),
+    ("swipl", 0.2),
+    ("iverilog", 0.1),
+    ("crystal", 0.1),
+    ("nim", 0.1),
+    ("sbcl", 0.1),
+    ("elixir", 0.1),
+    ("lua", 0.1),
+    ("perl", 0.1),
+    ("php", 0.1),
+    ("tiddlywiki", 0.1),
+    ("node", 0.05),
+    ("ruby", 0.05),
+)
+_DEFAULT_HYDRATE_EST_GB = 0.05
+
+
+def _estimate_hydration_gb(images: list[str]) -> float:
+    """Best-effort total download estimate (GB) for a set of images."""
+    total = 0.0
+    for img in images:
+        est = _DEFAULT_HYDRATE_EST_GB
+        for token, gb in _HYDRATE_EST_GB:
+            if token in img:
+                est = gb
+                break
+        total += est
+    return total
+
+
+def _hydration_free_space() -> tuple[int, str]:
+    """Best-effort (free bytes, drive label) backing podman's storage.
+
+    Prefers the real graph root when podman reports a host path, then the
+    drives where a ``podman machine`` VM disk typically lives. Returns
+    ``(0, "")`` when nothing can be determined.
+    """
+    candidates: list[str] = []
+    try:
+        out = subprocess.run(
+            ["podman", "info", "--format", "{{.Store.GraphRoot}}"],
+            capture_output=True, text=True, timeout=10,
+            startupinfo=get_startupinfo(),
+        )
+        root = out.stdout.strip()
+        # Machine mode reports a VM-internal path (not a host path) — only
+        # trust it when it actually exists on this host.
+        if root and os.path.exists(root):
+            candidates.append(root)
+    except Exception:
+        pass
+    for env in ("LOCALAPPDATA", "USERPROFILE", "HOME", "SystemDrive"):
+        v = os.environ.get(env)
+        if v:
+            candidates.append(v)
+    for cand in candidates:
+        try:
+            du = shutil.disk_usage(cand)
+            return du.free, os.path.splitdrive(cand)[0] or ""
+        except Exception:
+            continue
+    return 0, ""
+
+
+def _vm_disk_cap_gb() -> float | None:
+    """The podman machine VM disk cap in GB, or None when unknown."""
+    try:
+        out = subprocess.run(
+            ["podman", "machine", "inspect", "--format", "json"],
+            capture_output=True, text=True, timeout=10,
+            startupinfo=get_startupinfo(),
+        )
+        data = json.loads(out.stdout or "[]")
+        if isinstance(data, list) and data and data[0].get("DiskSize"):
+            return float(data[0]["DiskSize"])
+    except Exception:
+        pass
+    return None
+
+
+def _confirm_hydration(text_lines: list[str], warn: bool) -> bool:
+    """Ask the user to confirm pre-hydration; True = proceed.
+
+    Windows shows a console with a yes/no prompt (the tray has no window);
+    Linux uses zenity -> kdialog -> tkinter -> stdin.
+    """
+    if sys.platform != "win32":
+        try:
+            if shutil.which("zenity"):
+                out = subprocess.run(
+                    ["zenity", "--question", "--title=Ephemeral",
+                     "--text=" + "\n".join(text_lines)],
+                    capture_output=True, timeout=120,
+                )
+                return out.returncode == 0
+            if shutil.which("kdialog"):
+                out = subprocess.run(
+                    ["kdialog", "--yesno", "\n".join(text_lines)],
+                    capture_output=True, timeout=120,
+                )
+                return out.returncode == 0
+            import tkinter as _tk
+            from tkinter import messagebox
+            root = _tk.Tk()
+            root.withdraw()
+            answer = messagebox.askyesno("Ephemeral: Pre-hydrate images", "\n".join(text_lines))
+            root.destroy()
+            return bool(answer)
+        except Exception:
+            pass
+        try:
+            reply = input("\n".join(text_lines) + "\nProceed? [y/N] ").strip().lower()
+            return reply in ("y", "yes")
+        except Exception:
+            return False
+
+    fd_out, path_out = tempfile.mkstemp(suffix=".txt")
+    os.close(fd_out)
+    fd_bat, path_bat = tempfile.mkstemp(suffix=".bat")
+    os.close(fd_bat)
+    try:
+        with open(path_bat, "w") as f:
+            f.write("@echo off\n")
+            f.write("title Ephemeral: Pre-hydrate images\n")
+            f.write("cls\n")
+            f.write("echo.\n")
+            for line in text_lines:
+                f.write(f"echo  {line}\n")
+            f.write("echo.\n")
+            if warn:
+                f.write("echo  *** WARNING: free space may be insufficient ***\n")
+                f.write("echo.\n")
+            f.write('choice /C YN /T 120 /D N /M " Proceed with pre-hydration?"\n')
+            f.write(f'if errorlevel 2 echo NO> "{path_out}"\n')
+            f.write(f'if not errorlevel 2 echo YES> "{path_out}"\n')
+        subprocess.run(
+            path_bat,
+            creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+        )
+        if os.path.exists(path_out):
+            with open(path_out, "r") as f:
+                return "YES" in f.read().upper()
+    except Exception:
+        return False
+    finally:
+        if os.path.exists(path_out):
+            os.remove(path_out)
+        if os.path.exists(path_bat):
+            os.remove(path_bat)
+    return False
+
+
+def _hydrate_all_images(icon=None, images: list[str] | None = None) -> None:
+    """Pull every mapped image not already cached (daemon-thread target).
+
+    Runs in whichever podman context the caller is in — the tray's own when
+    invoked from the menu (service not installed), the service's when
+    invoked via its ``/hydrate`` endpoint. Sequential pulls with retry +
+    backoff (registry rate limits), never raises.
+    """
+    startupinfo = get_startupinfo()
+    images = images if images is not None else mapped_images()
+    if not ephemeral_core.check_podman_alive():
+        try:
+            subprocess.run(
+                ["podman", "machine", "start"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                startupinfo=startupinfo, timeout=300,
+            )
+        except Exception:
+            pass
+        if not ephemeral_core.check_podman_alive():
+            if icon:
+                icon.notify(
+                    "Podman could not be started — pre-hydration aborted.",
+                    title="Ephemeral Error",
+                )
+            return
+    pulled = 0
+    skipped = 0
+    failed: list[str] = []
+    for img in images:
+        if ephemeral_core.check_image_exists(img):
+            skipped += 1
+            continue
+        ok = False
+        for attempt in range(1, 4):
+            try:
+                rc = subprocess.run(
+                    ["podman", "pull", img],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    startupinfo=startupinfo, timeout=900,
+                ).returncode
+            except Exception:
+                rc = -1
+            if rc == 0:
+                ok = True
+                break
+            time.sleep(5 * attempt)
+        if ok:
+            pulled += 1
+        else:
+            failed.append(img)
+    if icon:
+        summary = (
+            f"Pre-hydration done: {pulled} pulled, "
+            f"{skipped} already cached, {len(failed)} failed."
+        )
+        if failed:
+            summary += "\nFailed: " + ", ".join(failed)
+        icon.notify(summary, title="Ephemeral Pre-hydrate")
 
 
 def run_logic(icon, content=None):
@@ -1580,6 +1826,81 @@ def force_stop_all(icon, item_unused):
         icon.notify("No active runs to stop.", title="Ephemeral")
 
 
+def on_prehydrate_all(icon, item_unused=None):
+    """Pre-hydrate every language image (super-seed) with a space warning.
+
+    Shows what's cached / missing, an estimated download size, and the free
+    space on the drive backing podman's storage — then asks for
+    confirmation. With the background service installed (merged identity)
+    the pull runs in the service's podman context via its localhost API;
+    otherwise it runs in the tray's own podman, in the background.
+    """
+    images = mapped_images()
+    try:
+        todo = [i for i in images if not ephemeral_core.check_image_exists(i)]
+    except Exception:
+        todo = list(images)
+    cached = len(images) - len(todo)
+    if not todo:
+        icon.notify(
+            "Every language image is already cached — nothing to hydrate.",
+            title="Ephemeral Pre-hydrate",
+        )
+        return
+
+    est_gb = _estimate_hydration_gb(todo)
+    free, drive = _hydration_free_space()
+    warn = False
+    lines = ["Pre-hydrate ALL language images?"]
+    lines.append(
+        f"  {cached} of {len(images)} already cached; {len(todo)} to pull."
+    )
+    lines.append(f"  Estimated download: ~{est_gb:.1f} GB")
+    if free:
+        lines.append(f"  Free on {drive or 'storage drive'}: {free / 2**30:.1f} GB")
+        if free < est_gb * 2**30:
+            warn = True
+            lines.append("  WARNING: free space looks too low — pulls may fail.")
+    else:
+        lines.append("  (could not determine free disk space — check before proceeding)")
+    cap = _vm_disk_cap_gb()
+    if cap is not None:
+        lines.append(f"  Podman VM disk cap: {cap:.0f} GB")
+        if cap < est_gb:
+            warn = True
+            lines.append("  WARNING: VM disk cap is below the estimated download.")
+    lines.append("")
+    lines.append("Pulls every image the cluster can request; the big science and")
+    lines.append("typesetting images are multi-GB. The node keeps running during")
+    lines.append("the pull — jobs just land on already-warm images.")
+
+    if not _confirm_hydration(lines, warn):
+        return
+
+    if _service_installed_local():
+        try:
+            _service_post("/hydrate", timeout=60)
+            icon.notify(
+                "Pre-hydration started in the background service — it pulls "
+                "whatever is missing from the full language set.",
+                title="Ephemeral Pre-hydrate",
+            )
+        except Exception as e:
+            icon.notify(
+                f"Could not reach the background node: {e}", title="Ephemeral Error"
+            )
+        return
+    icon.notify(
+        f"Pre-hydration started — {len(todo)} image(s) to pull. "
+        "Runs in the background; you'll get a summary when done.",
+        title="Ephemeral Pre-hydrate",
+    )
+    threading.Thread(
+        target=_hydrate_all_images, args=(icon,),
+        name="ephemeral-hydrate", daemon=True,
+    ).start()
+
+
 # --- Tray / hotkey handlers ---------------------------------------------
 
 def on_hotkey(icon):
@@ -1811,6 +2132,7 @@ if __name__ == '__main__':
                      checked=lambda i: service_installed(),
                      visible=lambda i: sys.platform == 'win32'),
                 item('Private Mode', toggle_private, checked=private_checked),
+                item('Pre-hydrate All Images', on_prehydrate_all),
             )),
             item('Force Stop All Runs', force_stop_all),
             item('Clear Image Cache', purge_cache),
