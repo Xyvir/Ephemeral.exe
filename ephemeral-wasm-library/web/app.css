@@ -285,33 +285,16 @@ button.secondary:hover { background: #4a4a4a; }
   align-items: center;
 }
 
-/* Static (i) help pill in the Run-code header: lists every supported
+/* Trailing (i) help pill in the language-chip row: lists every supported
    language (canonical + aliases) and the /output artifact contract on
-   hover or click. */
-.lang-help-wrap { position: relative; }
-.lang-help-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  margin-left: 6px;
-  border-radius: 50%;
-  border: 1px solid #555;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
+   hover or click. The popover is an absolute overlay, so opening it never
+   shifts the layout. */
+.lang-help-chip {
+  position: relative;
   cursor: help;
-  padding: 0;
+  font-weight: 700;
 }
-.lang-help-btn:hover,
-.lang-help-btn.active {
-  color: var(--text);
-  border-color: var(--accent-hi);
-  background: #333;
-}
+.lang-help-chip.active { border-color: var(--accent-hi); color: var(--accent-hi); }
 .lang-help-pop {
   position: absolute;
   top: calc(100% + 8px);

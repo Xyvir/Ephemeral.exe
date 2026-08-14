@@ -168,10 +168,6 @@ function updateLangStatus() {
   const el = $("langStatus");
   el.textContent = "";
   const fences = fenceInfo(editor.getValue());
-  if (!fences.length) {
-    el.hidden = true;
-    return;
-  }
   for (const f of fences) {
     // Language chip (as before).
     const ok = SUPPORTED_LANGUAGES.has(f.lang);
@@ -222,6 +218,9 @@ function updateLangStatus() {
       el.appendChild(pchip);
     }
   }
+  // The (i) help pill is always the trailing chip — even with no fences,
+  // so it's a static affordance, not tied to whatever the doc declares.
+  el.appendChild(langHelpPillEl());
   el.hidden = false;
 }
 
@@ -1122,12 +1121,31 @@ function renderArtifacts(artifacts, markdown) {
 $("run").addEventListener("click", run);
 $("refresh").addEventListener("click", () => { peers.clear(); refreshPeers(); });
 
-// Static (i) pill in the Run-code header: on hover or click, list every
-// supported language (canonical + aliases) and the /output artifact
-// contract. Click toggles; hover shows; clicking elsewhere closes.
-function buildLangHelp() {
-  const list = $("langHelpList");
-  list.textContent = "";
+// The trailing (i) pill shown at the end of the language-chip row. Built
+// once, then re-appended after every updateLangStatus wipe (same node, so
+// its popover state and listeners survive). Lists every supported
+// language (canonical + aliases) plus the /output artifact contract.
+let langHelpPill = null;
+function langHelpPillEl() {
+  if (langHelpPill) return langHelpPill;
+  const pill = document.createElement("span");
+  pill.className = "lang-chip lang-help-chip";
+  pill.title = "Supported languages & artifacts";
+  pill.setAttribute("role", "button");
+  pill.setAttribute("tabindex", "0");
+  pill.setAttribute("aria-label", "Supported languages & artifacts");
+  pill.setAttribute("aria-expanded", "false");
+  pill.textContent = "i";
+
+  const pop = document.createElement("div");
+  pop.className = "lang-help-pop";
+  pop.hidden = true;
+  const title = document.createElement("div");
+  title.className = "lang-help-title";
+  title.textContent = "Supported languages";
+  pop.appendChild(title);
+  const list = document.createElement("div");
+  list.className = "lang-help-list";
   for (const l of CANONICAL_LANGUAGES) {
     const span = document.createElement("span");
     span.className = "lang-help-item";
@@ -1143,25 +1161,42 @@ function buildLangHelp() {
     }
     list.appendChild(span);
   }
-  const btn = $("langHelp");
-  const pop = $("langHelpPop");
+  pop.appendChild(list);
+  const note = document.createElement("div");
+  note.className = "lang-help-note";
+  const noteCode = document.createElement("code");
+  noteCode.textContent = "/output";
+  note.append(
+    "Artifacts: write files to ", noteCode,
+    " in your code — the run returns them as downloadable files ",
+    "(single images preview inline).");
+  pop.appendChild(note);
+  pill.appendChild(pop);
+
   const setOpen = (open) => {
     pop.hidden = !open;
-    btn.classList.toggle("active", open);
-    btn.setAttribute("aria-expanded", String(open));
+    pill.classList.toggle("active", open);
+    pill.setAttribute("aria-expanded", String(open));
   };
-  btn.addEventListener("click", (e) => {
+  pill.addEventListener("click", (e) => {
     e.stopPropagation();
     setOpen(pop.hidden);
   });
-  btn.addEventListener("mouseenter", () => setOpen(true));
+  pill.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      setOpen(pop.hidden);
+    }
+  });
+  pill.addEventListener("mouseenter", () => setOpen(true));
   pop.addEventListener("mouseleave", () => setOpen(false));
   document.addEventListener("click", () => setOpen(false));
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") setOpen(false);
   });
+  langHelpPill = pill;
+  return pill;
 }
-buildLangHelp();
 $("clearOutput").addEventListener("click", () => {
   $("output").textContent = "";
   outputRaw = "";
