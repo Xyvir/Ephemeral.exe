@@ -395,7 +395,10 @@ details.advanced .advanced-meta code { color: var(--accent-hi); }
 }
 .line { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .line.log-stdout { color: var(--text); }
-.line.log-stderr { color: var(--err); }
+/* stderr is advisory during a run (warnings from interpreters like osabie
+   print here with exit 0) — only the final exit code decides error red. */
+.line.log-stderr { color: var(--muted); }
+.line.stderr-muted { color: var(--muted); }
 .line.done { color: var(--ok); }
 .line.err { color: var(--err); }
 

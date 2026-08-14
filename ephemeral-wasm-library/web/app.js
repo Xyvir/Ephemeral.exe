@@ -37,6 +37,12 @@ let interleaved = false;
 let lastMarkdown = "";
 let lastResultText = "";
 let lastOutputRaw = "";
+// stderr from the final job_done frame + its exit code, so the interleaved
+// and rebuilt views can re-append it (the streaming error element would
+// otherwise vanish on toggle). Kept out of outputRaw so the copy stays
+// clean markdown — failure envelopes already embed the error text.
+let lastStderr = "";
+let lastExitCode = 0;
 
 // Image extensions -> mime (inline render + clipboard copy).
 const IMAGE_MIMES = {
@@ -337,6 +343,33 @@ function appendOut(text, cls) {
   box.scrollTop = box.scrollHeight;
 }
 
+// Append the final job_done stderr WITHOUT polluting outputRaw (so the
+// Copy-output markdown stays clean; failure envelopes embed the error
+// text themselves). Colored by exit code: stderr on a successful run is
+// advisory (interpreters legitimately warn on stderr with exit 0 — e.g.
+// osabie's Enum.slice notice), so it renders muted; only a non-zero exit
+// renders it as an error. Remembered so view rebuilds can re-append it.
+function appendStderr(text, exitCode) {
+  lastStderr = text;
+  lastExitCode = exitCode;
+  const box = $("output");
+  const pre = document.createElement("pre");
+  pre.className = "line " + (exitCode === 0 ? "stderr-muted" : "err");
+  pre.textContent = text;
+  box.appendChild(pre);
+  box.scrollTop = box.scrollHeight;
+}
+
+// The stderr element for rebuilt views (interleaved / normal) — null when
+// the run had no stderr.
+function stderrElement() {
+  if (!lastStderr) return null;
+  const pre = document.createElement("pre");
+  pre.className = "line " + (lastExitCode === 0 ? "stderr-muted" : "err");
+  pre.textContent = lastStderr;
+  return pre;
+}
+
 // Render a job result envelope ("## <Lang> Result\n```lang\n...```") as
 // highlighted HTML: result headers, step sub-headers, and code fences as
 // distinct blocks. Everything is HTML-escaped; highlight.js is applied
@@ -530,6 +563,8 @@ function renderInterleaved() {
   }
   addCopyButtons(box);
   appendArtifactsIfAny();
+  const se = stderrElement();
+  if (se) box.appendChild(se);
   box.scrollTop = box.scrollHeight;
 }
 
@@ -541,6 +576,8 @@ function renderNormal() {
   if (lastOutputRaw) box.appendChild(resultElement(lastOutputRaw));
   addCopyButtons(box);
   appendArtifactsIfAny();
+  const se = stderrElement();
+  if (se) box.appendChild(se);
   box.scrollTop = box.scrollHeight;
 }
 
@@ -898,6 +935,8 @@ async function run() {
   outputRaw = "";
   lastMarkdown = markdown;
   lastResultText = "";
+  lastStderr = "";
+  lastExitCode = 0;
   $("output").textContent = "";
   $("output").classList.remove("interleaved");
   setDetail(`running on ${shortId(target.node_id)}…`);
@@ -919,7 +958,7 @@ async function run() {
       });
     } else if (evt.type === "job_done") {
       if (evt.stdout) { lastResultText = evt.stdout; appendResult(evt.stdout); }
-      if (evt.stderr) appendOut(evt.stderr, "err");
+      if (evt.stderr) appendStderr(evt.stderr, evt.exit_code);
       if (runArtifacts.length) {
         renderArtifacts(runArtifacts, markdown);
       } else if (evt.artifact_file) {
