@@ -508,6 +508,7 @@ function renderInterleaved() {
     }
   }
   addCopyButtons(box);
+  appendArtifactsIfAny();
   box.scrollTop = box.scrollHeight;
 }
 
@@ -518,7 +519,15 @@ function renderNormal() {
   box.classList.remove("interleaved");
   if (lastOutputRaw) box.appendChild(resultElement(lastOutputRaw));
   addCopyButtons(box);
+  appendArtifactsIfAny();
   box.scrollTop = box.scrollHeight;
+}
+
+// Re-append the current run's artifacts after a view rebuild — both view
+// renderers wipe the output box, so the image previews + download/copy bar
+// must be re-added or they silently vanish on toggle.
+function appendArtifactsIfAny() {
+  if (runArtifacts.length) renderArtifacts(runArtifacts, lastMarkdown);
 }
 
 // The interleaved document as plain Markdown: the original source with each
@@ -1094,6 +1103,7 @@ $("refresh").addEventListener("click", () => { peers.clear(); refreshPeers(); })
 $("clearOutput").addEventListener("click", () => {
   $("output").textContent = "";
   outputRaw = "";
+  runArtifacts = [];
   lastMarkdown = lastResultText = lastOutputRaw = "";
 });
 
