@@ -1185,7 +1185,9 @@ function langHelpPillEl() {
     const ed = $("editor").getBoundingClientRect();
     pop.style.position = "fixed";
     pop.style.left = ed.left + "px";
-    pop.style.top = ed.top + "px";
+    // Anchor to the editor box's bottom edge (growing upward), so the
+    // popover reads as attached to the (i) pill just below the box.
+    pop.style.bottom = window.innerHeight - ed.bottom + "px";
     pop.style.width = ed.width + "px";
     // Hug the content height (no dead space at the bottom), but never
     // extend past the editor box (that would cover the Run buttons below)
@@ -1196,7 +1198,7 @@ function langHelpPillEl() {
   const resetPop = () => {
     pop.style.position = "";
     pop.style.left = "";
-    pop.style.top = "";
+    pop.style.bottom = "";
     pop.style.width = "";
     pop.style.height = "";
   };
