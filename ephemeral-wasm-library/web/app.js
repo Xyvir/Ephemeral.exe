@@ -1152,11 +1152,14 @@ function langHelpPillEl() {
     const code = document.createElement("code");
     code.textContent = l;
     span.appendChild(code);
-    const als = ALIAS_MAP[l] || [];
-    if (als.length) {
+    // Show at most one short alias so every row fits on one line — long
+    // alias lists (node's, pwsh's, lisp's, actionlint's lint-action…) wrap
+    // and mangle the grid.
+    const als = (ALIAS_MAP[l] || [])[0] || "";
+    if (als && als.length <= 10) {
       const s = document.createElement("span");
       s.className = "als";
-      s.textContent = " (" + als.join(", ") + ")";
+      s.textContent = " (" + als + ")";
       span.appendChild(s);
     }
     list.appendChild(span);
