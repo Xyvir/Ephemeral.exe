@@ -1170,17 +1170,45 @@ function langHelpPillEl() {
   const noteCode = document.createElement("code");
   noteCode.textContent = "/output";
   note.append(
-    "Artifacts: write files to ", noteCode,
-    " in your code — the run returns them as downloadable files ",
-    "(single images preview inline).");
+    "Artifacts: write to ", noteCode,
+    " — downloads (images preview inline).");
   pop.appendChild(note);
   pill.appendChild(pop);
 
+  // Position the popover exactly over the Run Code editor box on open,
+  // so it never covers the header or the action buttons — the box is a
+  // natural-sized placeholder, and the semi-transparent popover lets the
+  // code underneath stay visible. Uses viewport (fixed) coordinates, so
+  // the popover must be taken out of the pill's absolute-positioning
+  // context while open.
+  const positionPop = () => {
+    const ed = $("editor").getBoundingClientRect();
+    pop.style.position = "fixed";
+    pop.style.left = ed.left + "px";
+    pop.style.top = ed.top + "px";
+    pop.style.width = ed.width + "px";
+    // Never let the popover extend past the editor box (that would cover
+    // the Run buttons below) — the compact list is sized to fit the box
+    // with no internal scrolling.
+    pop.style.height = ed.height + "px";
+  };
+  const resetPop = () => {
+    pop.style.position = "";
+    pop.style.left = "";
+    pop.style.top = "";
+    pop.style.width = "";
+    pop.style.height = "";
+  };
   const setOpen = (open) => {
     pop.hidden = !open;
+    if (open) positionPop();
+    else resetPop();
     pill.classList.toggle("active", open);
     pill.setAttribute("aria-expanded", String(open));
   };
+  window.addEventListener("resize", () => {
+    if (!pop.hidden) positionPop();
+  });
   pill.addEventListener("click", (e) => {
     e.stopPropagation();
     setOpen(pop.hidden);
@@ -1192,7 +1220,14 @@ function langHelpPillEl() {
     }
   });
   pill.addEventListener("mouseenter", () => setOpen(true));
-  pop.addEventListener("mouseleave", () => setOpen(false));
+  // Close when the pointer is anywhere outside the pill or its popover —
+  // direction-independent (mouseleave-only was fragile because the popover
+  // is a fixed overlay sitting above the pill, so leaving toward some
+  // edges skipped the handlers).
+  document.addEventListener("mouseover", (e) => {
+    if (pop.hidden) return;
+    if (!e.target.closest(".lang-help-chip, .lang-help-pop")) setOpen(false);
+  });
   document.addEventListener("click", () => setOpen(false));
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") setOpen(false);
