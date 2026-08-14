@@ -328,6 +328,19 @@ button.secondary:hover { background: #4a4a4a; }
   gap: 1px 10px;
   font: 10px/1.25 ui-monospace, Consolas, monospace;
 }
+.lang-help-item {
+  /* Clickable: appends a demo snippet to the Run Code editor. */
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 1px 4px;
+  margin: 0 -4px;
+  outline-offset: 1px;
+}
+.lang-help-item:hover { background: rgba(255, 255, 255, .07); }
+.lang-help-item:focus-visible {
+  outline: 1px solid var(--accent-hi);
+  background: rgba(255, 255, 255, .07);
+}
 .lang-help-item code { color: var(--text); }
 .lang-help-item .als { color: var(--muted); }
 .lang-help-note {

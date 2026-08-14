@@ -8,6 +8,7 @@
 import init, { EphemeralClient, base64_decode } from "./wbg/ephemeral_wasm_library.js";
 import { BOOTSTRAP } from "./config.js";
 import { SUPPORTED_LANGUAGES, CANONICAL_LANGUAGES, ALIAS_MAP } from "./languages.js";
+import { LANG_SNIPPETS } from "./snippets.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -1149,6 +1150,9 @@ function langHelpPillEl() {
   for (const l of CANONICAL_LANGUAGES) {
     const span = document.createElement("span");
     span.className = "lang-help-item";
+    span.setAttribute("role", "button");
+    span.setAttribute("tabindex", "0");
+    span.title = "Append a " + l + " demo to the Run Code editor";
     const code = document.createElement("code");
     code.textContent = l;
     span.appendChild(code);
@@ -1162,6 +1166,25 @@ function langHelpPillEl() {
       s.textContent = " (" + als + ")";
       span.appendChild(s);
     }
+    // Click appends the language's demo snippet (a markdown code fence) to
+    // the Run Code editor, keeping whatever is already there. The click
+    // still bubbles to the document-level close handler, so the popover
+    // dismisses after appending — natural for "add one, run it".
+    const appendSnippet = () => {
+      const snip = LANG_SNIPPETS[l];
+      if (!snip || !editor) return;
+      const cur = editor.getValue().trimEnd();
+      editor.setValue(cur ? cur + "\n\n" + snip + "\n" : snip + "\n");
+      updateLangStatus(); // setValue doesn't fire OverType's onChange
+      highlightCodeHeaders();
+    };
+    span.addEventListener("click", appendSnippet);
+    span.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        appendSnippet();
+      }
+    });
     list.appendChild(span);
   }
   pop.appendChild(list);
@@ -1222,16 +1245,31 @@ function langHelpPillEl() {
       setOpen(pop.hidden);
     }
   });
-  pill.addEventListener("mouseenter", () => setOpen(true));
-  // Close when the pointer is anywhere outside the pill or its popover —
-  // direction-independent (mouseleave-only was fragile because the popover
-  // is a fixed overlay sitting above the pill, so leaving toward some
-  // edges skipped the handlers).
+  // Hover bridging: the popover floats over the editor box, above the pill,
+  // so there's a gap between them. Closing instantly on mouseout made that
+  // gap uncrossable — dragging the cursor from the pill up to the popover
+  // dismissed it. Instead, leaving the pill/popover zone starts a short
+  // grace timer; re-entering (or reaching the popover) cancels it, so the
+  // popover survives the crossing but still dismisses once the pointer
+  // genuinely stays away.
+  let closeTimer = null;
+  const cancelClose = () => {
+    if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+  };
+  const scheduleClose = () => {
+    if (closeTimer) return;
+    closeTimer = setTimeout(() => {
+      closeTimer = null;
+      setOpen(false);
+    }, 250);
+  };
+  pill.addEventListener("mouseenter", () => { cancelClose(); setOpen(true); });
   document.addEventListener("mouseover", (e) => {
     if (pop.hidden) return;
-    if (!e.target.closest(".lang-help-chip, .lang-help-pop")) setOpen(false);
+    if (e.target.closest(".lang-help-chip, .lang-help-pop")) cancelClose();
+    else scheduleClose();
   });
-  document.addEventListener("click", () => setOpen(false));
+  document.addEventListener("click", () => { cancelClose(); setOpen(false); });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") setOpen(false);
   });
