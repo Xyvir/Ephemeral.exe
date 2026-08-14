@@ -737,53 +737,11 @@ def _podman_prune_images() -> None:
 
 
 # --- Pre-hydrate all images ("super-seed") -------------------------------
-# Rough compressed-size estimates (GB) for the confirmation warning. These
-# anchor the full language set to the README's ~15-25 GB figure without
-# hitting the registry; per-image, first matching token wins.
-_HYDRATE_EST_GB: tuple[tuple[str, float], ...] = (
-    ("catthehacker", 4.0),      # ubuntu:act-22.04 runner image
-    ("pywine", 2.5),            # python + wine
-    ("anaconda3", 2.0),         # continuumio/anaconda3 (science)
-    ("pandoc/extra", 2.0),      # TeX Live / pandoc
-    ("octave-forge", 1.5),
-    ("haskell", 1.0),
-    ("gcc", 0.9),
-    ("r-base", 0.8),
-    ("ocaml/opam", 0.8),
-    ("powershell", 0.6),
-    ("ephemeral-python-uv", 0.6),
-    ("rust", 0.4),
-    ("eclipse-temurin", 0.3),
-    ("clojure", 0.3),
-    ("golang", 0.2),
-    ("julia", 0.2),
-    ("swipl", 0.2),
-    ("iverilog", 0.1),
-    ("crystal", 0.1),
-    ("nim", 0.1),
-    ("sbcl", 0.1),
-    ("elixir", 0.1),
-    ("lua", 0.1),
-    ("perl", 0.1),
-    ("php", 0.1),
-    ("tiddlywiki", 0.1),
-    ("node", 0.05),
-    ("ruby", 0.05),
-)
-_DEFAULT_HYDRATE_EST_GB = 0.05
-
-
-def _estimate_hydration_gb(images: list[str]) -> float:
-    """Best-effort total download estimate (GB) for a set of images."""
-    total = 0.0
-    for img in images:
-        est = _DEFAULT_HYDRATE_EST_GB
-        for token, gb in _HYDRATE_EST_GB:
-            if token in img:
-                est = gb
-                break
-        total += est
-    return total
+# Worst-case download estimate (GB) for the whole language set. A single
+# round max-guess anchor (~15-25 GB realistic), deliberately not per-image:
+# it's a warning anchor, not a bill, and cached images get skipped anyway
+# during the pull.
+_HYDRATE_MAX_EST_GB = 25.0
 
 
 def _hydration_free_space() -> tuple[int, str]:
@@ -1836,26 +1794,13 @@ def on_prehydrate_all(icon, item_unused=None):
     otherwise it runs in the tray's own podman, in the background.
     """
     images = mapped_images()
-    try:
-        todo = [i for i in images if not ephemeral_core.check_image_exists(i)]
-    except Exception:
-        todo = list(images)
-    cached = len(images) - len(todo)
-    if not todo:
-        icon.notify(
-            "Every language image is already cached — nothing to hydrate.",
-            title="Ephemeral Pre-hydrate",
-        )
-        return
 
-    est_gb = _estimate_hydration_gb(todo)
+    est_gb = _HYDRATE_MAX_EST_GB
     free, drive = _hydration_free_space()
     warn = False
     lines = ["Pre-hydrate ALL language images?"]
-    lines.append(
-        f"  {cached} of {len(images)} already cached; {len(todo)} to pull."
-    )
-    lines.append(f"  Estimated download: ~{est_gb:.1f} GB")
+    lines.append(f"  {len(images)} images in the language set.")
+    lines.append(f"  Worst-case download: ~{est_gb:.0f} GB (skips what's already cached)")
     if free:
         lines.append(f"  Free on {drive or 'storage drive'}: {free / 2**30:.1f} GB")
         if free < est_gb * 2**30:
@@ -1868,7 +1813,7 @@ def on_prehydrate_all(icon, item_unused=None):
         lines.append(f"  Podman VM disk cap: {cap:.0f} GB")
         if cap < est_gb:
             warn = True
-            lines.append("  WARNING: VM disk cap is below the estimated download.")
+            lines.append("  WARNING: VM disk cap is below the worst-case download.")
     lines.append("")
     lines.append("Pulls every image the cluster can request; the big science and")
     lines.append("typesetting images are multi-GB. The node keeps running during")
@@ -1891,8 +1836,8 @@ def on_prehydrate_all(icon, item_unused=None):
             )
         return
     icon.notify(
-        f"Pre-hydration started — {len(todo)} image(s) to pull. "
-        "Runs in the background; you'll get a summary when done.",
+        f"Pre-hydration started — pulling up to {len(images)} image(s); "
+        "already-cached ones are skipped. You'll get a summary when done.",
         title="Ephemeral Pre-hydrate",
     )
     threading.Thread(
