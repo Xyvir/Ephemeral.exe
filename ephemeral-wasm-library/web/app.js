@@ -43,6 +43,13 @@ let lastOutputRaw = "";
 // clean markdown — failure envelopes already embed the error text.
 let lastStderr = "";
 let lastExitCode = 0;
+// Warnings toggle: stderr on an exit-0 run is advisory, so it stays
+// collapsed behind a yellow "!" button that only appears when there is
+// something to reveal (no badge — the button itself is the signal).
+// warningsOn persists within a run so view rebuilds re-append the element
+// honoring it; both reset on every run.
+let warningsOn = false;
+let lastStderrEl = null;
 
 // Image extensions -> mime (inline render + clipboard copy).
 const IMAGE_MIMES = {
@@ -347,27 +354,47 @@ function appendOut(text, cls) {
 // Copy-output markdown stays clean; failure envelopes embed the error
 // text themselves). Colored by exit code: stderr on a successful run is
 // advisory (interpreters legitimately warn on stderr with exit 0 — e.g.
-// osabie's Enum.slice notice), so it renders muted; only a non-zero exit
-// renders it as an error. Remembered so view rebuilds can re-append it.
+// osabie's Enum.slice notice), so it renders muted and collapsed behind
+// the warnings toggle; only a non-zero exit renders it as a visible error.
 function appendStderr(text, exitCode) {
   lastStderr = text;
   lastExitCode = exitCode;
-  const box = $("output");
-  const pre = document.createElement("pre");
-  pre.className = "line " + (exitCode === 0 ? "stderr-muted" : "err");
-  pre.textContent = text;
-  box.appendChild(pre);
-  box.scrollTop = box.scrollHeight;
+  if (exitCode === 0) showWarningsButton();
+  else $("warnings").hidden = true;
+  lastStderrEl = stderrElement();
+  if (!lastStderrEl) return;
+  $("output").appendChild(lastStderrEl);
+  $("output").scrollTop = $("output").scrollHeight;
 }
 
-// The stderr element for rebuilt views (interleaved / normal) — null when
-// the run had no stderr.
+// The stderr element, honoring the warnings toggle: collapsed (hidden)
+// by default on exit-0 runs, visible once the user reveals it. Null when
+// the run had no stderr. Used for both the streaming append and rebuilds.
 function stderrElement() {
   if (!lastStderr) return null;
   const pre = document.createElement("pre");
   pre.className = "line " + (lastExitCode === 0 ? "stderr-muted" : "err");
   pre.textContent = lastStderr;
+  if (lastExitCode === 0 && !warningsOn) pre.hidden = true;
   return pre;
+}
+
+// Show the yellow warnings toggle and sync its tooltip/state to the
+// current warning line count. Called when a run lands exit-0 stderr.
+function showWarningsButton() {
+  const btn = $("warnings");
+  btn.hidden = false;
+  syncWarningsButton(btn);
+}
+
+// Keep the button's pressed-state, tooltip, and line count in sync.
+function syncWarningsButton(btn) {
+  btn.classList.toggle("on", warningsOn);
+  btn.setAttribute("aria-pressed", String(warningsOn));
+  const n = lastStderr ? lastStderr.split("\n").filter((l) => l.trim()).length : 0;
+  btn.title =
+    `Warnings (${n} line${n === 1 ? "" : "s"}) — click to ` +
+    (warningsOn ? "hide" : "show");
 }
 
 // Render a job result envelope ("## <Lang> Result\n```lang\n...```") as
@@ -563,8 +590,8 @@ function renderInterleaved() {
   }
   addCopyButtons(box);
   appendArtifactsIfAny();
-  const se = stderrElement();
-  if (se) box.appendChild(se);
+  lastStderrEl = stderrElement();
+  if (lastStderrEl) box.appendChild(lastStderrEl);
   box.scrollTop = box.scrollHeight;
 }
 
@@ -576,8 +603,8 @@ function renderNormal() {
   if (lastOutputRaw) box.appendChild(resultElement(lastOutputRaw));
   addCopyButtons(box);
   appendArtifactsIfAny();
-  const se = stderrElement();
-  if (se) box.appendChild(se);
+  lastStderrEl = stderrElement();
+  if (lastStderrEl) box.appendChild(lastStderrEl);
   box.scrollTop = box.scrollHeight;
 }
 
@@ -937,6 +964,9 @@ async function run() {
   lastResultText = "";
   lastStderr = "";
   lastExitCode = 0;
+  warningsOn = false;
+  lastStderrEl = null;
+  $("warnings").hidden = true;
   $("output").textContent = "";
   $("output").classList.remove("interleaved");
   setDetail(`running on ${shortId(target.node_id)}…`);
@@ -959,6 +989,7 @@ async function run() {
     } else if (evt.type === "job_done") {
       if (evt.stdout) { lastResultText = evt.stdout; appendResult(evt.stdout); }
       if (evt.stderr) appendStderr(evt.stderr, evt.exit_code);
+      else $("warnings").hidden = true;
       if (runArtifacts.length) {
         renderArtifacts(runArtifacts, markdown);
       } else if (evt.artifact_file) {
@@ -1320,6 +1351,11 @@ $("clearOutput").addEventListener("click", () => {
   outputRaw = "";
   runArtifacts = [];
   lastMarkdown = lastResultText = lastOutputRaw = "";
+  lastStderr = "";
+  lastExitCode = 0;
+  warningsOn = false;
+  lastStderrEl = null;
+  $("warnings").hidden = true;
 });
 
 $("interleave").addEventListener("click", () => {
@@ -1332,6 +1368,15 @@ $("interleave").addEventListener("click", () => {
     : "Interleave: off — results only";
   if (interleaved && lastMarkdown) renderInterleaved();
   else if (!interleaved && lastOutputRaw) renderNormal();
+});
+
+// Warnings toggle: reveals/collapses the exit-0 stderr lines (hidden by
+// default). The button itself is the presence signal — yellow in both
+// states — so there's no badge; the click just flips the element.
+$("warnings").addEventListener("click", () => {
+  warningsOn = !warningsOn;
+  syncWarningsButton($("warnings"));
+  if (lastStderrEl) lastStderrEl.hidden = !warningsOn;
 });
 
 // Copy text to the clipboard, then flash the button green. Races the

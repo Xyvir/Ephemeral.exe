@@ -366,6 +366,14 @@ button.secondary:hover { background: #4a4a4a; }
 .icon-btn svg { width: 14px; height: 14px; }
 .icon-btn.ok svg { color: var(--ok); }
 .icon-btn.active { color: var(--accent-hi); background: #333; }
+/* The [hidden] attribute is defeated by .icon-btn's display:inline-flex,
+   so re-assert it for the conditional warnings button. */
+.icon-btn[hidden] { display: none; }
+/* Warnings toggle: yellow in BOTH states (that's the presence signal —
+   no badge needed); only appears on runs that produced exit-0 stderr. */
+.icon-btn.warn { color: #ffb86b; border: 1px solid rgba(255, 184, 107, .5); }
+.icon-btn.warn:hover { background: rgba(255, 184, 107, .14); color: #ffd9a8; }
+.icon-btn.warn.on { background: rgba(255, 184, 107, .22); color: #ffe0b3; border-color: #ffb86b; }
 
 details.advanced { margin-top: 14px; }
 details.advanced > summary {
