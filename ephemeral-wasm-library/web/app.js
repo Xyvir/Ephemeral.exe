@@ -1152,11 +1152,11 @@ function langHelpPillEl() {
     const code = document.createElement("code");
     code.textContent = l;
     span.appendChild(code);
-    // Show at most one short alias so every row fits on one line — long
-    // alias lists (node's, pwsh's, lisp's, actionlint's lint-action…) wrap
-    // and mangle the grid.
+    // Show at most one alias, and only when the whole entry stays short
+    // enough to fit its grid cell on one line — long alias lists (node's,
+    // pwsh's, lisp's, actionlint's lint-action…) wrap and mangle the grid.
     const als = (ALIAS_MAP[l] || [])[0] || "";
-    if (als && als.length <= 10) {
+    if (als && l.length + als.length + 2 <= 14) {
       const s = document.createElement("span");
       s.className = "als";
       s.textContent = " (" + als + ")";
@@ -1187,10 +1187,11 @@ function langHelpPillEl() {
     pop.style.left = ed.left + "px";
     pop.style.top = ed.top + "px";
     pop.style.width = ed.width + "px";
-    // Never let the popover extend past the editor box (that would cover
-    // the Run buttons below) — the compact list is sized to fit the box
-    // with no internal scrolling.
-    pop.style.height = ed.height + "px";
+    // Hug the content height (no dead space at the bottom), but never
+    // extend past the editor box (that would cover the Run buttons below)
+    // — the compact, auto-column list fits the box with no scrolling.
+    pop.style.height = ""; // natural size first, so scrollHeight is real
+    pop.style.height = Math.min(pop.scrollHeight, ed.height) + "px";
   };
   const resetPop = () => {
     pop.style.position = "";
