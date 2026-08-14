@@ -1423,27 +1423,6 @@ $("clearCode").addEventListener("click", () => {
   updateLangStatus();
   highlightCodeHeaders();
 });
-$("sample").addEventListener("click", () => {
-  editor.setValue(
-    "## Python Example\n\n" +
-    "```python\n" +
-    "import sys\n" +
-    "print('hello from the ephemeral cluster')\n" +
-    "print('python', sys.version.split()[0])\n" +
-    "```\n\n" +
-    "## Node Example\n\n" +
-    "```node\n" +
-    "console.log('node', process.version)\n" +
-    "```\n\n" +
-    "## Bash Example\n\n" +
-    "```bash\n" +
-    "echo \"bash $BASH_VERSION\"\n" +
-    "```"
-  );
-  updateLangStatus(); // setValue doesn't fire OverType's onChange
-  highlightCodeHeaders();
-});
-
 initEditor();
 updateLangStatus();
 highlightCodeHeaders();
