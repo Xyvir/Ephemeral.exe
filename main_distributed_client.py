@@ -1219,9 +1219,18 @@ def install_service() -> int:
             error=True,
         )
     # Start it immediately so it takes effect now, not just after reboot.
-    subprocess.run(["schtasks", "/Run", "/TN", SERVICE_TASK_NAME],
-                   capture_output=True, text=True, timeout=30,
-                   startupinfo=get_startupinfo())
+    # The /Run return code used to be ignored, which silently left an
+    # "installed" marker pointing at a node that never started — check it
+    # and retry once before giving up.
+    run_ok = False
+    for _attempt in range(2):
+        run = subprocess.run(["schtasks", "/Run", "/TN", SERVICE_TASK_NAME],
+                             capture_output=True, text=True, timeout=30,
+                             startupinfo=get_startupinfo())
+        if run.returncode == 0:
+            run_ok = True
+            break
+        time.sleep(3)
     # Marker so the (non-elevated) tray can show the service as installed
     # without querying the SYSTEM-owned task.
     try:
@@ -1230,14 +1239,41 @@ def install_service() -> int:
         marker.write_text(str(int(time.time())), encoding="utf-8")
     except Exception as e:
         print(f"Failed to write service marker: {e}")
+    # Give the node a few seconds to boot and answer /health, so the
+    # dialog reports whether it actually came up (the old code always
+    # claimed "started" even when the immediate start had silently failed).
+    node_id = None
+    if run_ok:
+        deadline = time.time() + 25
+        while time.time() < deadline:
+            info = _service_status()
+            if info and info.get("status") == "ok" and info.get("node_id"):
+                node_id = info["node_id"]
+                break
+            time.sleep(1)
     # Pre-warm the bash canary so the node is warm on it from second zero
     # (the probe never waits for a first-run pull). Best-effort: a podman
     # machine that can't start just means on-demand pulls instead.
     warmed = _prehydrate_bash()
-    msg = (
-        "Background node installed and started.\n"
-        "It will also run automatically at every boot (even while logged off)."
-    )
+    if not run_ok:
+        msg = (
+            "Background node installed, but the immediate start failed.\n"
+            "It will start automatically at the next boot; jobs fall back to "
+            "the tray's own node until then."
+        )
+    elif node_id:
+        msg = (
+            "Background node installed and started.\n"
+            f"Node: {node_id}\n"
+            "It will also run automatically at every boot (even while logged off)."
+        )
+    else:
+        msg = (
+            "Background node installed; still starting (health not answered yet).\n"
+            "It will keep trying and answer within about a minute — and runs "
+            "automatically at every boot. Jobs fall back to the tray's own "
+            "node until it is reachable."
+        )
     if warmed:
         msg += "\nBash runtime pre-warmed — first jobs (and probes) run instantly."
     else:
