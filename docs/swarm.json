@@ -1,5 +1,5 @@
 {
-  "updated": "2026-08-14T19:01:10Z",
+  "updated": "2026-08-15T01:35:12Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
@@ -8,33 +8,165 @@
       "relay": "https://usw1-1.relay.n0.iroh.link./",
       "ticket": "endpointaayan4ws4uqgqkbivbe2xcmwbwtfaj6q32icvjjjvab7ob6rqqpo2ayaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacuaaabmhricaeachpgxtxb4kaq",
       "images": [
+        "docker.io/esolang/05ab1e:latest",
+        "docker.io/esolang/brainfuck-esotope:latest",
         "docker.io/esolang/cobol:latest",
         "docker.io/library/alpine:latest",
         "docker.io/library/node:18-alpine",
+        "docker.io/nimlang/nim:alpine",
+        "docker.io/pandoc/extra:latest",
         "docker.io/tymills620/ephemeral-python-uv:latest"
       ],
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-14T19:01:10Z",
+      "probe_at": "2026-08-15T01:35:12Z",
       "probe_detail": "ok",
-      "probe_ms": 6344,
+      "probe_ms": 6087,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 3055
+      "rtt_ms": 128
     },
     {
       "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs7zjhadaeaevjzmx6e5aaybacwbyqabrhiagaiaycuaafej2abq",
+      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs75dfqdaeaevjzmx7x3oaybacwbyqabt2uqgaiaycuaafe6vebq",
       "images": [
         "docker.io/catthehacker/ubuntu:act-latest",
+        "docker.io/esolang/brainfuck-esotope:latest",
         "docker.io/library/alpine:latest"
       ],
+      "misses": 0,
+      "seen_alive": true,
+      "probe": "ok",
+      "probe_at": "2026-08-15T01:35:12Z",
+      "probe_detail": "ok",
+      "probe_ms": 2558,
+      "probe_fails": 0,
+      "rtt_ms": 10001
+    },
+    {
+      "node_id": "ad2599506ffbde7dd0785650529ac14b41f7ab2d4f5591fde22bb7c267153c9e",
+      "relay": "https://use1-1.relay.n0.iroh.link./",
+      "ticket": "endpointacwslgkqn75547oqpblfauu2yffud55lfvhvlep54iv3pqthcu6j4biaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs72v3adaeaevjzmx7t7oaybacwbyqabsdhagaiaycuaafeqzybq",
+      "images": [],
+      "probe": "failed",
+      "probe_at": "2026-08-15T01:35:12Z",
+      "probe_detail": "probe failed (JobError): [WinError 2] The system cannot find the file specified",
+      "probe_ms": 89,
+      "probe_fails": 1,
+      "misses": 0,
+      "seen_alive": true,
+      "rtt_ms": 117
+    },
+    {
+      "node_id": "066877417584fba7f3ef03bab4103f2efb15fbaa81953cbf75aca4b6232ea1b0",
+      "relay": null,
+      "ticket": "endpointaadgq52bowcpxj7t54b3vnaqh4xpwfp3vkazkpf7owwkjnrdf2q3aaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
+      "images": [],
       "probe_fails": 0,
       "misses": 1,
-      "seen_alive": true,
+      "seen_alive": false,
       "probe": "unreachable",
-      "probe_at": "2026-08-14T19:01:10Z"
+      "probe_at": "2026-08-15T01:35:12Z"
+    },
+    {
+      "node_id": "65a0f5eda4eb43614c543efc6cd0f02bbc88e4d68c973afdbf385c3691cc2a26",
+      "relay": null,
+      "ticket": "endpointabs2b5pnutvugykmkq7py3gq6av3zche22gjoox5x44fynurzqvcmaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
+      "images": [],
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-15T01:35:12Z"
+    },
+    {
+      "node_id": "84ae0585c0939e449b9849731f30508944f3d813c1fbfcfe3f3c1f96f4da4e84",
+      "relay": null,
+      "ticket": "endpointacck4bmfycjz4re3tbexghzqkceuj46ycpa7x7h6h46b7fxu3jhiiaa",
+      "images": [],
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-15T01:35:12Z"
+    },
+    {
+      "node_id": "952a8b70bf7422f7bad3b7896de3e6b4deded8cf3c2da96d8034c691cd59d9ed",
+      "relay": null,
+      "ticket": "endpointacksvc3qx52cf5522o3ys3pd422n5xwyz46c3klnqa2mneonlhm62aiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
+      "images": [],
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-15T01:35:12Z"
+    },
+    {
+      "node_id": "9a4624411ddf775d376258190199f5cbe8b4569fc93c9d4cabd21b89e3fa8e85",
+      "relay": null,
+      "ticket": "endpointacnemjcbdxpxoxjxmjmbsamz6xf6rncwt7etzhkmvpjbxcpd7khikaa",
+      "images": [],
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-15T01:35:12Z"
+    },
+    {
+      "node_id": "b4ae9acb9425f6acbbff17cfc1b887df8aad92f32294977a2356f4de3ce4a4f0",
+      "relay": null,
+      "ticket": "endpointac2k5gwlsqs7nlf374l47qnyq7pyvlms6mrjjf32enlpjxr44sspaaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
+      "images": [],
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-15T01:35:12Z"
+    },
+    {
+      "node_id": "cb6298b89852a7f63b73ffceae0d22e2d7d73e6f16441fcfff28a5772a0e5e16",
+      "relay": null,
+      "ticket": "endpointadfwfgfytbjkp5r3op745lqnelrnpvz6n4leih6p74ukk5zkbzpbmaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
+      "images": [],
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-15T01:35:12Z"
+    },
+    {
+      "node_id": "cc93e1827a72a8442989e1372ca8f80b49b39f57a37071f62823bd08f65043cc",
+      "relay": null,
+      "ticket": "endpointadgjhymcpjzkqrbjrhqtolfi7afutm47k6rxa4pwfar32chwkbb4yaa",
+      "images": [],
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-15T01:35:12Z"
+    },
+    {
+      "node_id": "d4a904f0f4e48a868cecd1959e1aa0b67b8af0dbc3fb38f85a7fcd0ede058782",
+      "relay": null,
+      "ticket": "endpointadkksbhq6tsivbum5tizlhq2uc3hxcxq3pb7wohylj742dw6awdyeaiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
+      "images": [],
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-15T01:35:12Z"
+    },
+    {
+      "node_id": "f0fd6b10f89f9c1fc6b8fbb297cc2a7526817b5367d5f3924a87ba05b2788eea",
+      "relay": null,
+      "ticket": "endpointadyp22yq7cpzyh6gxd53ff6mfj2snal3knt5l44sjkd3ubnspchouaa",
+      "images": [],
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-15T01:35:12Z"
     }
   ]
 }
