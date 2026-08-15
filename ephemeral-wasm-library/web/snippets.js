@@ -30,8 +30,8 @@ export const LANG_SNIPPETS = {
     "bash",
     'echo "bash $BASH_VERSION | Math Check: $((7 + 10)) - OK"'
   ),
-  brainfuck: fence(
-    "brainfuck",
+  bf: fence(
+    "bf",
     // The canonical Wikipedia "Hello World!" (verified end-to-end; the
     // earlier example contained stray '?' chars — invalid brainfuck).
     "++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.\n" +

@@ -84,7 +84,7 @@ LANG_MAP = {
     'prolog':  {'image': 'docker.io/library/swipl:latest', 'cmd': ['swipl', '-q', '-f', '/dev/stdin', '-t', 'halt']},
 
     # --- Esoteric ---
-    'brainfuck': {'image': 'docker.io/esolang/brainfuck-esotope', 'cmd': ['sh', '-c', 'cat > /tmp/code && script /tmp/code']},
+    'bf': {'image': 'docker.io/esolang/brainfuck-esotope', 'cmd': ['sh', '-c', 'cat > /tmp/code && script /tmp/code']},
 
     # --- Hardware Description (HDL) ---
     'verilog': {'image': 'docker.io/hdlc/iverilog', 'cmd': ['sh', '-c', 'cat > /tmp/run.v && iverilog /tmp/run.v -o /tmp/out && vvp /tmp/out']},
@@ -117,7 +117,7 @@ LANG_MAP = {
     'ml': 'ocaml',
     'swipl': 'prolog', 'pl': 'prolog',
     'cr': 'crystal', 'nimrod': 'nim',
-    'bf': 'brainfuck', 'spl': 'shakespeare', '><>': 'fish',
+    'brainfuck': 'bf', 'spl': 'shakespeare', '><>': 'fish',
     'cob': 'cobol', 'gnucobol': 'cobol',
     'tw': 'tiddlywiki', 'tw5': 'tiddlywiki', 'wiki': 'tiddlywiki',
     'tex': 'latex', 'pdflatex': 'latex',

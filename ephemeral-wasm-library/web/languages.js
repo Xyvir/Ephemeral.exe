@@ -94,7 +94,7 @@ export const CANONICAL_LANGUAGES = [
   "05ab1e",
   "actionlint",
   "bash",
-  "brainfuck",
+  "bf",
   "c",
   "cjam",
   "clojure",
@@ -201,8 +201,8 @@ export const ALIAS_MAP = {
   "nim": [
     "nimrod"
   ],
-  "brainfuck": [
-    "bf"
+  "bf": [
+    "brainfuck"
   ],
   "cobol": [
     "cob",

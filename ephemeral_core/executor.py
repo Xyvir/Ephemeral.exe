@@ -442,7 +442,12 @@ def _run_podman_script(
 
 def _lang_title(lang: str) -> str:
     """Display name for a block's language (first token, capitalized)."""
-    return lang.split()[0].capitalize() if lang else "Custom"
+    if not lang:
+        return "Custom"
+    first = lang.split()[0]
+    if first.lower() == "bf":
+        return "BF"  # brainfuck is shown as 'bf' in the PWA (kid-friendly)
+    return first.capitalize()
 
 
 def _format_success_result(
