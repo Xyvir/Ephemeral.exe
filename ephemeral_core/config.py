@@ -134,6 +134,16 @@ for lang in ESOLANGS:
     if lang not in LANG_MAP:
         LANG_MAP[lang] = {'image': f'docker.io/esolang/{lang}', 'cmd': ['sh', '-c', 'cat > /tmp/code && script /tmp/code']}
 
+# Piet programs are images, not text: the runner (npiet) reads a picture
+# file, so a text code block can never be a valid program. If a seed image
+# was staged into the workdir (e.g. a b64-encoded `code.png` block), run it
+# instead; otherwise fall back to the text path (which fails with a PPM
+# format error, correctly flagging that text isn't a program).
+LANG_MAP['piet'] = {
+    'image': 'docker.io/esolang/piet',
+    'cmd': ['sh', '-c', 'f=$(ls /tmp/*.png /tmp/*.ppm /tmp/*.gif 2>/dev/null | head -1); if [ -n "$f" ]; then script "$f"; else cat > /tmp/code && script /tmp/code; fi']
+}
+
 
 def mapped_images() -> list[str]:
     """

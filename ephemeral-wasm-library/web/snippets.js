@@ -23,7 +23,7 @@ export const LANG_SNIPPETS = {
       "  build:",
       "    runs-on: ubuntu-latest",
       "    steps:",
-      '      - run: echo "actionlint: workflow is valid"',
+      '      - run: echo "actionlint ok"',
     ].join("\n")
   ),
   bash: fence(
@@ -185,13 +185,16 @@ export const LANG_SNIPPETS = {
       "?>",
     ].join("\n")
   ),
-  piet: fence(
-    "piet",
-    [
-      "# piet programs are images, not text — the esolang/piet image",
-      "# expects a drawn program, so this block is a placeholder.",
-    ].join("\n")
-  ),
+  // piet programs are images, not text — so the demo seeds a b64-encoded
+  // "Hello, World!" program image (code.png) and the piet block runs it.
+  piet: [
+    "```code.png b64",
+    "iVBORw0KGgoAAAANSUhEUgAAAFcAAAAXCAYAAAB+kNMAAAAAAXNSR0IArs4c6QAAAAlwSFlzAAALEwAACxMBAJqcGAAAAAd0SU1FB9sDChMZB4c0/WoAAAAZdEVYdENvbW1lbnQAQ3JlYXRlZCB3aXRoIEdJTVBXgQ4XAAAA7UlEQVRYw+2Y0Q6DMAhFL8b/op8OX8YedGatdUuMzZi794VCTKQHSrQCWKCRmaLAsYurorh04gZ42cVVDS6duFnvcagppHTe+2v5FCAiMIG6TEXqQs9Eck6hWvkiAtizhRefcK+CHbEAfvEJ92LAr+LMHagpX/W1a7+dz5H/TnPO45UD7BmgqTpXkwAcoTkD1G3tnLkU4RIu4VIn4Wb7rrxd5xIsxwLhDvtLWq/4Wku4gwAT7h9r/tQl4r6t/cYgunccPrhze0cwNCq7Jbj6qpEcZFQ2zVhowUYDdGcjqs1cvaHQqHI5KvgR2JGAH5UkmGgNBgvjAAAAAElFTkSuQmCC",
+    "```",
+    "```piet",
+    "# the program is the seeded image (code.png)",
+    "```",
+  ].join("\n"),
   prolog: fence(
     "prolog",
     [
