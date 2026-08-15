@@ -1054,7 +1054,9 @@ function appendLangReminder(unsupported) {
   // Each canonical language with its aliases inline in parentheses:
   // python (py), node (js, javascript, npm, npx, …)
   const supported = CANONICAL_LANGUAGES.map((l) => {
-    const als = ALIAS_MAP[l] || [];
+    // Skip aliases containing "fuck" (brainfuck) — this PWA is aimed at
+    // younger students, and the reminder otherwise echoes every alias.
+    const als = (ALIAS_MAP[l] || []).filter((a) => !a.toLowerCase().includes("fuck"));
     const aliases = als.length
       ? ` <span class="reminder-als">(${als.map(esc).join(", ")})</span>`
       : "";
@@ -1237,8 +1239,10 @@ function langHelpPillEl() {
     // Show at most one alias, and only when the whole entry stays short
     // enough to fit its grid cell on one line — long alias lists (node's,
     // pwsh's, lisp's, actionlint's lint-action…) wrap and mangle the grid.
+    // Aliases containing "fuck" (brainfuck) are hidden too — this PWA is
+    // aimed at younger students.
     const als = (ALIAS_MAP[l] || [])[0] || "";
-    if (als && l.length + als.length + 2 <= 14) {
+    if (als && !als.toLowerCase().includes("fuck") && l.length + als.length + 2 <= 14) {
       const s = document.createElement("span");
       s.className = "als";
       s.textContent = " (" + als + ")";
