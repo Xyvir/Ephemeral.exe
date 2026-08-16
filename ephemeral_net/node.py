@@ -456,6 +456,13 @@ class Node:
         targets: list[tuple[str | None, str | None, str | None]] = []
         if entries:
             for entry in entries:
+                # Skip entries the swarm refresh found reachable but unable
+                # to run a probe job (probe: "failed") — a node that answers
+                # hello but can't execute is a zombie, not a peer. Unreachable
+                # and unverified entries are still dialed so a flapping node
+                # gets a chance to rejoin.
+                if entry.get("probe") == "failed":
+                    continue
                 node_id = entry.get("node_id")
                 relay = entry.get("relay")
                 ticket = entry.get("ticket")

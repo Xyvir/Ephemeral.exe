@@ -720,10 +720,16 @@ function imageMatches(image, lang) {
   return image.toLowerCase().includes("/" + l + ":") || image.toLowerCase().includes(l + "-");
 }
 
-// Pick the best compute node for a doc: a peer whose warm images cover
-// the doc's languages (lowest RTT wins), else the lowest-RTT peer.
+// Pick the best compute node for a doc: probe-verified peers first (the
+// swarm refresh proved they actually run jobs), then warm-image coverage,
+// then lowest RTT. A node that merely answers hello (unverified — e.g.
+// learned via a peer's hello frame, or listed but offline last refresh)
+// only wins when no verified peer exists at all.
 function pickTarget(doc) {
-  const all = [...peers.values()].sort((a, b) => (a.rtt_ms ?? 1e9) - (b.rtt_ms ?? 1e9));
+  const all = [...peers.values()].sort(
+    (a, b) => ((a.probe === "ok" ? 0 : 1) - (b.probe === "ok" ? 0 : 1)) ||
+              ((a.rtt_ms ?? 1e9) - (b.rtt_ms ?? 1e9))
+  );
   if (!all.length) return null;
   for (const lang of languagesIn(doc)) {
     const warm = all.find((p) => (p.images || []).some((img) => imageMatches(img, lang)));
@@ -805,7 +811,19 @@ async function refreshPeers() {
       : [];
     for (const n of [...swarmNodes, ...dnsNodes]) {
       if (n && (n.node_id || n.ticket)) {
-        push({ node_id: n.node_id || null, relay: n.relay || null, ticket: n.ticket || null });
+        // Probe-verified nodes are dialed first (probe: "ok" means the
+        // swarm refresh actually ran a job on them). Entries that were
+        // reachable but failed the probe (probe: "failed") are skipped
+        // entirely — a node that answers hello but can't run jobs is a
+        // zombie, not a peer. Unreachable entries are dialed but ranked
+        // last, so a flapping node still gets a chance to rejoin.
+        if (n.probe === "failed") continue;
+        push({
+          node_id: n.node_id || null,
+          relay: n.relay || null,
+          ticket: n.ticket || null,
+          probe: n.probe === "ok" ? "ok" : "unverified",
+        });
       }
     }
     for (const n of BOOTSTRAP.nodes || []) {
@@ -830,8 +848,17 @@ async function refreshPeers() {
     try {
       const res = JSON.parse(await withTimeout(dialCandidate(client, c), 15000));
       let added = false;
+      // Carry the list's probe verdict onto the stored peer so pickTarget
+      // can prefer verified nodes even after the dial (the wasm hello
+      // summary doesn't include it). Peers learned via another node's
+      // hello frame have no list entry -> unverified by default.
       if (res.seed && res.seed.node_id) {
-        peers.set(res.seed.node_id, { ...res.seed, seed: true });
+        const prev = peers.get(res.seed.node_id);
+        peers.set(res.seed.node_id, {
+          ...res.seed,
+          seed: true,
+          probe: prev && prev.probe ? prev.probe : (c.probe === "ok" ? "ok" : "unverified"),
+        });
         added = true;
       }
       for (const p of res.peers || []) {

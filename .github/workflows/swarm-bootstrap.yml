@@ -4,10 +4,10 @@ name: Refresh Swarm Bootstrap List
 # paper-thin REST clients, other nodes) always have a current list of
 # live swarm members to dial — no always-on discovery box required.
 #
-# The refresh also sends every reachable node a real job (a python
-# print(<nonce>) probe) and records who verified — see
-# ephemeral_net/probe.py — so the list reflects actual live compute
-# nodes, not just nodes that answer the hello handshake.
+# The refresh also sends every reachable node a real job (a bash
+# echo <nonce> probe — see ephemeral_net/probe.py) and records who
+# verified, so the list reflects actual live compute nodes, not just
+# nodes that answer the hello handshake.
 #
 # The bot's own commit (docs/swarm.json) is excluded from the main
 # Build & Release pipeline via paths-ignore, so it never spawns full
