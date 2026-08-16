@@ -1,12 +1,12 @@
 {
-  "updated": "2026-08-15T18:36:51Z",
+  "updated": "2026-08-16T01:41:22Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "3006f2d2e520682828a849ab89960da65027d0de902aa529a803f707d1841eed",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaayan4ws4uqgqkbivbe2xcmwbwtfaj6q32icvjjjvab7ob6rqqpo2ayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacuaaabpprycaeachpgxtx34oaq",
+      "relay": "https://usw1-1.relay.n0.iroh.link./",
+      "ticket": "endpointaayan4ws4uqgqkbivbe2xcmwbwtfaj6q32icvjjjvab7ob6rqqpo2ayaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacuaaabpzfqcaeachpgxtx6jmaq",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/crystallang/crystal:latest",
@@ -17,6 +17,7 @@
         "docker.io/esolang/golfscript:latest",
         "docker.io/esolang/lolcode:latest",
         "docker.io/esolang/piet:latest",
+        "docker.io/hdlc/iverilog:latest",
         "docker.io/library/alpine:latest",
         "docker.io/library/clojure:temurin-17-alpine",
         "docker.io/library/eclipse-temurin:21-jdk-alpine",
@@ -35,14 +36,14 @@
         "docker.io/tymills620/ephemeral-python-uv:latest",
         "mcr.microsoft.com/powershell:latest"
       ],
+      "probe_fails": 0,
       "seen_alive": true,
-      "probe": "failed",
-      "probe_at": "2026-08-15T18:36:51Z",
-      "probe_detail": "probe failed (IrohError): IrohError { kind: Connection, message: \"ApplicationClosed(ApplicationClose { error_code: 0, reason: b\\\"shutdown\\\" })\", debug_message: \"ApplicationClosed(ApplicationClose { error_code: 0, reason: b\\\"shutdown\\\" })\" }",
-      "probe_ms": 0,
-      "probe_fails": 1,
+      "probe": "ok",
+      "probe_at": "2026-08-16T01:41:22Z",
+      "probe_detail": "ok",
+      "probe_ms": 6600,
       "misses": 0,
-      "rtt_ms": 5762
+      "rtt_ms": 7596
     },
     {
       "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
@@ -54,10 +55,10 @@
         "docker.io/library/alpine:latest"
       ],
       "probe_fails": 0,
-      "misses": 1,
+      "misses": 2,
       "seen_alive": true,
       "probe": "unreachable",
-      "probe_at": "2026-08-15T18:36:51Z"
+      "probe_at": "2026-08-16T01:41:22Z"
     },
     {
       "node_id": "ad2599506ffbde7dd0785650529ac14b41f7ab2d4f5591fde22bb7c267153c9e",
@@ -65,10 +66,10 @@
       "ticket": "endpointacwslgkqn75547oqpblfauu2yffud55lfvhvlep54iv3pqthcu6j4biaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfs72d4qcaeaevjzmx7t7oaybacwbyqabsdhagaiaycuaafeqzybq",
       "images": [],
       "probe_fails": 1,
-      "misses": 1,
+      "misses": 2,
       "seen_alive": true,
       "probe": "unreachable",
-      "probe_at": "2026-08-15T18:36:51Z"
+      "probe_at": "2026-08-16T01:41:22Z"
     }
   ]
 }
