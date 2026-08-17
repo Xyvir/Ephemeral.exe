@@ -36,7 +36,7 @@ result: ExecutionResult = await parse_and_execute(markdown_text, timeout=60)
 
 These flags must remain in `executor.py` and must not be weakened:
 
-- `podman run --rm -i --memory 2g -w /tmp --network none` — default for all containers
+- `podman run --rm -i --memory 2g -w /tmp --network none` — default for all containers (on hosts with ≤ 2.5 GiB RAM the memory/cpu/pids limits scale down to ~half of host RAM so a single job can't OOM a small VPS; `EPHEMERAL_MEMORY_LIMIT`/`EPHEMERAL_CPU_LIMIT`/`EPHEMERAL_PIDS_LIMIT` override)
 - `--network none` is only removed when the user explicitly writes the `unsafe` keyword in a codeblock header **or** during the dependency-resolution stage of a two-stage Python run (see below)
 - Containers have no host filesystem access except the ephemeral `/output` volume mount
 

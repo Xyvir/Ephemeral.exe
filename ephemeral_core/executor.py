@@ -195,6 +195,43 @@ def _limits_warning_line() -> str:
         "delegated on this WSL2 default setup - running without them' >&2"
     )
 
+# --- Container resource-limit sizing ------------------------------------
+#
+# The historical --memory 2g default is *larger than a small VPS* (e.g. a
+# 1 GiB micro instance), so a single heavy container could consume the
+# entire host and trigger an OOM kill. On hosts with <= 2.5 GiB RAM we
+# scale each container down to ~half of host RAM (min 256 MiB, in 64 MiB
+# steps) so jobs stay inside the machine; larger/desktop hosts keep the
+# original 2g/2/512 behavior. EPHEMERAL_MEMORY_LIMIT / EPHEMERAL_CPU_LIMIT /
+# EPHEMERAL_PIDS_LIMIT override outright (values pass straight to podman,
+# e.g. "1g", "1.5", "256").
+
+
+def _host_memory_mib() -> int | None:
+    """Total host RAM in MiB via /proc/meminfo, or None when unknown."""
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _container_resource_limits() -> list[str]:
+    """Resource-limit flags for ``podman run``, sized to the host's RAM."""
+    total_mib = _host_memory_mib()
+    small_host = total_mib is not None and total_mib <= 2560
+
+    memory = os.environ.get("EPHEMERAL_MEMORY_LIMIT")
+    if memory is None:
+        memory = f"{max(256, (total_mib // 2) // 64 * 64)}m" if small_host else "2g"
+
+    cpus = os.environ.get("EPHEMERAL_CPU_LIMIT") or ("1" if small_host else "2")
+    pids = os.environ.get("EPHEMERAL_PIDS_LIMIT") or ("256" if small_host else "512")
+    return ["--memory", memory, "--cpus", cpus, "--pids-limit", pids]
+
 
 async def ensure_podman_running() -> None:
     """
@@ -343,8 +380,9 @@ def _build_podman_cmd(
     podman_cmd = ['podman', 'run', '--rm', '-i', '-w', '/tmp']
     if podman_supports_cgroup_limits():
         # Hard container limits — skipped (with a one-time warning) only
-        # when the host genuinely can't enforce them (stock WSL2).
-        podman_cmd.extend(['--memory', '2g', '--cpus', '2', '--pids-limit', '512'])
+        # when the host genuinely can't enforce them (stock WSL2). Sizes
+        # are scaled down on small hosts — see _container_resource_limits.
+        podman_cmd.extend(_container_resource_limits())
 
     if network is not None:
         if network:

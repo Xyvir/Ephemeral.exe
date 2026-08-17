@@ -20,7 +20,7 @@
 #   2. Installs the Python package + dependencies into a venv
 #   3. Ensures /ephemeral/ artifact directory exists
 #   4. Creates and enables a systemd service
-#   5. Initializes Podman for the service user (rootless)
+#   5. Initializes Podman for the service user (rootless) and pre-hydrates the bash image
 # ============================================================================
 
 set -euo pipefail
@@ -33,6 +33,8 @@ VENV_DIR="${INSTALL_DIR}/venv"
 WEBDAV_DIR="/ephemeral"
 SERVICE_PORT=8787
 BIND_HOST="127.0.0.1"    # Bind to localhost; reverse-proxy (Caddy) handles external
+PREHYDRATE_IMAGE="docker.io/library/alpine:latest"   # bash canary image (matches distributed setups)
+SERVICE_MEMORY_MAX="800M"   # Hard ceiling for the whole service subtree (uvicorn + containers); prevents OOM on small VPS
 
 # --- Colors ---
 RED='\033[0;31m'
@@ -180,6 +182,16 @@ EOF
 chown -R "$APP_USER":"$APP_USER" "${INSTALL_DIR}/.config"
 info "Configured fallback DNS servers (8.8.8.8, 1.1.1.1) for rootless Podman containers"
 
+# Pre-hydrate the bash canary image so bash/sh jobs run out of the box on a
+# fresh install (same image the distributed setups warm at startup).
+# Best-effort: on failure the image is simply pulled on first use.
+warn "Pre-hydrating bash image ($PREHYDRATE_IMAGE) for '$APP_USER'..."
+if sudo -E -u "$APP_USER" XDG_RUNTIME_DIR="/run/user/$APP_UID" podman pull "$PREHYDRATE_IMAGE" &>/dev/null; then
+    info "Pre-hydrated bash image ($PREHYDRATE_IMAGE)"
+else
+    warn "Could not pre-pull the bash image — it will be pulled on first use."
+fi
+
 # --- Step 6: Create systemd Service ---
 cat > "/etc/systemd/system/${APP_NAME}.service" << EOF
 [Unit]
@@ -209,6 +221,11 @@ Delegate=yes
 LimitNOFILE=1048576
 LimitNPROC=1048576
 LimitCORE=infinity
+
+# Hard memory ceiling for the unit's whole cgroup subtree (uvicorn + all
+# containers it spawns). If the per-container limits above aren't enough,
+# the kernel OOM-kills inside this cgroup instead of panicking the host.
+MemoryMax=${SERVICE_MEMORY_MAX}
 
 [Install]
 WantedBy=multi-user.target

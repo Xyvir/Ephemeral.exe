@@ -1,4 +1,6 @@
 """Smoke tests for ephemeral_core parser and models."""
+import os
+
 from ephemeral_core.parser import (
     parse_codeblocks,
     resolve_runtime_config,
@@ -222,4 +224,44 @@ assert request_is_chained(group_into_runs(parse_codeblocks(md26c)))
 assert MAX_PARALLEL_RUNS == 4, "local parallel guardrail must be 4"
 print("PASS: Run grouping + chained detection")
 
-print("\n=== ALL 26 TESTS PASSED ===")
+# --- Test 27: Container resource limits scale to small hosts ---
+from ephemeral_core import executor as executor_mod
+
+_saved_host_mib = executor_mod._host_memory_mib
+_saved_limits_env = {k: os.environ.pop(k, None) for k in (
+    "EPHEMERAL_MEMORY_LIMIT", "EPHEMERAL_CPU_LIMIT", "EPHEMERAL_PIDS_LIMIT")}
+try:
+    # 1 GiB host -> ~half of RAM (min 256 MiB, 64 MiB steps), 1 cpu, 256 pids
+    executor_mod._host_memory_mib = lambda: 1024
+    assert executor_mod._container_resource_limits() == \
+        ['--memory', '512m', '--cpus', '1', '--pids-limit', '256'], \
+        executor_mod._container_resource_limits()
+    # 2 GiB host -> 1024m ceiling
+    executor_mod._host_memory_mib = lambda: 2048
+    assert executor_mod._container_resource_limits()[1] == '1024m'
+    # Tiny 512 MiB host -> clamped to the 256 MiB floor
+    executor_mod._host_memory_mib = lambda: 512
+    assert executor_mod._container_resource_limits() == \
+        ['--memory', '256m', '--cpus', '1', '--pids-limit', '256']
+    # Unknown memory (macOS/Windows) and large hosts keep the historical defaults
+    executor_mod._host_memory_mib = lambda: None
+    assert executor_mod._container_resource_limits() == \
+        ['--memory', '2g', '--cpus', '2', '--pids-limit', '512']
+    executor_mod._host_memory_mib = lambda: 8192
+    assert executor_mod._container_resource_limits() == \
+        ['--memory', '2g', '--cpus', '2', '--pids-limit', '512']
+    # Explicit env overrides win on any host
+    os.environ["EPHEMERAL_MEMORY_LIMIT"] = "700m"
+    os.environ["EPHEMERAL_CPU_LIMIT"] = "1.0"
+    os.environ["EPHEMERAL_PIDS_LIMIT"] = "128"
+    executor_mod._host_memory_mib = lambda: 1024
+    assert executor_mod._container_resource_limits() == \
+        ['--memory', '700m', '--cpus', '1.0', '--pids-limit', '128']
+finally:
+    executor_mod._host_memory_mib = _saved_host_mib
+    for k, v in _saved_limits_env.items():
+        if v is not None:
+            os.environ[k] = v
+print("PASS: Container resource limits scale to host RAM (small-VPS safe)")
+
+print("\n=== ALL 27 TESTS PASSED ===")

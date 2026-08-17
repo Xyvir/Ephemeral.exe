@@ -112,7 +112,7 @@ That's it — no configuration. Your node fetches the live swarm list, joins the
    podman machine init
    ```
    *Note: Ephemeral will attempt to auto-start the machine if it's stopped, but the initial `init` setup usually requires manual intervention.*
-   *Note: a stock WSL2 + `podman machine` setup doesn't delegate the cgroup controllers to rootless containers, so `--memory`/`--cpus`/`--pids-limit` cannot be enforced there. Ephemeral detects this once at startup and runs those jobs without cgroup limits (with a one-time notice in the output), while keeping `--network none` and the markdown-level sandbox intact. On hosts that can enforce limits (native Linux, non-WSL), they apply unconditionally.*
+   *Note: a stock WSL2 + `podman machine` setup doesn't delegate the cgroup controllers to rootless containers, so `--memory`/`--cpus`/`--pids-limit` cannot be enforced there. Ephemeral detects this once at startup and runs those jobs without cgroup limits (with a one-time notice in the output), while keeping `--network none` and the markdown-level sandbox intact. On hosts that can enforce limits (native Linux, non-WSL), they apply unconditionally. On small hosts (≤ 2.5 GiB RAM) the per-container limits scale down to ~half of host RAM so one heavy job can't OOM a micro instance; `EPHEMERAL_MEMORY_LIMIT` / `EPHEMERAL_CPU_LIMIT` / `EPHEMERAL_PIDS_LIMIT` override the defaults.*
 
 **Linux (AppImage or source):**
 
