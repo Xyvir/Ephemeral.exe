@@ -1,12 +1,28 @@
 {
-  "updated": "2026-08-17T00:26:13Z",
+  "updated": "2026-08-17T00:38:30Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
+      "node_id": "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c",
+      "relay": "https://use1-1.relay.n0.iroh.link./",
+      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh7tgqcaeaevjzgb6e76aybacwbouabrh7qgaiaycuaaf4j74bq",
+      "images": [
+        "docker.io/library/alpine:latest"
+      ],
+      "probe_fails": 0,
+      "seen_alive": true,
+      "probe": "ok",
+      "probe_at": "2026-08-17T00:38:30Z",
+      "probe_detail": "ok",
+      "probe_ms": 2793,
+      "misses": 0,
+      "rtt_ms": 2412
+    },
+    {
       "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh6vcqdaeakyhcaagzy2aybadakqaauwogqg",
+      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyhzx6ycaeaevjzgb7viuaybacwbyqabwogqgaiaycuaafftrubq",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/catthehacker/ubuntu:act-latest",
@@ -45,28 +61,14 @@
         "docker.io/tymills620/octave-forge:latest",
         "mcr.microsoft.com/powershell:latest"
       ],
-      "misses": 0,
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-17T00:26:13Z",
+      "probe_at": "2026-08-17T00:38:30Z",
       "probe_detail": "ok",
-      "probe_ms": 8493,
+      "probe_ms": 3266,
       "probe_fails": 0,
-      "rtt_ms": 4563
-    },
-    {
-      "node_id": "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh7pfqdaeaevjzgb6mzwaybadakqaaxtgnqg",
-      "images": [],
-      "probe": "failed",
-      "probe_at": "2026-08-17T00:26:13Z",
-      "probe_detail": "probe failed (JobError): [WinError 2] The system cannot find the file specified",
-      "probe_ms": 67503,
-      "probe_fails": 1,
       "misses": 0,
-      "seen_alive": true,
-      "rtt_ms": 121
+      "rtt_ms": 15568
     },
     {
       "node_id": "3006f2d2e520682828a849ab89960da65027d0de902aa529a803f707d1841eed",
@@ -102,10 +104,32 @@
         "mcr.microsoft.com/powershell:latest"
       ],
       "probe_fails": 1,
-      "misses": 1,
+      "misses": 2,
       "seen_alive": true,
       "probe": "unreachable",
-      "probe_at": "2026-08-17T00:26:13Z"
+      "probe_at": "2026-08-17T00:38:30Z"
+    },
+    {
+      "node_id": "6adb8061e19aa12c284ebd3100952313f8970ad56b59f6934166d6c97595e9bb",
+      "relay": "https://use1-1.relay.n0.iroh.link./",
+      "ticket": "endpointabvnxadb4gnkclbij26tcaevemj7rfyk2vvvt5utiftnnslvsxu3wbaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbaal67eidaeabiyqsiwaiqaqbacwbcaab56iqg",
+      "images": [],
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-17T00:38:30Z"
+    },
+    {
+      "node_id": "b6c2091d722c4aeea86abd7583ec9eb0bda81613c4007577ed50cdf40a8e6450",
+      "relay": null,
+      "ticket": "endpointac3meci5oiwev3vink6xla7mt2yl3kawcpcaa5lx5vim35akrzsfaaa",
+      "images": [],
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-17T00:38:30Z"
     }
   ]
 }
