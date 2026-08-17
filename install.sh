@@ -8,7 +8,7 @@
 #
 # Prerequisites:
 #   - Linux host with systemd
-#   - Podman installed and accessible by the service user
+#   - Podman installed and accessible by the service user (auto-installed if missing)
 #   - Python 3.10+ with pip
 #   - /ephemeral/ directory exists (WebDAV mount point)
 #
@@ -44,6 +44,34 @@ info()  { echo -e "${GREEN}[✓]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
 error() { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
 
+# --- Podman Installation ---
+install_podman() {
+    if command -v apt-get >/dev/null 2>&1; then
+        info "Detected apt-get — updating package lists and installing podman..."
+        apt-get update -qq || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq podman
+    elif command -v dnf >/dev/null 2>&1; then
+        info "Detected dnf — installing podman..."
+        dnf install -y podman
+    elif command -v yum >/dev/null 2>&1; then
+        info "Detected yum — installing podman..."
+        yum install -y podman
+    elif command -v zypper >/dev/null 2>&1; then
+        info "Detected zypper — installing podman..."
+        zypper --non-interactive install podman
+    elif command -v pacman >/dev/null 2>&1; then
+        info "Detected pacman — installing podman..."
+        pacman -Sy --noconfirm podman
+    elif command -v apk >/dev/null 2>&1; then
+        info "Detected apk (Alpine) — installing podman..."
+        apk add --no-cache podman
+    else
+        error "podman is required but not found, and no supported package manager was detected. Please install podman manually and re-run this script."
+    fi
+
+    command -v podman >/dev/null 2>&1 || error "podman installation failed. Please install podman manually and re-run this script."
+}
+
 # --- Pre-flight Checks ---
 echo ""
 echo "══════════════════════════════════════════════"
@@ -54,7 +82,15 @@ echo ""
 [[ $EUID -eq 0 ]] || error "This script must be run as root (sudo)."
 
 command -v python3 >/dev/null 2>&1 || error "python3 is required but not found."
-command -v podman  >/dev/null 2>&1 || error "podman is required but not found."
+if command -v podman >/dev/null 2>&1; then
+    PODMAN_VERSION=$(podman --version | awk '{print $NF}')
+    info "Podman $PODMAN_VERSION detected"
+else
+    warn "podman not found — attempting to install..."
+    install_podman
+    PODMAN_VERSION=$(podman --version | awk '{print $NF}')
+    info "Podman $PODMAN_VERSION installed"
+fi
 command -v systemctl >/dev/null 2>&1 || error "systemd is required but not found."
 
 PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
@@ -64,9 +100,6 @@ if [[ "$PYTHON_MAJOR" -lt 3 ]] || { [[ "$PYTHON_MAJOR" -eq 3 ]] && [[ "$PYTHON_M
     error "Python 3.10+ required, found $PYTHON_VERSION"
 fi
 info "Python $PYTHON_VERSION detected"
-
-PODMAN_VERSION=$(podman --version | awk '{print $NF}')
-info "Podman $PODMAN_VERSION detected"
 
 # --- Step 1: Create Service User ---
 if id "$APP_USER" &>/dev/null; then
