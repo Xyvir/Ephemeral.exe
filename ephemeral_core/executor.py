@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import os
 import re
 import shlex
@@ -21,6 +22,9 @@ import tempfile
 import uuid
 
 from .config import LANG_MAP
+from .space import SpaceGuardError, ensure_space_for_pull
+
+logger = logging.getLogger(__name__)
 from .models import ExecutionResult, GroupResult
 from .parser import (
     parse_codeblocks,
@@ -229,9 +233,17 @@ async def ensure_podman_running() -> None:
 async def pull_image(image_name: str) -> int:
     """
     Pull a container image headlessly.
-    
+
+    Refuses (raising :class:`ephemeral_core.space.SpaceGuardError`) when
+    the drive backing podman's storage cannot hold the image even after
+    evicting the coldest cached images — see ``ephemeral_core.space``.
+
     Returns the exit code of the pull command (0 = success).
     """
+    # Disk-space guardrail (best-effort): probe + evict coldest images
+    # before pulling so a tight drive never hits "no space left on device".
+    await asyncio.to_thread(ensure_space_for_pull, image_name)
+
     startupinfo = get_startupinfo()
     
     def _pull():
@@ -775,6 +787,12 @@ async def _execute_run(
                 async def bg_pull(img=image_name):
                     try:
                         await pull_image(img)
+                    except SpaceGuardError as e:
+                        # Best-effort background pull: a full drive just
+                        # leaves the image cold; jobs keep offloading.
+                        logger.warning(
+                            "background pull of %s refused: %s", img, e
+                        )
                     finally:
                         _active_pulls.discard(img)
 
@@ -782,7 +800,10 @@ async def _execute_run(
 
             return None, None, msg
 
-        exit_code = await pull_image(image_name)
+        try:
+            exit_code = await pull_image(image_name)
+        except SpaceGuardError as e:
+            raise RuntimeError(str(e)) from e
         if exit_code != 0:
             raise RuntimeError(f"Failed to pull image: {image_name}")
 

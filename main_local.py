@@ -52,6 +52,7 @@ except ImportError:
 import ephemeral_core
 from ephemeral_core.parser import strip_shebang, resolve_runtime_config
 from ephemeral_core.config import LANG_MAP
+from ephemeral_core.space import SpaceGuardError, ensure_space_for_pull
 
 # --- Configuration ---
 CLI_MODE = False
@@ -269,6 +270,13 @@ def show_post_mortem_error(error_text):
 
 def perform_visible_pull(image_name):
     """Pull a container image with a visible console window on Windows."""
+    # Disk-space guardrail: refuse when the drive can't hold the image even
+    # after evicting the coldest cached images (see ephemeral_core.space).
+    try:
+        ensure_space_for_pull(image_name)
+    except SpaceGuardError as e:
+        print(f"[Ephemeral] {e}", file=sys.stderr)
+        return 1
     if sys.platform == 'win32':
         cmd_line = f'cmd /C "echo [Ephemeral] Image {image_name} not found. Downloading... && podman pull {image_name} || pause"'
         process = subprocess.Popen(cmd_line, creationflags=getattr(subprocess, 'CREATE_NEW_CONSOLE', 0))

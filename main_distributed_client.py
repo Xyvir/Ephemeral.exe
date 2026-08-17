@@ -81,6 +81,7 @@ except ImportError:
 
 import ephemeral_core
 from ephemeral_core.config import mapped_images
+from ephemeral_core.space import SpaceGuardError, ensure_space_for_pull
 from ephemeral_net.jobs import JobDoneEvent, JobErrorEvent, JobRequest
 from ephemeral_net.swarm import (
     PRIVATE_MODE_MARKER,
@@ -649,6 +650,16 @@ def _hydrate_all_images(icon=None, images: list[str] | None = None) -> None:
         if ephemeral_core.check_image_exists(img):
             skipped += 1
             continue
+        # Disk-space guardrail: refuse (and keep going) when the drive can't
+        # hold this image even after evicting the coldest cached images.
+        try:
+            ensure_space_for_pull(img)
+        except SpaceGuardError as e:
+            failed.append(img)
+            logging.getLogger("ephemeral").warning(
+                "pre-hydration of %s refused: %s", img, e
+            )
+            continue
         ok = False
         for attempt in range(1, 4):
             try:
@@ -906,6 +917,7 @@ def _prehydrate_bash(timeout: int = 300) -> bool:
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 startupinfo=startupinfo, timeout=timeout,
             )
+        ensure_space_for_pull(PREHYDRATE_IMAGE)
         pull = subprocess.run(
             ["podman", "pull", PREHYDRATE_IMAGE],
             capture_output=True, text=True,
@@ -1031,6 +1043,8 @@ def on_prehydrate_all(icon, item_unused=None):
     lines.append("Pulls every image the cluster can request; the big science and")
     lines.append("typesetting images are multi-GB. The node keeps running during")
     lines.append("the pull — jobs just land on already-warm images.")
+    lines.append("If space runs short, the coldest cached images are evicted")
+    lines.append("automatically to make room (2x safety margin).")
 
     if not _confirm_hydration(lines, warn):
         return

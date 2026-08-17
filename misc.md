@@ -40,7 +40,7 @@ The distributed tiers were rolled out in phases:
 
 The official build pipeline runs on every push (`.github/workflows/build.yml`) and is also triggerable manually:
 
-1. **Test** — `test_core.py`, `test_api.py`, `test_net.py` (including two live iroh cluster integrations), and `test_self_host.py` on Python 3.10 and 3.12.
+1. **Test** — `test_core.py`, `test_space.py` (disk-space pull guardrail), `test_api.py`, `test_net.py` (including two live iroh cluster integrations), and `test_self_host.py` on Python 3.10 and 3.12.
 2. **Build** — Windows EXEs via PyInstaller (`Ephemeral.exe` + `Ephemeral-Distributed.exe`), both Linux AppImages via PyInstaller onedir + appimagetool (with `--self-check` smoke tests), the wasm/SPA tarball, and both self-host tarballs (each import-smoke-tested), plus a smoke test that runs `install_self_host.sh` for both flavors.
 3. **Release** — `workflow_dispatch` with the *Create a new release* checkbox; attaches all seven artifacts.
 

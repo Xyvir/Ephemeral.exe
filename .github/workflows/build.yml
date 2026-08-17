@@ -44,6 +44,9 @@ jobs:
     - name: Run core tests
       run: python test_core.py
 
+    - name: Run disk-space guardrail tests
+      run: python test_space.py
+
     - name: Run API model tests
       run: python test_api.py
 

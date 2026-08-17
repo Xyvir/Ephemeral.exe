@@ -63,7 +63,7 @@ Artifact routing is the caller's responsibility, not the core's:
 ### Build Pipeline
 
 GitHub Actions (`.github/workflows/build.yml`):
-1. `test` job — runs `test_core.py` + `test_api.py` on ubuntu-latest (Python 3.10 + 3.12)
+1. `test` job — runs `test_core.py`, `test_space.py`, `test_api.py`, `test_net.py`, and `test_self_host.py` on ubuntu-latest (Python 3.10 + 3.12)
 2. `build-exe` job — builds Windows EXE via PyInstaller on windows-latest
 3. `release` job — creates GitHub Release (manual dispatch)
 
