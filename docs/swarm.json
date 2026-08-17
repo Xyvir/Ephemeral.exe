@@ -1,30 +1,12 @@
 {
-  "updated": "2026-08-17T12:53:35Z",
+  "updated": "2026-08-17T18:46:48Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
-      "node_id": "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh7noydaeaevjzgb6e76aybacwbouabrh7qgaiaycuaaf4j74bq",
-      "images": [
-        "docker.io/library/alpine:latest",
-        "docker.io/library/node:18-alpine",
-        "docker.io/rhysd/actionlint:latest"
-      ],
-      "seen_alive": true,
-      "probe": "ok",
-      "probe_at": "2026-08-17T12:53:35Z",
-      "probe_detail": "ok",
-      "probe_ms": 1656,
-      "probe_fails": 0,
-      "misses": 0,
-      "rtt_ms": 3250
-    },
-    {
       "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyhzx6ycaeaevjzgb7viuaybacwbyqabwogqgaiaycuaafftrubq",
+      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh2xcycaeaevjzgb7nl4aybacwbyqab3k7agaiaycuaafg2xybq",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/catthehacker/ubuntu:act-latest",
@@ -63,50 +45,35 @@
         "docker.io/tymills620/octave-forge:latest",
         "mcr.microsoft.com/powershell:latest"
       ],
-      "probe_fails": 0,
-      "misses": 3,
+      "misses": 0,
       "seen_alive": true,
-      "probe": "unreachable",
-      "probe_at": "2026-08-17T12:53:35Z"
+      "probe": "ok",
+      "probe_at": "2026-08-17T18:46:48Z",
+      "probe_detail": "ok",
+      "probe_ms": 5012,
+      "probe_fails": 0,
+      "rtt_ms": 1135
     },
     {
-      "node_id": "3006f2d2e520682828a849ab89960da65027d0de902aa529a803f707d1841eed",
-      "relay": "https://usw1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaayan4ws4uqgqkbivbe2xcmwbwtfaj6q32icvjjjvab7ob6rqqpo2ayaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacuaaabpzfqcaeachpgxtx6jmaq",
+      "node_id": "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c",
+      "relay": "https://use1-1.relay.n0.iroh.link./",
+      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh25vicaeaevjzgb6e76aybacwbouabrh7qgaiaycuaaf4j74bq",
       "images": [
-        "docker.io/catthehacker/ubuntu:act-22.04",
-        "docker.io/crystallang/crystal:latest",
-        "docker.io/esolang/05ab1e:latest",
-        "docker.io/esolang/brainfuck-esotope:latest",
-        "docker.io/esolang/cjam:latest",
-        "docker.io/esolang/cobol:latest",
-        "docker.io/esolang/golfscript:latest",
-        "docker.io/esolang/lolcode:latest",
-        "docker.io/esolang/piet:latest",
-        "docker.io/hdlc/iverilog:latest",
         "docker.io/library/alpine:latest",
-        "docker.io/library/clojure:temurin-17-alpine",
-        "docker.io/library/eclipse-temurin:21-jdk-alpine",
-        "docker.io/library/elixir:alpine",
-        "docker.io/library/gcc:latest",
-        "docker.io/library/golang:alpine",
         "docker.io/library/node:18-alpine",
         "docker.io/library/perl:slim",
         "docker.io/library/php:alpine",
-        "docker.io/library/rust:alpine",
-        "docker.io/library/swipl:latest",
         "docker.io/nickblah/lua:5.4-alpine",
-        "docker.io/nimlang/nim:alpine",
-        "docker.io/pandoc/extra:latest",
-        "docker.io/rhysd/actionlint:latest",
-        "docker.io/tymills620/ephemeral-python-uv:latest",
-        "mcr.microsoft.com/powershell:latest"
+        "docker.io/rhysd/actionlint:latest"
       ],
-      "probe_fails": 1,
-      "misses": 5,
       "seen_alive": true,
-      "probe": "unreachable",
-      "probe_at": "2026-08-17T12:53:35Z"
+      "probe": "ok",
+      "probe_at": "2026-08-17T18:46:48Z",
+      "probe_detail": "ok",
+      "probe_ms": 1793,
+      "probe_fails": 0,
+      "misses": 0,
+      "rtt_ms": 4481
     }
   ]
 }
