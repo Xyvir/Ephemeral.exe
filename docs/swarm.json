@@ -1,34 +1,12 @@
 {
-  "updated": "2026-08-18T12:55:43Z",
+  "updated": "2026-08-18T15:21:41Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
-      "node_id": "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh6p2adaeaevjzgb6e76aybacwbouabrh7qgaiaycuaaf4j74bq",
-      "images": [
-        "docker.io/esolang/05ab1e:latest",
-        "docker.io/library/alpine:latest",
-        "docker.io/library/node:18-alpine",
-        "docker.io/library/perl:slim",
-        "docker.io/library/php:alpine",
-        "docker.io/nickblah/lua:5.4-alpine",
-        "docker.io/rhysd/actionlint:latest"
-      ],
-      "seen_alive": true,
-      "probe": "ok",
-      "probe_at": "2026-08-18T12:55:43Z",
-      "probe_detail": "ok",
-      "probe_ms": 1606,
-      "probe_fails": 0,
-      "misses": 0,
-      "rtt_ms": 6100
-    },
-    {
       "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh2xcycaeaevjzgb7nl4aybacwbyqab3k7agaiaycuaafg2xybq",
+      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh2joqcaeakyhcaahnl4aybadakqaau3k7ag",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/catthehacker/ubuntu:act-latest",
@@ -67,11 +45,44 @@
         "docker.io/tymills620/octave-forge:latest",
         "mcr.microsoft.com/powershell:latest"
       ],
-      "probe_fails": 0,
-      "misses": 3,
+      "misses": 0,
       "seen_alive": true,
+      "probe": "ok",
+      "probe_at": "2026-08-18T15:21:41Z",
+      "probe_detail": "ok",
+      "probe_ms": 3496,
+      "probe_fails": 0,
+      "rtt_ms": 5134
+    },
+    {
+      "node_id": "31548c5b4829eb53a3db3e97b0078d22da258ddfeb8ebd8c3183f4c2f3bcf3c4",
+      "relay": null,
+      "ticket": "endpointaayvjdc3jau6wu5d3m7jpmahrurnujmn37vy5pmmggb7jqxtxtz4iaa",
+      "images": [],
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
       "probe": "unreachable",
-      "probe_at": "2026-08-18T12:55:43Z"
+      "probe_at": "2026-08-18T15:21:41Z"
+    },
+    {
+      "node_id": "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c",
+      "relay": "https://use1-1.relay.n0.iroh.link./",
+      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh5bsidaeaevjzgb6e76aybacwbouabrh7qgaiaycuaaf4j74bq",
+      "images": [
+        "docker.io/esolang/05ab1e:latest",
+        "docker.io/library/alpine:latest",
+        "docker.io/library/node:18-alpine",
+        "docker.io/library/perl:slim",
+        "docker.io/library/php:alpine",
+        "docker.io/nickblah/lua:5.4-alpine",
+        "docker.io/rhysd/actionlint:latest"
+      ],
+      "seen_alive": true,
+      "probe_fails": 0,
+      "misses": 1,
+      "probe": "unreachable",
+      "probe_at": "2026-08-18T15:21:41Z"
     }
   ]
 }
