@@ -1,12 +1,12 @@
 {
-  "updated": "2026-08-18T18:45:04Z",
+  "updated": "2026-08-19T01:36:53Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh5bsidaeaevjzgb6e76aybacwbouabrh7qgaiaycuaaf4j74bq",
+      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh7vgicaeaevjzgb6e76aybacwbouabrh7qgaiaycuaaf4j74bq",
       "images": [
         "docker.io/esolang/05ab1e:latest",
         "docker.io/library/alpine:latest",
@@ -17,14 +17,14 @@
         "docker.io/nickblah/lua:5.4-alpine",
         "docker.io/rhysd/actionlint:latest"
       ],
-      "misses": 0,
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-18T18:45:04Z",
+      "probe_at": "2026-08-19T01:36:53Z",
       "probe_detail": "ok",
-      "probe_ms": 1643,
+      "probe_ms": 1926,
       "probe_fails": 0,
-      "rtt_ms": 6067
+      "misses": 0,
+      "rtt_ms": 4045
     },
     {
       "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
@@ -69,10 +69,10 @@
         "mcr.microsoft.com/powershell:latest"
       ],
       "probe_fails": 0,
-      "misses": 1,
+      "misses": 2,
       "seen_alive": true,
       "probe": "unreachable",
-      "probe_at": "2026-08-18T18:45:04Z"
+      "probe_at": "2026-08-19T01:36:53Z"
     }
   ]
 }
