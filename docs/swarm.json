@@ -1,12 +1,12 @@
 {
-  "updated": "2026-08-20T06:54:32Z",
+  "updated": "2026-08-20T12:58:18Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh4rrydaeaevjzgb6e76aybacwbouabrh7qgaiaycuaaf4j74bq",
+      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh7bvqcaeaevjzgb6e76aybacwbouabrh7qgaiaycuaaf4j74bq",
       "images": [
         "docker.io/esolang/05ab1e:latest",
         "docker.io/hdlc/iverilog:latest",
@@ -20,12 +20,12 @@
       ],
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-20T06:54:32Z",
+      "probe_at": "2026-08-20T12:58:18Z",
       "probe_detail": "ok",
       "probe_ms": 1630,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 8244
+      "rtt_ms": 4980
     }
   ]
 }
