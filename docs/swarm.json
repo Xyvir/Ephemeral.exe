@@ -1,16 +1,18 @@
 {
-  "updated": "2026-08-21T12:57:14Z",
+  "updated": "2026-08-21T18:42:59Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyhyt5idaeaevjzgb6e76aybacwbouabrh7qgaiaycuaaf4j74bq",
+      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh4zvycaeaevjzgb6e76aybacwbouabrh7qgaiaycuaaf4j74bq",
       "images": [
         "docker.io/esolang/05ab1e:latest",
         "docker.io/hdlc/iverilog:latest",
         "docker.io/library/alpine:latest",
+        "docker.io/library/eclipse-temurin:21-jdk-alpine",
+        "docker.io/library/gcc:latest",
         "docker.io/library/golang:alpine",
         "docker.io/library/node:18-alpine",
         "docker.io/library/perl:slim",
@@ -20,12 +22,12 @@
       ],
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-21T12:57:14Z",
+      "probe_at": "2026-08-21T18:42:59Z",
       "probe_detail": "ok",
-      "probe_ms": 1763,
+      "probe_ms": 1710,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 9593
+      "rtt_ms": 12794
     }
   ]
 }
