@@ -1010,13 +1010,262 @@ def force_stop_all(icon, item_unused):
         icon.notify("No active runs to stop.", title="Ephemeral")
 
 
+# The self-contained hydration script written to a temp file and launched
+# in a native terminal window — shows real-time podman pull output.
+_HYDRATION_CONSOLE_SCRIPT = r'''
+"""Ephemeral pre-hydration — runs in a native terminal with live output."""
+import json, os, subprocess, sys, time
+
+def main():
+    # Read image list and settings from the sidecar JSON written by the tray.
+    sidecar = sys.argv[1] if len(sys.argv) > 1 else None
+    if not sidecar or not os.path.exists(sidecar):
+        print("ERROR: missing sidecar JSON")
+        sys.exit(1)
+    with open(sidecar) as f:
+        cfg = json.load(f)
+    images = cfg["images"]
+    est_gb = cfg.get("est_gb", 25.0)
+    free = cfg.get("free_bytes", 0)
+    drive = cfg.get("drive", "")
+    cap = cfg.get("vm_disk_cap_gb")
+    warn = cfg.get("warn", False)
+
+    title = "Ephemeral: Pre-hydrate All Images"
+    if sys.platform == "win32":
+        os.system(f"title {title}")
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetConsoleTitleW(title)
+        except Exception:
+            pass
+
+    print(f"{'=' * 60}")
+    print(f"  {title}")
+    print(f"{'=' * 60}")
+    print()
+    print(f"  {len(images)} images in the language set.")
+    print(f"  Worst-case download: ~{est_gb:.0f} GB (cached images skipped)")
+    if free:
+        print(f"  Free on {drive or 'storage drive'}: {free / 2**30:.1f} GB")
+    if cap is not None:
+        print(f"  Podman VM disk cap: {cap:.0f} GB")
+    if warn:
+        print()
+        print("  *** WARNING: free space may be insufficient — pulls may fail ***")
+    print()
+    print("  The node keeps running during the pull. Jobs land on already-warm")
+    print("  images. If space runs short, cold cached images are evicted.")
+    print()
+    print("  Press Ctrl+C to abort at any time.")
+    print(f"{'=' * 60}")
+    print()
+
+    # Ensure podman is running.
+    try:
+        alive = subprocess.run(
+            ["podman", "info"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15,
+        ).returncode == 0
+    except Exception:
+        alive = False
+    if not alive:
+        print("Starting podman machine...")
+        try:
+            subprocess.run(
+                ["podman", "machine", "start"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300,
+            )
+        except Exception:
+            pass
+        try:
+            alive = subprocess.run(
+                ["podman", "info"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15,
+            ).returncode == 0
+        except Exception:
+            alive = False
+    if not alive:
+        print("ERROR: podman is not available. Aborting.")
+        sys.exit(1)
+    print("Podman is running.\n")
+
+    pulled = 0
+    skipped = 0
+    failed = []
+    total = len(images)
+    start = time.time()
+
+    for idx, img in enumerate(images, 1):
+        tag = f"[{idx}/{total}]"
+        # Check if cached.
+        try:
+            chk = subprocess.run(
+                ["podman", "image", "inspect", "--format", "{{.Id}}", img],
+                capture_output=True, text=True, timeout=30,
+            )
+            if chk.returncode == 0 and chk.stdout.strip():
+                print(f"{tag} {img}  -- already cached")
+                skipped += 1
+                continue
+        except Exception:
+            pass
+        # Pull with retry + backoff.
+        print(f"{tag} Pulling {img} ...", flush=True)
+        ok = False
+        for attempt in range(1, 4):
+            try:
+                proc = subprocess.run(
+                    ["podman", "pull", img],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    timeout=900,
+                )
+                output = proc.stdout.decode(errors="replace").strip()
+                if proc.returncode == 0:
+                    ok = True
+                    # Show last non-empty line (layer status or digest).
+                    lines = [l for l in output.splitlines() if l.strip()]
+                    detail = lines[-1] if lines else "done"
+                    print(f"{tag} {img}  -- pulled  ({detail})")
+                    break
+                else:
+                    last = [l for l in output.splitlines() if l.strip()]
+                    err = last[-1] if last else f"exit {proc.returncode}"
+                    if attempt < 3:
+                        print(f"{tag} {img}  -- retry {attempt}/3 ({err})")
+                        time.sleep(5 * attempt)
+                    else:
+                        print(f"{tag} {img}  -- FAILED ({err})")
+            except subprocess.TimeoutExpired:
+                if attempt < 3:
+                    print(f"{tag} {img}  -- timeout, retry {attempt}/3")
+                    time.sleep(5 * attempt)
+                else:
+                    print(f"{tag} {img}  -- FAILED (timeout)")
+            except Exception as e:
+                print(f"{tag} {img}  -- FAILED ({e})")
+                break
+        if ok:
+            pulled += 1
+        else:
+            failed.append(img)
+
+    elapsed = time.time() - start
+    mins, secs = divmod(int(elapsed), 60)
+    print()
+    print(f"{'=' * 60}")
+    print(f"  Pre-hydration complete — {mins}m {secs}s")
+    print(f"  Pulled: {pulled}  |  Cached: {skipped}  |  Failed: {len(failed)}")
+    if failed:
+        print(f"  Failed images:")
+        for f_img in failed:
+            print(f"    - {f_img}")
+    print(f"{'=' * 60}")
+    print()
+    if sys.platform == "win32":
+        print("Press any key to close...")
+        try:
+            import msvcrt
+            msvcrt.getch()
+        except Exception:
+            input()
+    else:
+        print("Press Enter to close...")
+        try:
+            input()
+        except (EOFError, KeyboardInterrupt):
+            pass
+
+if __name__ == "__main__":
+    main()
+'''
+
+
+def _spawn_hydration_console(images: list[str], est_gb: float,
+                             free: int, drive: str, warn: bool,
+                             cap: float | None) -> None:
+    """Write a temp script + sidecar JSON and launch in a native terminal.
+
+    The terminal window shows real-time ``podman pull`` output — identical
+    to what you'd see running the same command on a Linux server.
+    """
+    sidecar = tempfile.NamedTemporaryFile(
+        suffix=".json", prefix="ephemeral_hydrate_",
+        mode="w", delete=False, encoding="utf-8",
+    )
+    try:
+        json.dump({
+            "images": images,
+            "est_gb": est_gb,
+            "free_bytes": free,
+            "drive": drive,
+            "warn": warn,
+            "vm_disk_cap_gb": cap,
+        }, sidecar)
+        sidecar.close()
+
+        script = tempfile.NamedTemporaryFile(
+            suffix=".py", prefix="ephemeral_hydrate_",
+            mode="w", delete=False, encoding="utf-8",
+        )
+        script.write(_HYDRATION_CONSOLE_SCRIPT)
+        script.close()
+
+        python_exe = sys.executable
+        if sys.platform == "win32":
+            # Open a new cmd.exe window running the script.
+            subprocess.Popen(
+                ["cmd", "/k", python_exe, script.name, sidecar.name],
+                creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+            )
+        else:
+            # Try common Linux terminal emulators.
+            for term, flag in [
+                ("gnome-terminal", "--"),
+                ("konsole", "--hold -e"),
+                ("xfce4-terminal", "--hold -e"),
+                ("xterm", "-hold -e"),
+            ]:
+                if shutil.which(term):
+                    cmd = [term]
+                    if flag == "--":
+                        cmd += ["--", python_exe, script.name, sidecar.name]
+                    else:
+                        # e.g. ["xterm", "-hold", "-e", "python3", ...]
+                        parts = flag.split()
+                        cmd += parts + [python_exe, script.name, sidecar.name]
+                    subprocess.Popen(cmd)
+                    break
+            else:
+                # No terminal found — fall back to the old background thread.
+                logging.getLogger("ephemeral").warning(
+                    "no terminal emulator found; falling back to background pull"
+                )
+                threading.Thread(
+                    target=_hydrate_all_images,
+                    kwargs={"images": images},
+                    name="ephemeral-hydrate", daemon=True,
+                ).start()
+                return
+    except Exception as e:
+        logging.getLogger("ephemeral").warning(
+            "failed to spawn hydration console: %s", e
+        )
+        # Fall back to silent background thread.
+        threading.Thread(
+            target=_hydrate_all_images,
+            kwargs={"images": images},
+            name="ephemeral-hydrate", daemon=True,
+        ).start()
+
+
 def on_prehydrate_all(icon, item_unused=None):
     """Pre-hydrate every language image (super-seed) with a space warning.
 
     Shows what's cached / missing, an estimated download size, and the free
     space on the drive backing podman's storage — then asks for
-    confirmation. The pull runs in the tray's own podman, in the
-    background.
+    confirmation. The pull runs in a native terminal window showing
+    real-time ``podman pull`` output.
     """
     images = mapped_images()
 
@@ -1050,14 +1299,11 @@ def on_prehydrate_all(icon, item_unused=None):
         return
 
     icon.notify(
-        f"Pre-hydration started — pulling up to {len(images)} image(s); "
-        "already-cached ones are skipped. You'll get a summary when done.",
+        f"Pre-hydration started — opening terminal for {len(images)} image(s); "
+        "already-cached ones are skipped.",
         title="Ephemeral Pre-hydrate",
     )
-    threading.Thread(
-        target=_hydrate_all_images, args=(icon,),
-        name="ephemeral-hydrate", daemon=True,
-    ).start()
+    _spawn_hydration_console(images, est_gb, free, drive, warn, cap)
 
 
 # --- Tray / hotkey handlers ---------------------------------------------
