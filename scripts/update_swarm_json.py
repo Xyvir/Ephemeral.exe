@@ -380,6 +380,7 @@ async def discover(
     max_nodes: int,
     genesis: list[tuple[str, str]],
     *,
+    genesis_url: str | None = None,
     probe: bool = True,
     probe_timeout: float = DEFAULT_PROBE_TIMEOUT,
     probe_concurrency: int = 8,
@@ -463,6 +464,38 @@ async def discover(
             has_prev=bool(prev),
             prev_reached=sum(1 for nid in prev if nid in reached),
         ):
+            # Pre-wake: the genesis anchor is a Railway-bastion that may be
+            # sleeping (free-tier serverless). Railway only wakes a service
+            # on HTTP requests — QUIC/UDP dials bypass the edge and timeout
+            # silently. Ping the public URL first to trigger the cold-start.
+            if genesis_url:
+                for attempt in range(3):
+                    result = await asyncio.to_thread(
+                        http_health_check, genesis_url, timeout=15.0
+                    )
+                    if result["ok"]:
+                        print(
+                            f"  bastion awake: {result['detail']} "
+                            f"({result['ms']}ms)",
+                            flush=True,
+                        )
+                        # Give the iroh endpoint a moment to bind after
+                        # the container's uvicorn comes up.
+                        await asyncio.sleep(3)
+                        break
+                    print(
+                        f"  bastion cold-starting"
+                        f" (attempt {attempt + 1}/3)...",
+                        flush=True,
+                    )
+                    await asyncio.sleep(15)
+                else:
+                    print(
+                        "  bastion did not respond to HTTP pre-wake — "
+                        "proceeding with iroh dial anyway",
+                        flush=True,
+                    )
+
             seed_ids = {nid for nid, _ in genesis}
             await asyncio.gather(
                 *(_dial_one(nid, relay, None) for nid, relay in genesis)
@@ -772,10 +805,12 @@ async def main() -> None:
     args = parser.parse_args()
 
     genesis = parse_genesis(args.genesis or os.environ.get("SWARM_GENESIS"))
+    genesis_url = os.environ.get("SWARM_GENESIS_URL") or None
     result = await discover(
         args.out,
         max_nodes=args.max_nodes,
         genesis=genesis,
+        genesis_url=genesis_url,
         probe=not args.no_probe,
         probe_timeout=args.probe_timeout,
         probe_concurrency=max(1, args.probe_concurrency),
