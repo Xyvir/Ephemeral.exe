@@ -229,3 +229,240 @@ export const ALIAS_MAP = {
     "lint-action"
   ]
 };
+
+// Reverse image -> languages map for the cluster panel's warm-image
+// pills: each pill badges a canonical language the image backs.
+export const IMAGE_LANGUAGES = {
+  "docker.io/catthehacker/ubuntu:act-22.04": [
+    "gh-runner"
+  ],
+  "docker.io/catthehacker/ubuntu:act-22.04:latest": [
+    "gh-runner"
+  ],
+  "docker.io/clfoundation/sbcl:slim": [
+    "lisp"
+  ],
+  "docker.io/clfoundation/sbcl:slim:latest": [
+    "lisp"
+  ],
+  "docker.io/continuumio/anaconda3": [
+    "science"
+  ],
+  "docker.io/continuumio/anaconda3:latest": [
+    "science"
+  ],
+  "docker.io/crystallang/crystal": [
+    "crystal"
+  ],
+  "docker.io/crystallang/crystal:latest": [
+    "crystal"
+  ],
+  "docker.io/elasticdog/tiddlywiki": [
+    "tiddlywiki"
+  ],
+  "docker.io/elasticdog/tiddlywiki:latest": [
+    "tiddlywiki"
+  ],
+  "docker.io/esolang/05ab1e": [
+    "05ab1e"
+  ],
+  "docker.io/esolang/05ab1e:latest": [
+    "05ab1e"
+  ],
+  "docker.io/esolang/brainfuck-esotope": [
+    "bf"
+  ],
+  "docker.io/esolang/brainfuck-esotope:latest": [
+    "bf"
+  ],
+  "docker.io/esolang/cjam": [
+    "cjam"
+  ],
+  "docker.io/esolang/cjam:latest": [
+    "cjam"
+  ],
+  "docker.io/esolang/cobol": [
+    "cobol"
+  ],
+  "docker.io/esolang/cobol:latest": [
+    "cobol"
+  ],
+  "docker.io/esolang/golfscript": [
+    "golfscript"
+  ],
+  "docker.io/esolang/golfscript:latest": [
+    "golfscript"
+  ],
+  "docker.io/esolang/lolcode": [
+    "lolcode"
+  ],
+  "docker.io/esolang/lolcode:latest": [
+    "lolcode"
+  ],
+  "docker.io/esolang/piet": [
+    "piet"
+  ],
+  "docker.io/esolang/piet:latest": [
+    "piet"
+  ],
+  "docker.io/hdlc/iverilog": [
+    "verilog"
+  ],
+  "docker.io/hdlc/iverilog:latest": [
+    "verilog"
+  ],
+  "docker.io/library/alpine": [
+    "bash"
+  ],
+  "docker.io/library/alpine:latest": [
+    "bash"
+  ],
+  "docker.io/library/clojure:temurin-17-alpine": [
+    "clojure"
+  ],
+  "docker.io/library/clojure:temurin-17-alpine:latest": [
+    "clojure"
+  ],
+  "docker.io/library/eclipse-temurin:21-jdk-alpine": [
+    "java"
+  ],
+  "docker.io/library/eclipse-temurin:21-jdk-alpine:latest": [
+    "java"
+  ],
+  "docker.io/library/elixir:alpine": [
+    "elixir"
+  ],
+  "docker.io/library/elixir:alpine:latest": [
+    "elixir"
+  ],
+  "docker.io/library/gcc": [
+    "c",
+    "cpp",
+    "fortran"
+  ],
+  "docker.io/library/gcc:latest": [
+    "c",
+    "cpp",
+    "fortran"
+  ],
+  "docker.io/library/golang:alpine": [
+    "go"
+  ],
+  "docker.io/library/golang:alpine:latest": [
+    "go"
+  ],
+  "docker.io/library/haskell:slim": [
+    "haskell"
+  ],
+  "docker.io/library/haskell:slim:latest": [
+    "haskell"
+  ],
+  "docker.io/library/julia:alpine": [
+    "julia"
+  ],
+  "docker.io/library/julia:alpine:latest": [
+    "julia"
+  ],
+  "docker.io/library/node:18-alpine": [
+    "node"
+  ],
+  "docker.io/library/node:18-alpine:latest": [
+    "node"
+  ],
+  "docker.io/library/perl:slim": [
+    "perl"
+  ],
+  "docker.io/library/perl:slim:latest": [
+    "perl"
+  ],
+  "docker.io/library/php:alpine": [
+    "php"
+  ],
+  "docker.io/library/php:alpine:latest": [
+    "php"
+  ],
+  "docker.io/library/r-base": [
+    "r"
+  ],
+  "docker.io/library/r-base:latest": [
+    "r"
+  ],
+  "docker.io/library/ruby:alpine": [
+    "ruby"
+  ],
+  "docker.io/library/ruby:alpine:latest": [
+    "ruby"
+  ],
+  "docker.io/library/rust:alpine": [
+    "rust"
+  ],
+  "docker.io/library/rust:alpine:latest": [
+    "rust"
+  ],
+  "docker.io/library/swipl": [
+    "prolog"
+  ],
+  "docker.io/library/swipl:latest": [
+    "prolog"
+  ],
+  "docker.io/nickblah/lua:5.4-alpine": [
+    "lua"
+  ],
+  "docker.io/nickblah/lua:5.4-alpine:latest": [
+    "lua"
+  ],
+  "docker.io/nimlang/nim:alpine": [
+    "nim"
+  ],
+  "docker.io/nimlang/nim:alpine:latest": [
+    "nim"
+  ],
+  "docker.io/ocaml/opam": [
+    "ocaml"
+  ],
+  "docker.io/ocaml/opam:latest": [
+    "ocaml"
+  ],
+  "docker.io/pandoc/extra": [
+    "latex",
+    "pandoc",
+    "pandoc-docx",
+    "pandoc-pdf"
+  ],
+  "docker.io/pandoc/extra:latest": [
+    "latex",
+    "pandoc",
+    "pandoc-docx",
+    "pandoc-pdf"
+  ],
+  "docker.io/rhysd/actionlint": [
+    "actionlint"
+  ],
+  "docker.io/rhysd/actionlint:latest": [
+    "actionlint"
+  ],
+  "docker.io/tobix/pywine": [
+    "pywine"
+  ],
+  "docker.io/tobix/pywine:latest": [
+    "pywine"
+  ],
+  "docker.io/tymills620/ephemeral-python-uv": [
+    "python"
+  ],
+  "docker.io/tymills620/ephemeral-python-uv:latest": [
+    "python"
+  ],
+  "docker.io/tymills620/octave-forge": [
+    "octave"
+  ],
+  "docker.io/tymills620/octave-forge:latest": [
+    "octave"
+  ],
+  "mcr.microsoft.com/powershell": [
+    "pwsh"
+  ],
+  "mcr.microsoft.com/powershell:latest": [
+    "pwsh"
+  ]
+};

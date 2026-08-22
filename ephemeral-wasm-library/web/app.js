@@ -7,7 +7,7 @@
 // image first, latency).
 import init, { EphemeralClient, base64_decode } from "./wbg/ephemeral_wasm_library.js";
 import { BOOTSTRAP } from "./config.js";
-import { SUPPORTED_LANGUAGES, CANONICAL_LANGUAGES, ALIAS_MAP } from "./languages.js";
+import { SUPPORTED_LANGUAGES, CANONICAL_LANGUAGES, ALIAS_MAP, IMAGE_LANGUAGES } from "./languages.js";
 import { LANG_SNIPPETS } from "./snippets.js";
 
 const $ = (id) => document.getElementById(id);
@@ -775,14 +775,24 @@ function renderCluster() {
     const imgs = document.createElement("span");
     imgs.className = "images";
     if (p.images && p.images.length) {
-      // One language-chip-style pill per warm image — the full ref stays
-      // available on hover, and the pills wrap instead of ellipsizing.
+      // One language-chip-style pill per warm LANGUAGE — the same names the
+      // editor badges. An image can back several languages (gcc -> c/cpp/
+      // fortran), so each gets its own pill, deduped; the full image ref
+      // stays on hover. Images with no language mapping (custom images)
+      // fall back to the short ref so nothing is hidden.
+      const seen = new Set();
       for (const img of p.images) {
-        const chip = document.createElement("span");
-        chip.className = "lang-chip ok";
-        chip.textContent = shortImageName(img);
-        chip.title = img;
-        imgs.appendChild(chip);
+        const langs = IMAGE_LANGUAGES[img];
+        const names = langs && langs.length ? langs : [shortImageName(img)];
+        for (const name of names) {
+          if (seen.has(name)) continue;
+          seen.add(name);
+          const chip = document.createElement("span");
+          chip.className = "lang-chip ok";
+          chip.textContent = name;
+          chip.title = img;
+          imgs.appendChild(chip);
+        }
       }
     } else {
       imgs.textContent = "no warm images";

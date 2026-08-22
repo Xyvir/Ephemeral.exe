@@ -23,6 +23,35 @@ OUT = ROOT / "ephemeral-wasm-library" / "web" / "languages.js"
 # The parser lowercases every fence info string, so lower-case the keys.
 canonical = sorted({k.lower() for k, v in LANG_MAP.items() if isinstance(v, dict)})
 
+# Reverse map for the cluster panel: advertised image ref -> the canonical
+# languages it backs. A node may advertise a ref with or without the
+# explicit ":latest" tag (registries normalize it on pull), so key both
+# forms. gcc backs c/cpp/fortran and pandoc/extra backs several pandoc
+# flavors — each language gets its own entry so pills badge by language.
+image_langs: dict[str, list[str]] = {}
+
+
+def _add_lang(img: str, lang: str) -> None:
+    image_langs.setdefault(img, [])
+    if lang not in image_langs[img]:
+        image_langs[img].append(lang)
+
+
+for _k, _v in LANG_MAP.items():
+    if not isinstance(_v, dict):
+        continue
+    img = _v.get("image")
+    if not img:
+        continue
+    lang = _k.lower()
+    _add_lang(img, lang)
+    if img.endswith(":latest"):
+        _add_lang(img[: -len(":latest")], lang)
+    else:
+        _add_lang(img + ":latest", lang)
+for langs in image_langs.values():
+    langs.sort()
+
 # Aliases (string entries) resolve to canonical targets. Drop any whose
 # target isn't a real dict entry — e.g. 'spl' -> 'shakespeare': the parser
 # resolves those to a bare image the receiver allowlist rejects, so they
@@ -46,9 +75,12 @@ js = (
     "// languages, aliases, and dynamically-registered esolangs).\n"
     f"export const SUPPORTED_LANGUAGES = new Set({json.dumps(all_langs, indent=2)});\n\n"
     f"export const CANONICAL_LANGUAGES = {json.dumps(canonical, indent=2)};\n\n"
-    f"export const ALIAS_MAP = {json.dumps(alias_map, indent=2)};\n"
+    f"export const ALIAS_MAP = {json.dumps(alias_map, indent=2)};\n\n"
+    "// Reverse image -> languages map for the cluster panel's warm-image\n"
+    "// pills: each pill badges a canonical language the image backs.\n"
+    f"export const IMAGE_LANGUAGES = {json.dumps(image_langs, indent=2, sort_keys=True)};\n"
 )
 OUT.write_text(js, encoding="utf-8")
 n_aliases = sum(len(als) for als in alias_map.values())
 print(f"wrote {len(all_langs)} languages ({len(canonical)} canonical, "
-      f"{n_aliases} aliases) -> {OUT.relative_to(ROOT)}")
+      f"{n_aliases} aliases, {len(image_langs)} images) -> {OUT.relative_to(ROOT)}")
