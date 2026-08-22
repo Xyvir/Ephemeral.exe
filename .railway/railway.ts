@@ -36,7 +36,14 @@ export default defineRailway(() => {
     // node id (and one swarm.json entry) instead of re-keying every deploy.
     // Generate once:
     //   python -c "import secrets; print(secrets.token_bytes(32).hex())"
+    //
+    // PORT must be pinned to 8787 (the app's EXPOSE/documented port).
+    // Railway injects PORT=8080 by default and health-checks THAT port,
+    // while the generated public domain routes to 8787 — a mismatch that
+    // produces 502 "Application failed to respond". Setting PORT=8787 makes
+    // the healthcheck, the app, and the domain all converge on one port.
     // env: {
+    //   PORT: "8787",
     //   EPHEMERAL_SECRET: "...",
     // },
   });
