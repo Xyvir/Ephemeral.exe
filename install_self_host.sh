@@ -42,7 +42,9 @@
 #                 the same source the node was installed from, using the
 #                 node's OWN config (EPHEMERAL_SECRET from the unit, so the
 #                 node_id never changes), restarting the backend only when
-#                 the code actually changed. "0" opts out.
+#                 the code actually changed. "0" opts out. Every release
+#                 download (install or update) is verified against the
+#                 GitHub-published sha256 digest before it is installed.
 set -euo pipefail
 
 FLAVOR="${1:-local}"
@@ -326,16 +328,42 @@ trap 'rm -rf "$TMP"' EXIT
 
 # Prefer the released tarball; fall back to the main branch before the first
 # release (or when EPHEMERAL_FROM_MAIN=1, which CI uses for a deterministic test).
+# Release downloads are verified against the GitHub-published sha256 digest
+# before extraction — the digest is also the version stamp the auto-updater
+# compares, so a tampered or truncated artifact can never be installed.
 if [ "$FLAVOR" = "distributed" ]; then
   ASSET="ephemeral-self-host-distributed.tar.gz"
 else
   ASSET="ephemeral-self-host.tar.gz"
 fi
-if [ "${EPHEMERAL_FROM_MAIN:-0}" != "1" ] \
-  && curl --retry 3 --retry-delay 2 -fsSL -o "$TMP/tarball.tar.gz" "https://github.com/$REPO/releases/latest/download/$ASSET"; then
-  echo "==> Using release asset $ASSET"
-  tar -xzf "$TMP/tarball.tar.gz" -C "$INSTALL_DIR"
-else
+USE_RELEASE=0
+RELEASE_DIGEST=""
+if [ "${EPHEMERAL_FROM_MAIN:-0}" != "1" ]; then
+  RELEASE_DIGEST=$(ASSET="$ASSET" python3 -c '
+import json, os, sys
+try:
+    d = json.load(sys.stdin)
+    name = os.environ["ASSET"]
+    print(next((a["digest"].split(":", 1)[1] for a in d.get("assets", [])
+                if a.get("name") == name), ""))
+except Exception:
+    print("")
+' 2>/dev/null || true)
+  if [ -z "$RELEASE_DIGEST" ]; then
+    echo "WARNING: could not fetch the published sha256 digest for $ASSET — installing unverified" >&2
+  elif curl --retry 3 --retry-delay 2 -fsSL -o "$TMP/tarball.tar.gz" \
+      "https://github.com/$REPO/releases/latest/download/$ASSET"; then
+    ACTUAL=$(sha256sum "$TMP/tarball.tar.gz" | cut -d' ' -f1)
+    if [ "$ACTUAL" != "$RELEASE_DIGEST" ]; then
+      echo "SECURITY: downloaded tarball sha256 $ACTUAL does not match the published digest $RELEASE_DIGEST — aborting" >&2
+      exit 1
+    fi
+    echo "==> Using release asset $ASSET (sha256 verified)"
+    tar -xzf "$TMP/tarball.tar.gz" -C "$INSTALL_DIR"
+    USE_RELEASE=1
+  fi
+fi
+if [ "$USE_RELEASE" != "1" ]; then
   echo "==> Installing from the main branch"
   # Prefer a shallow clone over the codeload tarball endpoint: github.com's
   # on-demand archive generation throttles anonymous downloads (HTTP 503)
@@ -370,8 +398,8 @@ fi
 # .update.conf preserves the source selection + hydration choice across
 # reinstalls. Distributed flavor only.
 if [ "$FLAVOR" = "distributed" ]; then
-  if [ -f "$TMP/tarball.tar.gz" ]; then
-    VERSION="release@$(sha256sum "$TMP/tarball.tar.gz" | cut -d' ' -f1)"
+  if [ "$USE_RELEASE" = "1" ]; then
+    VERSION="release@$RELEASE_DIGEST"
   elif [ -d "$TMP/repo/.git" ]; then
     VERSION="main@$(git -C "$TMP/repo" rev-parse --short HEAD)"
   else
@@ -442,11 +470,43 @@ if [ "$FROM_MAIN" = "1" ]; then
     NEW_STAMP="main@$(sha256sum "$TMP/main.tar.gz" | cut -d' ' -f1)"
   fi
 else
+  # Release source: the GitHub-published sha256 digest is both the version
+  # and the trust anchor. Probe the API (a few KB) — if it matches the
+  # installed stamp there is nothing to download. The tarball is installed
+  # only when it hashes to exactly the published digest; an unattended
+  # updater must never install unverified code.
+  if ! RELEASE_JSON=$(curl --retry 3 --retry-delay 2 -fsSL \
+      -H "Accept: application/vnd.github+json" \
+      "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null); then
+    echo "update: digest fetch failed — retrying next cycle"; exit 0
+  fi
+  NEW_DIGEST=$(printf '%s' "$RELEASE_JSON" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(next((a["digest"].split(":", 1)[1] for a in d.get("assets", [])
+                if a.get("name") == "ephemeral-self-host-distributed.tar.gz"), ""))
+except Exception:
+    print("")
+' 2>/dev/null || true)
+  if [ -z "$NEW_DIGEST" ]; then
+    echo "update: SECURITY: no published digest found — refusing to auto-update" >&2
+    exit 1
+  fi
+  if [ "$OLD_STAMP" = "release@$NEW_DIGEST" ]; then
+    echo "update: already current (release@${NEW_DIGEST:0:12}...)"
+    exit 0
+  fi
   if ! curl --retry 3 --retry-delay 2 -fsSL -o "$TMP/rel.tar.gz" \
       "https://github.com/$REPO/releases/latest/download/$ASSET"; then
     echo "update: release fetch failed — retrying next cycle"; exit 0
   fi
-  NEW_STAMP="release@$(sha256sum "$TMP/rel.tar.gz" | cut -d' ' -f1)"
+  ACTUAL=$(sha256sum "$TMP/rel.tar.gz" | cut -d' ' -f1)
+  if [ "$ACTUAL" != "$NEW_DIGEST" ]; then
+    echo "update: SECURITY: tarball sha256 $ACTUAL does not match the published digest $NEW_DIGEST — refusing to install" >&2
+    exit 1
+  fi
+  NEW_STAMP="release@$NEW_DIGEST"
 fi
 
 if [ "$OLD_STAMP" = "$NEW_STAMP" ]; then
