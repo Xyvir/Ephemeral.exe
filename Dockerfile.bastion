@@ -37,6 +37,11 @@ COPY main_bastion.py main_api.py ./
 
 # Runtime configuration (overridable at deploy time). On Railway,
 # RAILWAY_PUBLIC_DOMAIN is read automatically for the advertised URL.
+#
+# NOTE: Railway injects its own PORT variable and health-checks THAT port.
+# The CMD below listens on ${PORT} (falling back to 8787 locally) so the
+# healthcheck doesn't get "service unavailable" while the app sits on a
+# different port.
 ENV EPHEMERAL_RELAY=n0 \
     EPHEMERAL_SEEDS="" \
     EPHEMERAL_ALLOW_NETWORK=0 \
@@ -46,4 +51,5 @@ ENV EPHEMERAL_RELAY=n0 \
 
 EXPOSE 8787
 
-CMD ["uvicorn", "main_bastion:app", "--host", "0.0.0.0", "--port", "8787"]
+# shell form so Railway's injected $PORT is expanded at runtime.
+CMD ["sh", "-c", "uvicorn main_bastion:app --host 0.0.0.0 --port ${PORT:-8787}"]

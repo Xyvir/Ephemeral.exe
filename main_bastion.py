@@ -337,13 +337,18 @@ async def readiness_check():
 
 
 def main() -> None:
-    """Run the API server directly — ``python main_bastion.py``."""
+    """Run the API server directly — ``python main_bastion.py``.
+
+    Listens on ``$PORT`` when set (Railway injects it and health-checks
+    that port), falling back to ``EPHEMERAL_PORT`` (default 8787).
+    """
     import uvicorn
 
+    port = int(os.getenv("PORT") or os.getenv("EPHEMERAL_PORT", "8787"))
     uvicorn.run(
         "main_bastion:app",
         host="0.0.0.0",
-        port=int(os.getenv("EPHEMERAL_PORT", "8787")),
+        port=port,
     )
 
 
