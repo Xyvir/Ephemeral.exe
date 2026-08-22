@@ -90,11 +90,26 @@ require_podman() {
 configure_storage_root() {
     # EPHEMERAL_STORAGE_ROOT moves the image cache off the boot volume — e.g.
     # onto a big attached block device. Written BEFORE the first podman run
-    # so the storage graph is created there from the start.
+    # so the storage graph is created there from the start. The path must
+    # already be a mounted filesystem: the installer formats nothing and
+    # mounts nothing (mkfs + mount + fstab are the operator's job).
     if [ -z "${EPHEMERAL_STORAGE_ROOT:-}" ]; then
         return 0
     fi
-    mkdir -p "$EPHEMERAL_STORAGE_ROOT"
+    if ! mkdir -p "$EPHEMERAL_STORAGE_ROOT" 2>/dev/null; then
+        echo "ERROR: EPHEMERAL_STORAGE_ROOT ($EPHEMERAL_STORAGE_ROOT) is not writable." >&2
+        echo "       Format and mount the block volume there first, e.g.:" >&2
+        echo "         sudo mkfs.ext4 /dev/sdb && sudo mkdir -p $EPHEMERAL_STORAGE_ROOT" >&2
+        echo "         sudo mount /dev/sdb $EPHEMERAL_STORAGE_ROOT   # + /etc/fstab entry" >&2
+        echo "       then re-run the installer." >&2
+        exit 1
+    fi
+    BOOT_DEV="$(df -P / 2>/dev/null | awk 'NR==2 {print $1}')"
+    STORE_DEV="$(df -P "$EPHEMERAL_STORAGE_ROOT" 2>/dev/null | awk 'NR==2 {print $1}')"
+    if [ -n "$BOOT_DEV" ] && [ "$BOOT_DEV" = "$STORE_DEV" ]; then
+        echo "    ! warning: EPHEMERAL_STORAGE_ROOT is on the same filesystem as / —" >&2
+        echo "      the image cache will live on the boot volume, not a dedicated one" >&2
+    fi
     { [ -n "$SUDO" ] && $SUDO chown -R "$(id -u)":"$(id -g)" "$EPHEMERAL_STORAGE_ROOT"; } 2>/dev/null || true
     mkdir -p "$HOME/.config/containers"
     cat > "$HOME/.config/containers/storage.conf" <<EOF
