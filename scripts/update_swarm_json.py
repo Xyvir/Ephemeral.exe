@@ -94,8 +94,13 @@ DEFAULT_OUT = Path(__file__).resolve().parent.parent / "docs" / "swarm.json"
 # member, it regenerates from its own members and the genesis node can go
 # offline forever. Override with the SWARM_GENESIS repo variable / env var
 # (comma-separated node_id@relay) or the --genesis flag.
+#
+# The anchor is the always-on Railway bastion (paper-light HTTP gateway). Its
+# identity is pinned via the EPHEMERAL_SECRET env var on the Railway service,
+# so this (node_id, relay) pair is stable across redeploys. Note the relay is
+# the EU one the bastion actually advertises, not DEFAULT_RELAY.
 GENESIS_DEFAULT: list[tuple[str, str]] = [
-    ("154e7308b6af310df575c7c90bc8fe86146cfef036ac098662768a4f3c411ec5", DEFAULT_RELAY),
+    ("ed7106bced606bede735b4c9b215052855f9747e8cb56629759ae672ce29b9c8", "https://euc1-1.relay.n0.iroh.link./"),
 ]
 
 # How long each dial attempt may take (matches Node._dial_timeout).
