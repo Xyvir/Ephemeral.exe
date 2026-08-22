@@ -47,6 +47,7 @@ import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from main_api import RunResponse  # same wire contract as the local API server
 
@@ -216,6 +217,18 @@ app = FastAPI(
     ),
     version="1.0.0",
     lifespan=lifespan,
+)
+
+# Paper-light clients are browser pages (a local file:// or Tauri webview, a
+# hosted wiki, etc.) that POST to this public endpoint cross-origin. The
+# bastion is public by design (the "anything you submit is public knowledge"
+# tier), so allow any origin — the per-IP rate limiter is the guardrail, not
+# CORS.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 
