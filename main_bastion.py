@@ -120,6 +120,15 @@ def _int_env(name: str, default: int) -> int:
 PUBLIC_URL = _resolve_public_url()
 COMPUTE = _resolve_compute()
 
+# Deployed commit SHA. Railway injects RAILWAY_GIT_COMMIT_SHA on every
+# deploy; other platforms can set GIT_SHA / EPHEMERAL_VERSION explicitly.
+VERSION = (
+    os.getenv("RAILWAY_GIT_COMMIT_SHA", "")
+    or os.getenv("GIT_SHA", "")
+    or os.getenv("EPHEMERAL_VERSION", "")
+    or "dev"
+)
+
 RATE_PER_MIN = max(1, _int_env("EPHEMERAL_RATE_LIMIT_PER_MIN", 60))
 RATE_BURST = max(1, _int_env("EPHEMERAL_RATE_LIMIT_BURST", RATE_PER_MIN))
 MAX_CONCURRENT = max(1, _int_env("EPHEMERAL_MAX_CONCURRENT", 8))
@@ -324,6 +333,7 @@ async def health_check():
     }
     if node_ok:
         status.update(gateway.status())
+    status["version"] = VERSION
     # Always 200 — the process is alive and serving.
     return status
 
@@ -346,7 +356,46 @@ async def readiness_check():
     status["public_url"] = PUBLIC_URL
     status["cache_entries"] = len(cache)
     status["concurrent_jobs"] = concurrency.active
+    status["version"] = VERSION
     return status
+
+
+@app.get("/peers")
+async def peers_list():
+    """Peer table dump — who the bastion currently knows about.
+
+    Diagnostics for operators: returns every entry in the node's peer
+    table (node_id, relay, warm images, RTT, last_seen age) so you can
+    verify the bastion actually sees the swarm. Live connections are a
+    subset of this table (``peers`` in /health counts the table).
+    """
+    gateway: Gateway = getattr(app.state, "gateway", None)
+    node = getattr(gateway, "node", None) if gateway else None
+    if node is None:
+        return {"status": "starting", "peers": []}
+    import time as _time
+
+    table = getattr(node, "table", None)
+    now = _time.monotonic()
+    entries = []
+    if table is not None:
+        for info in table:
+            entries.append(
+                {
+                    "node_id": info.node_id,
+                    "relay": info.relay,
+                    "ticket": (info.ticket[:16] + "…") if info.ticket else None,
+                    "images": sorted(info.images or []),
+                    "active_jobs": info.active_jobs,
+                    "url": info.url,
+                    "last_seen_secs_ago": round(now - info.last_seen, 1)
+                    if info.last_seen
+                    else None,
+                }
+            )
+    entries.sort(key=lambda e: (e["last_seen_secs_ago"] is None, e["last_seen_secs_ago"] or 0))
+    live = sum(1 for e in entries if e["last_seen_secs_ago"] is not None and e["last_seen_secs_ago"] <= 600)
+    return {"status": "healthy", "version": VERSION, "count": len(entries), "live": live, "peers": entries}
 
 
 def main() -> None:

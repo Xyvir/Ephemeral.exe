@@ -210,4 +210,10 @@ async def health_check():
     return {
         "status": "healthy" if podman_alive else "degraded",
         "podman": "running" if podman_alive else "stopped",
+        "version": (
+            os.getenv("RAILWAY_GIT_COMMIT_SHA", "")
+            or os.getenv("GIT_SHA", "")
+            or os.getenv("EPHEMERAL_VERSION", "")
+            or "dev"
+        ),
     }
