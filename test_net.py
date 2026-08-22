@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import tempfile
 from pathlib import Path
@@ -400,6 +401,260 @@ def test_offload_falls_back_to_local_when_forward_fails():
 
     asyncio.run(run())
     print("PASS: offload falls back to local when the neighbor forward fails")
+
+
+# --- mesh image pull unit tests (no iroh / podman required) ------------
+
+def test_image_ref_parsing():
+    from ephemeral_net.image_pull import parse_image_ref
+
+    assert parse_image_ref("docker.io/library/alpine:latest") == (
+        "registry-1.docker.io", "library/alpine", "latest")
+    assert parse_image_ref("alpine") == ("registry-1.docker.io", "library/alpine", "latest")
+    assert parse_image_ref("ubuntu:22.04") == ("registry-1.docker.io", "library/ubuntu", "22.04")
+    assert parse_image_ref("ghcr.io/org/img:v1") == ("ghcr.io", "org/img", "v1")
+    assert parse_image_ref("mcr.microsoft.com/powershell") == (
+        "mcr.microsoft.com", "powershell", "latest")
+    print("PASS: image ref parsing (registry/repo/tag)")
+
+
+def test_blob_frame_helpers():
+    from ephemeral_net.protocol import (
+        blob_chunk_frame, blob_done_frame, blob_request_frame, decode_frame, encode_frame,
+    )
+
+    req = blob_request_frame("docker.io/library/alpine:latest", "sha256:" + "a" * 64, 1234)
+    assert req["type"] == "blob_request" and req["size"] == 1234
+    assert decode_frame(encode_frame(req))["digest"] == "sha256:" + "a" * 64
+    chunk = blob_chunk_frame("img", "sha256:" + "b" * 64, 0, b"\x00\x01hello", 7)
+    assert base64.b64decode(chunk["data"]) == b"\x00\x01hello"
+    assert chunk["offset"] == 0 and chunk["total"] == 7
+    done = blob_done_frame("img", "sha256:" + "c" * 64, 7)
+    assert done["type"] == "blob_done" and done["total"] == 7
+    print("PASS: blob frame helpers round-trip")
+
+
+def _stage_blob(root, digest, data):
+    p = root / "src" / digest
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(data)
+    return p
+
+
+def _sample_manifest():
+    """A tiny docker-v2 platform manifest with one config + one layer blob."""
+    layer = b"layer-bytes" * 100
+    config = b'{"architecture":"amd64"}'
+    manifest = {
+        "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+        "config": {"digest": "sha256:" + hashlib.sha256(config).hexdigest(), "size": len(config)},
+        "layers": [{"digest": "sha256:" + hashlib.sha256(layer).hexdigest(), "size": len(layer)}],
+    }
+    mbytes = json.dumps(manifest).encode()
+    return (
+        layer, config, manifest,
+        "sha256:" + hashlib.sha256(mbytes).hexdigest(), mbytes,
+    )
+
+
+def test_oci_layout_assembly_and_verification():
+    import tempfile
+
+    from ephemeral_net.image_pull import ImagePullError, assemble_oci_layout, verify_blob
+
+    layer, config, manifest, mdigest, mbytes = _sample_manifest()
+    config_d = manifest["config"]["digest"]
+    layer_d = manifest["layers"][0]["digest"]
+    with tempfile.TemporaryDirectory(prefix="mesh-layout-") as d:
+        root = Path(d)
+        blobs = {
+            config_d: _stage_blob(root, config_d, config),
+            layer_d: _stage_blob(root, layer_d, layer),
+        }
+        assemble_oci_layout(
+            root, "docker.io/library/alpine:latest", manifest, mdigest, mbytes, blobs
+        )
+        assert (root / "blobs" / "sha256" / layer_d).read_bytes() == layer
+        idx = json.loads((root / "index.json").read_text())
+        assert idx["manifests"][0]["annotations"]["org.opencontainers.image.ref.name"] \
+            == "docker.io/library/alpine:latest"
+        assert json.loads((root / "oci-layout").read_text())["imageLayoutVersion"] == "1.0.0"
+        assert verify_blob(root / "blobs" / "sha256" / layer_d, layer_d)
+
+        # A tampered layer must fail assembly (never reaches podman load).
+        bad = root / "src" / "bad"
+        bad.write_bytes(b"TAMPERED")
+        try:
+            assemble_oci_layout(root, "ref", manifest, mdigest, mbytes, {config_d: blobs[config_d], layer_d: bad})
+            raise AssertionError("expected ImagePullError on tampered blob")
+        except ImagePullError:
+            pass
+    print("PASS: OCI layout assembly + sha256 verification (tampered blob refused)")
+
+
+def test_mesh_pull_orchestration():
+    import tempfile
+
+    from ephemeral_net.image_pull import MeshImagePuller
+
+    layer, config, manifest, mdigest, mbytes = _sample_manifest()
+    config_d = manifest["config"]["digest"]
+    layer_d = manifest["layers"][0]["digest"]
+    blobs = {config_d: config, layer_d: layer}
+
+    class _Peer:
+        node_id = "peer"
+
+    class _Node:
+        def __init__(self, has_peer=True):
+            self.peer = _Peer() if has_peer else None
+            self._tamper = False
+
+        def peer_for_images(self, images):
+            return self.peer
+
+        async def fetch_blob(self, peer, image, digest, size, dest):
+            data = blobs[digest]
+            if self._tamper and digest == layer_d:
+                data = b"TAMPERED"
+            Path(dest).write_bytes(data)
+
+    async def run():
+        # Success: blobs fetched + verified, loader called with the ref.
+        calls = []
+        puller = MeshImagePuller(
+            _Node(),
+            manifest_fetcher=lambda ref: (manifest, mdigest, mbytes),
+            loader=lambda root, ref: (calls.append(ref) or True),
+        )
+        assert await puller.pull("docker.io/library/alpine:latest") is True
+        assert calls == ["docker.io/library/alpine:latest"]
+
+        # No warm peer: False, loader untouched.
+        calls2 = []
+        puller2 = MeshImagePuller(
+            _Node(has_peer=False),
+            manifest_fetcher=lambda ref: (manifest, mdigest, mbytes),
+            loader=lambda root, ref: (calls2.append(ref) or True),
+        )
+        assert await puller2.pull("img") is False and calls2 == []
+
+        # Tampered layer: sha256 verification refuses, loader never runs.
+        node3 = _Node()
+        node3._tamper = True
+        calls3 = []
+        puller3 = MeshImagePuller(
+            node3,
+            manifest_fetcher=lambda ref: (manifest, mdigest, mbytes),
+            loader=lambda root, ref: (calls3.append(ref) or True),
+        )
+        assert await puller3.pull("img") is False and calls3 == []
+
+        # Registry manifest unavailable: False (caller keeps registry pull).
+        def boom(ref):
+            raise RuntimeError("registry unreachable")
+
+        puller4 = MeshImagePuller(_Node(), manifest_fetcher=boom)
+        assert await puller4.pull("img") is False
+
+    asyncio.run(run())
+    print("PASS: mesh pull orchestration (success / no peer / tampered / manifest down)")
+
+
+def test_registry_manifest_fetch_auth_and_index():
+    import ephemeral_net.image_pull as ip
+
+    layer, config, manifest, _mdigest, mbytes = _sample_manifest()
+    index = {
+        "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+        "manifests": [
+            {"digest": "sha256:" + "p" * 64, "platform": {"os": "linux", "architecture": "amd64"}},
+            {"digest": "sha256:" + "q" * 64, "platform": {"os": "linux", "architecture": "arm64"}},
+        ],
+    }
+    idx_bytes = json.dumps(index).encode()
+
+    def fake_get(registry, path, headers, timeout=20.0):
+        if "Authorization" not in headers:
+            return 401, {
+                "WWW-Authenticate": 'Bearer realm="https://auth.example/token",service="s",scope="repository:library/alpine:pull"'
+            }, b""
+        if path == "library/alpine/manifests/latest":
+            return 200, {}, idx_bytes
+        if path.endswith("/manifests/sha256:" + "p" * 64):
+            return 200, {}, mbytes
+        return 404, {}, b""
+
+    orig_get, orig_token = ip._registry_get, ip._fetch_token
+    ip._registry_get = fake_get
+    ip._fetch_token = lambda challenge, registry, repo, timeout=20.0: "tok-123"
+    try:
+        manifest_out, digest_out, body_out = ip.fetch_manifest(
+            "docker.io/library/alpine:latest", arch="amd64"
+        )
+        assert manifest_out["layers"][0]["digest"] == manifest["layers"][0]["digest"]
+        assert body_out == mbytes
+        assert digest_out == "sha256:" + hashlib.sha256(mbytes).hexdigest()
+
+        # 404 -> ImagePullError (no mesh pull without a trust anchor).
+        try:
+            ip.fetch_manifest("docker.io/library/nope:latest", arch="amd64")
+            raise AssertionError("expected ImagePullError on 404")
+        except ip.ImagePullError:
+            pass
+    finally:
+        ip._registry_get, ip._fetch_token = orig_get, orig_token
+    print("PASS: registry manifest fetch (401->token dance, index->platform, 404)")
+
+
+def test_offload_background_pull_prefers_mesh():
+    from ephemeral_net.offload import OffloadingExecutor
+
+    class _MeshNode(_FakeNode):
+        def __init__(self):
+            super().__init__(peer=_FakePeer(images={PY_IMG}))
+            self.mesh_calls = []
+
+        async def mesh_pull_image(self, image, preferred_peer=None):
+            self.mesh_calls.append((image, preferred_peer))
+            return True
+
+    async def run():
+        local = _FakeLocal([PY_IMG], warm=set(), events=_events)
+        node = _MeshNode()
+        ex = OffloadingExecutor(node, local)
+        events = [e async for e in ex(JobRequest(job_id="j", document_blob=""))]
+        assert any(e.data == b"forwarded\n" for e in events if hasattr(e, "data"))
+        await asyncio.sleep(0.05)
+        assert node.mesh_calls == [(PY_IMG, node.peer)], f"got {node.mesh_calls}"
+        assert local.pull_calls == [], "mesh success must skip the registry pull"
+
+    asyncio.run(run())
+    print("PASS: offload background pull prefers mesh (registry skipped on success)")
+
+
+def test_offload_background_pull_falls_back_to_registry():
+    from ephemeral_net.offload import OffloadingExecutor
+
+    class _MeshFailNode(_FakeNode):
+        def __init__(self):
+            super().__init__(peer=_FakePeer(images={PY_IMG}))
+
+        async def mesh_pull_image(self, image, preferred_peer=None):
+            return False
+
+    async def run():
+        local = _FakeLocal([PY_IMG], warm=set(), events=_events)
+        node = _MeshFailNode()
+        ex = OffloadingExecutor(node, local)
+        events = [e async for e in ex(JobRequest(job_id="j", document_blob=""))]
+        assert any(e.data == b"forwarded\n" for e in events if hasattr(e, "data"))
+        await asyncio.sleep(0.05)
+        assert local.pull_calls == [PY_IMG], "mesh failure must fall back to the registry"
+
+    asyncio.run(run())
+    print("PASS: offload background pull falls back to the registry when mesh fails")
+
 
 # --- busy/idle routing unit tests (no iroh required) -------------------
 
@@ -1502,7 +1757,11 @@ async def _run_offload_integration() -> bool:
         image_exists=lambda image: False,  # never warm locally
         pull=_fake_pull,
     )
-    offloader = Node(relay="disabled", idle_timeout=5.0, list_images=lambda: [])
+    # mesh_pull=False: the offload path must keep using the registry-pull
+    # fallback here (a live registry fetch would race this test).
+    offloader = Node(
+        relay="disabled", idle_timeout=5.0, list_images=lambda: [], mesh_pull=False
+    )
     offloader.executor = OffloadingExecutor(offloader, local)
     requester = Node(relay="disabled", idle_timeout=5.0)
     try:
@@ -1718,6 +1977,80 @@ async def _run_eviction_integration() -> bool:
         return True
 
 
+async def _run_mesh_blob_integration() -> bool:
+    """
+    Mesh image blob transfer over real iroh QUIC connections: a node with
+    a warm image (fake OCI exporter) serves a content-addressed blob; the
+    client fetches it and verifies its sha256; a missing blob surfaces as
+    an ImagePullError; a node with serving disabled refuses the request.
+    """
+    from ephemeral_net.image_pull import ImagePullError
+    from ephemeral_net.node import Node
+
+    layer = b"mesh-integration-layer-" * 1000
+    digest = "sha256:" + hashlib.sha256(layer).hexdigest()
+    image = "docker.io/library/alpine:latest"
+
+    def fake_exporter(image_name, out):
+        out = Path(out)
+        blobs = out / "blobs" / "sha256"
+        blobs.mkdir(parents=True, exist_ok=True)
+        (blobs / digest).write_bytes(layer)
+        return out
+
+    server = Node(
+        relay="disabled", idle_timeout=5.0,
+        list_images=lambda: [image],
+        image_exporter=fake_exporter,
+    )
+    client = Node(relay="disabled", idle_timeout=5.0)
+    noserve = Node(relay="disabled", idle_timeout=5.0, serve_blobs=False)
+    try:
+        await server.start()
+        await client.start()
+        await noserve.start()
+        peer = await asyncio.wait_for(client.dial(server.ticket()), timeout=30)
+
+        with tempfile.TemporaryDirectory(prefix="mesh-blob-") as d:
+            dest = Path(d) / "layer"
+            await asyncio.wait_for(
+                client.fetch_blob(peer, image, digest, len(layer), dest), timeout=30
+            )
+            assert dest.read_bytes() == layer, "fetched blob bytes mismatch"
+            print("  blob fetched over iroh and sha256-verified")
+
+            # Missing blob -> ImagePullError carrying the peer's refusal.
+            try:
+                await client.fetch_blob(
+                    peer, image, "sha256:" + "0" * 64, 1, Path(d) / "missing"
+                )
+                raise AssertionError("expected ImagePullError for missing blob")
+            except ImagePullError as e:
+                assert "not available" in str(e)
+            print("  missing blob surfaced as ImagePullError")
+
+            # A node with serving disabled refuses blob requests.
+            npeer = await asyncio.wait_for(client.dial(noserve.ticket()), timeout=30)
+            try:
+                await client.fetch_blob(
+                    npeer, image, digest, len(layer), Path(d) / "refused"
+                )
+                raise AssertionError("expected ImagePullError from non-serving node")
+            except ImagePullError as e:
+                assert "does not serve" in str(e)
+            print("  non-serving node refused the blob request")
+
+        print("  MESH BLOB INTEGRATION OK")
+        return True
+    except asyncio.TimeoutError:
+        print("  SKIP: no local connectivity (dial timed out)")
+        return False
+    finally:
+        await server.close()
+        await client.close()
+        await noserve.close()
+
+
 def main():
     # Layer 1
     test_frame_roundtrip()
@@ -1749,6 +2082,13 @@ def main():
     test_offload_runs_locally_when_warm()
     test_offload_forwards_to_warm_neighbor_and_pulls()
     test_offload_runs_locally_when_no_warm_neighbor()
+    test_image_ref_parsing()
+    test_blob_frame_helpers()
+    test_oci_layout_assembly_and_verification()
+    test_mesh_pull_orchestration()
+    test_registry_manifest_fetch_auth_and_index()
+    test_offload_background_pull_prefers_mesh()
+    test_offload_background_pull_falls_back_to_registry()
     test_select_peer_prefers_idle_then_fast()
     test_fanout_split_runs()
     test_fanout_splits_and_merges()
@@ -1782,6 +2122,11 @@ def main():
     ok = asyncio.run(_run_eviction_integration())
     if not ok:
         print("SKIP: eviction integration test — no local connectivity")
+
+    print("\n--- mesh image-blob integration ---")
+    ok = asyncio.run(_run_mesh_blob_integration())
+    if not ok:
+        print("SKIP: mesh-blob integration test — no local connectivity")
 
     print("\n--- mesh-heal integration ---")
     ok = asyncio.run(_run_mesh_heal_integration())

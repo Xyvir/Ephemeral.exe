@@ -129,6 +129,7 @@ That's it — no configuration. Your node fetches the live swarm list, joins the
 | **Privacy** | **Nothing ever leaves the machine** | Public relays: treat submissions as public knowledge — no privacy guarantee |
 | **Podman needed** | Yes (WSL2 on Windows, rootless on Linux) | Yes on compute nodes; **thin clients (browser) need none** |
 | **Offloading** | None | Automatic nearest-neighbor offload + background image pull |
+| **Image distribution** | n/a | **Mesh image pull:** when a peer has the needed image warm, its blobs are pulled from that peer over iroh and **verified against the registry manifest** (each layer's sha256) before `podman load` — the registry is only hit for the tiny manifest. Registry pull stays as the automatic fallback. `EPHEMERAL_MESH_PULL=0` disables |
 | **Node routing** | n/a | Idle-first: hello frames advertise each node's load (`active_jobs`/`max_jobs`); saturated nodes are skipped and the least-loaded warm node wins |
 | **Network flag** | `unsafe` opt-in per block (local) | `unsafe` stripped receiver-side — network is a node-operator setting (`EPHEMERAL_ALLOW_NETWORK`), never the requester's |
 | **Custom images** | Any Podman/Docker image via the `image=`/`cmd=` header (Declarative Image Mode) | **Disabled** — `image=`/`cmd=`/`entrypoint=` overrides are dropped receiver-side; only the node's allowlisted images (default: the built-in language map) run |

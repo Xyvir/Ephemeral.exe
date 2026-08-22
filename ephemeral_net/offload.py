@@ -50,8 +50,16 @@ class OffloadingExecutor:
             logger.warning("offload prepare failed for %s: %s", request.job_id, e)
             return None
 
-    def _start_background_pull(self, images: list[str]) -> None:
-        """Pull ``images`` in the background so they are warm next time."""
+    def _start_background_pull(self, images: list[str], peer=None) -> None:
+        """
+        Pull ``images`` in the background so they are warm next time.
+
+        When ``peer`` (the warm neighbor the job was forwarded to) is
+        available, the image is first pulled from THAT peer over iroh —
+        assembled from its blobs, verified against the registry manifest
+        (``node.mesh_pull_image``) — and only falls back to the registry
+        pull if the mesh pull fails or is disabled.
+        """
         if not self.background_pull:
             return
         for image in images:
@@ -62,10 +70,18 @@ class OffloadingExecutor:
                 pull = ephemeral_core.pull_image
 
             async def _pull(img: str) -> None:
+                pulled = False
                 try:
-                    await pull(img)
+                    mesh = getattr(self.node, "mesh_pull_image", None)
+                    if mesh is not None:
+                        pulled = await mesh(img, preferred_peer=peer)
                 except Exception as e:  # pragma: no cover - best effort
-                    logger.warning("background pull of %s failed: %s", img, e)
+                    logger.warning("mesh pull of %s failed: %s", img, e)
+                if not pulled:
+                    try:
+                        await pull(img)
+                    except Exception as e:  # pragma: no cover - best effort
+                        logger.warning("background pull of %s failed: %s", img, e)
 
             asyncio.create_task(_pull(image))
 
@@ -87,8 +103,9 @@ class OffloadingExecutor:
 
         peer = self.node.peer_for_images(missing) if missing else None
         if peer is not None:
-            # Forward to the warm neighbor; pull locally while it runs.
-            self._start_background_pull(missing)
+            # Forward to the warm neighbor; pull locally while it runs
+            # (mesh pull from this same peer when available).
+            self._start_background_pull(missing, peer=peer)
             logger.info(
                 "offloading job %s for %s to %s (pulling %s locally)",
                 request.job_id,

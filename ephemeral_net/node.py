@@ -17,13 +17,25 @@ class covers desktop clients, compute nodes, and gateways.
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import logging
 import os
+import re
+import shutil
+import tempfile
 import time
+from pathlib import Path
 from typing import AsyncIterator, Sequence
 
 from .discovery import PeerInfo, PeerTable
 from .errors import HandshakeError, JobError, ProtocolError
+from .image_pull import (
+    BLOB_CHUNK_SIZE,
+    ImagePullError,
+    MeshImagePuller,
+    export_oci_dir,
+)
 from .jobs import JobErrorEvent, JobExecutor, JobRequest, parse_job_frame
 from .swarm import (
     SWARM_DNS_TXT,
@@ -34,6 +46,9 @@ from .swarm import (
 from .protocol import (
     ALPN,
     DEFAULT_MAX_FRAME_SIZE,
+    blob_chunk_frame,
+    blob_done_frame,
+    blob_request_frame,
     error_frame,
     hello_frame,
     peer_entries_from_hello,
@@ -141,6 +156,11 @@ class Node:
         warm_cache_ttl: float = 30.0,
         max_jobs: int | None = None,
         public_url: str | None = None,
+        image_exporter=None,
+        serve_blobs: bool = True,
+        blob_serve_concurrency: int = 2,
+        export_cache_max: int = 3,
+        mesh_pull: bool | None = None,
     ) -> None:
         import iroh  # deferred so non-net code paths don't require the wheel
 
@@ -158,6 +178,18 @@ class Node:
         self._max_jobs = max_jobs
         self._active_jobs = 0
         self._public_url = public_url
+        # Mesh image serving: warm images are exported as OCI layouts on
+        # demand (LRU-capped) and blobs stream to peers over iroh, verified
+        # against the registry manifest by the requester. ``image_exporter``
+        # is ``callable(image, out_dir) -> Path``; None uses podman.
+        self._image_exporter = image_exporter
+        self._serve_blobs = serve_blobs
+        self._blob_serve_sem = asyncio.Semaphore(blob_serve_concurrency)
+        self._export_cache_max = export_cache_max
+        self._export_cache: dict[str, Path] = {}
+        self._blob_chunk_size = BLOB_CHUNK_SIZE
+        self._mesh_puller: MeshImagePuller | None = None
+        self._mesh_pull_override = mesh_pull
 
         builder = iroh.EndpointBuilder()
         builder.alpns([ALPN])
@@ -638,6 +670,8 @@ class Node:
                 await self._handle_hello(peer, frame, bs)
             elif frame.get("type") == "job_request":
                 await self._handle_job(peer, frame, bs)
+            elif frame.get("type") == "blob_request":
+                await self._handle_blob_request(peer, frame, bs)
             else:
                 await write_frame(bs.send(), error_frame("expected hello or job_request"))
 
@@ -654,6 +688,8 @@ class Node:
                     await self._handle_hello(peer, frame, bs)
                 elif frame.get("type") == "job_request":
                     await self._handle_job(peer, frame, bs)
+                elif frame.get("type") == "blob_request":
+                    await self._handle_blob_request(peer, frame, bs)
                 else:
                     await write_frame(bs.send(), error_frame("unexpected frame type"))
         except (asyncio.CancelledError, Exception):
@@ -714,6 +750,168 @@ class Node:
         finally:
             self._active_jobs -= 1
             await send.finish()
+
+    # --- mesh image pull -------------------------------------------------
+
+    @property
+    def mesh_pull_enabled(self) -> bool:
+        """
+        Whether mesh image pulls are allowed. The constructor's
+        ``mesh_pull`` override wins; otherwise ``EPHEMERAL_MESH_PULL=0``
+        opts out (default on).
+        """
+        if self._mesh_pull_override is not None:
+            return self._mesh_pull_override
+        return os.environ.get("EPHEMERAL_MESH_PULL", "1") != "0"
+
+    def _get_mesh_puller(self) -> MeshImagePuller | None:
+        if not self.mesh_pull_enabled:
+            return None
+        if self._mesh_puller is None:
+            self._mesh_puller = MeshImagePuller(self)
+        return self._mesh_puller
+
+    async def mesh_pull_image(self, image: str, *, preferred_peer=None) -> bool:
+        """
+        Try to make ``image`` warm from a warm peer, verified against the
+        registry manifest. Returns False (never raises) when no peer has
+        it warm, a blob fails verification, or the registry manifest is
+        unreachable — callers keep the registry-pull fallback.
+        """
+        puller = self._get_mesh_puller()
+        if puller is None:
+            return False
+        return await puller.pull(image, preferred_peer=preferred_peer)
+
+    async def fetch_blob(
+        self, peer: "PeerConnection", image: str, digest: str, size: int, dest
+    ) -> None:
+        """
+        Fetch one content-addressed blob from ``peer`` over iroh and verify
+        its sha256 matches ``digest`` before returning. Raises
+        :class:`ImagePullError` on any protocol/verification failure.
+        """
+        if self._ep is None:
+            raise ImagePullError("node not started")
+        conn = peer.connection
+        bs = await conn.open_bi()
+        await write_frame(bs.send(), blob_request_frame(image, digest, size))
+        recv = bs.recv()
+        written = 0
+        with open(dest, "wb") as f:
+            while True:
+                frame = await read_frame(recv, max_size=self.max_frame_size)
+                kind = frame.get("type")
+                if kind == "error":
+                    raise ImagePullError(
+                        f"peer {str(peer.node_id)[:8]}: {frame.get('message')}"
+                    )
+                if kind == "blob_chunk":
+                    if frame.get("digest") != digest:
+                        raise ImagePullError("blob stream digest mismatch")
+                    offset = int(frame.get("offset") or 0)
+                    if offset != written:
+                        raise ImagePullError(
+                            f"blob stream gap: expected offset {written}, got {offset}"
+                        )
+                    try:
+                        data = base64.b64decode(frame.get("data", ""), validate=True)
+                    except Exception as e:
+                        raise ImagePullError(f"bad blob chunk: {e}") from e
+                    if written + len(data) > size:
+                        raise ImagePullError("blob stream exceeds declared size")
+                    f.write(data)
+                    written += len(data)
+                elif kind == "blob_done":
+                    if int(frame.get("total") or 0) != size or written != size:
+                        raise ImagePullError(
+                            "blob stream size mismatch (server sent different total)"
+                        )
+                    break
+                else:
+                    raise ImagePullError(f"unexpected frame on blob stream: {kind!r}")
+        hasher = hashlib.sha256()
+        with open(dest, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                hasher.update(chunk)
+        if hasher.hexdigest() != digest[len("sha256:"):]:
+            raise ImagePullError(f"blob {digest[:16]}... failed sha256 verification")
+
+    async def _handle_blob_request(self, peer: "PeerConnection", frame: dict, bs) -> None:
+        """Serve one content-addressed blob (exported OCI layout) to a peer."""
+        send = bs.send()
+        try:
+            image = frame.get("image")
+            digest = frame.get("digest")
+            size = int(frame.get("size") or 0)
+            if (
+                not image
+                or not isinstance(digest, str)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
+                or size <= 0
+            ):
+                await write_frame(send, error_frame("bad blob_request"))
+                return
+            if not self._serve_blobs or self._image_exporter is None:
+                await write_frame(
+                    send, error_frame("this node does not serve image blobs")
+                )
+                return
+            async with self._blob_serve_sem:
+                blob = await asyncio.to_thread(self._blob_path_for, image, digest)
+                if blob is None or blob.stat().st_size != size:
+                    await write_frame(
+                        send, error_frame(f"blob {digest[:16]}... not available")
+                    )
+                    return
+                with open(blob, "rb") as f:
+                    offset = 0
+                    while True:
+                        data = f.read(self._blob_chunk_size)
+                        if not data:
+                            break
+                        await write_frame(
+                            send, blob_chunk_frame(image, digest, offset, data, size)
+                        )
+                        offset += len(data)
+                await write_frame(send, blob_done_frame(image, digest, size))
+        except Exception as e:
+            logger.exception("blob request for %s failed", frame.get("digest"))
+            try:
+                await write_frame(send, error_frame(f"blob serve failed: {e}"))
+            except Exception:  # pragma: no cover - best effort
+                pass
+        finally:
+            try:
+                await send.finish()
+            except Exception:  # pragma: no cover - best effort
+                pass
+
+    def _blob_path_for(self, image: str, digest: str) -> Path | None:
+        """The exported blob file for ``digest`` (None when the image/peer lacks it)."""
+        root = self._export_image(image)
+        blob = root / "blobs" / "sha256" / digest
+        return blob if blob.is_file() else None
+
+    def _export_image(self, image: str) -> Path:
+        """
+        Export ``image`` to an OCI layout dir (cached, LRU-capped).
+
+        Raises when the exporter cannot produce the layout (image not
+        cached locally / Podman down) — the caller turns that into an
+        ``error`` frame.
+        """
+        cached = self._export_cache.get(image)
+        if cached is not None:
+            return cached
+        exporter = self._image_exporter or export_oci_dir
+        out = Path(tempfile.mkdtemp(prefix="ephemeral-export-"))
+        exporter(image, out)
+        self._export_cache[image] = out
+        while len(self._export_cache) > self._export_cache_max:
+            oldest = next(iter(self._export_cache))
+            shutil.rmtree(self._export_cache.pop(oldest), ignore_errors=True)
+        return out
 
     # --- nearest-neighbor offloading -------------------------------------
 

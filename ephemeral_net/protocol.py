@@ -13,6 +13,7 @@ back and then both sides finish the stream.
 """
 from __future__ import annotations
 
+import base64
 import json
 import struct
 
@@ -142,3 +143,35 @@ def peer_entries_from_hello(frame: dict) -> list[dict]:
         }
     )
     return [e for e in entries if e and e.get("node_id")]
+
+
+# --- mesh image-blob transfer -------------------------------------------
+#
+# One blob per bi-stream (same shape as jobs): a ``blob_request`` then a
+# sequence of ``blob_chunk`` frames (base64, capped well under the frame
+# guard) terminated by ``blob_done`` or an ``error`` frame. The digest is
+# ``sha256:<64 hex>`` — the client verifies the assembled bytes against it
+# and the registry manifest before loading, so a tampered layer can never
+# be installed.
+
+
+def blob_request_frame(image: str, digest: str, size: int) -> dict:
+    """Request one content-addressed blob of a warm image from a peer."""
+    return {"type": "blob_request", "image": image, "digest": digest, "size": int(size)}
+
+
+def blob_chunk_frame(image: str, digest: str, offset: int, data: bytes, total: int) -> dict:
+    """One chunk of a blob stream (raw bytes, base64-encoded in the frame)."""
+    return {
+        "type": "blob_chunk",
+        "image": image,
+        "digest": digest,
+        "offset": int(offset),
+        "total": int(total),
+        "data": base64.b64encode(data).decode("ascii"),
+    }
+
+
+def blob_done_frame(image: str, digest: str, total: int) -> dict:
+    """Terminal success frame of a blob stream."""
+    return {"type": "blob_done", "image": image, "digest": digest, "total": int(total)}
