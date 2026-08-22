@@ -404,6 +404,14 @@ async def discover(
     try:
         prev = {} if reset else _existing_nodes(out_path)
         prev_bastions = {} if reset else _existing_bastions(out_path)
+        evicted_ids: set[str] = set()
+        if not reset:
+            try:
+                evicted_ids = set(
+                    json.loads(out_path.read_text(encoding="utf-8")).get("evicted") or []
+                )
+            except Exception:
+                pass
         if reset:
             print(
                 "reset: previous list forgotten — regenerating from the "
@@ -527,9 +535,16 @@ async def discover(
         # at recovering nodes — but they rank last, fill space under the
         # cap only, and age out after UNREACHABLE_MAX_MISSES.
         infos: dict[str, dict] = {}
+        # Filter gossip discoveries against the persisted eviction set:
+        # prevents a dead node from bouncing back via another live peer's
+        # stale gossip table on every refresh cycle.
+        pre_gossip = set()
         for info in node.table:
             if info.node_id == my_id:
                 continue
+            if info.node_id in evicted_ids:
+                continue
+            pre_gossip.add(info.node_id)
             infos[info.node_id] = {
                 "node_id": info.node_id,
                 "relay": info.relay,
@@ -633,6 +648,7 @@ async def discover(
         # (first run / reset / all-prev-dead fallback); otherwise it is an
         # ordinary member and ages out like any other node.
         kept: list[dict] = []
+        evicted_now: list[str] = []
         for node_id, entry in node_infos.items():
             if should_evict(entry, seed_ids=seed_ids):
                 if (entry.get("probe_fails") or 0) >= PROBE_MAX_FAILS:
@@ -640,8 +656,14 @@ async def discover(
                 else:
                     reason = f"{entry.get('misses')} unreachable runs"
                 print(f"  evicting       {node_id[:12]}... ({reason})", flush=True)
+                evicted_now.append(node_id)
                 continue
             kept.append(entry)
+        # Merge with the persisted set and cap at 100 to prevent
+        # unbounded growth across refresh cycles.
+        evicted_ids = (evicted_ids | set(evicted_now)) - seed_ids
+        if len(evicted_ids) > 100:
+            evicted_ids = set(sorted(evicted_ids)[-100:])
 
         # Rank: genesis anchor first, then verified nodes (fastest probe /
         # hello RTT first), then reachable-but-unverified, then hello-
@@ -761,6 +783,7 @@ async def discover(
             "max_nodes": max_nodes,
             "nodes": ordered[:max_nodes],
             "bastions": ordered_bastions[:max_nodes],
+            "evicted": sorted(evicted_ids),
         }
     finally:
         await node.close()

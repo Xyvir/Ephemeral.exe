@@ -1568,6 +1568,12 @@ async def _run_eviction_integration() -> bool:
             "genesis is exempt from eviction"
         assert by_id[recovering_id]["misses"] == 2, \
             f"previously-alive entry should carry 2 misses, got {by_id[recovering_id]}"
+        # The evicted set must be written to the output so the next run
+        # can filter gossip discoveries against it.
+        evicted_out = set(r1.get("evicted") or [])
+        assert never_id in evicted_out, "evicted node must appear in evicted set"
+        assert genesis_id not in evicted_out, "genesis must never be in evicted set"
+        assert isinstance(r1["evicted"], list), "evicted must be a sorted list"
         print("  run 1: never-verified evicted; recovering kept; genesis kept")
 
         # Persist run 1 the way main() does (discover() returns the list;
@@ -1580,6 +1586,9 @@ async def _run_eviction_integration() -> bool:
         by_id2 = {n["node_id"]: n for n in r2["nodes"]}
         assert by_id2[recovering_id]["misses"] == 3, \
             f"misses must accumulate across runs, got {by_id2[recovering_id]}"
+        # The evicted set persists across runs.
+        evicted_r2 = set(r2.get("evicted") or [])
+        assert never_id in evicted_r2, "evicted set must persist across runs"
         print("  run 2: counters persisted; recovering entry still kept")
 
         # Reset: forget the whole list and regenerate from the genesis
