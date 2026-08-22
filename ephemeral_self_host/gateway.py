@@ -168,12 +168,22 @@ class Gateway:
                 secret_key=kw["secret_key"],
                 relay=kw["relay"],
                 public_url=kw.get("public_url"),
+                list_images=kw.get("list_images"),
             )
         )
+        # Orchestration-only nodes must never touch Podman: ``warm_images``
+        # feeds hello frames and the /health status path, and its default
+        # falls back to ``podman images``. On hosts with no Podman socket
+        # (Railway) that subprocess blocks the event loop, so the whole app
+        # stops answering. A no-op lister makes warm_images return [] in O(1).
+        list_images = None
+        if not self.compute:
+            list_images = lambda: []  # noqa: E731 - no podman, nothing warm
         node = factory(
             secret_key=self.secret_key,
             relay=self.relay,
             public_url=self.public_url,
+            list_images=list_images,
         )
         local = CoreJobExecutor(
             allow_network=self.allow_network,

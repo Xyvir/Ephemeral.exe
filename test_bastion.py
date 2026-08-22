@@ -123,11 +123,15 @@ def test_orchestration_only_executor():
 class _FakeBastionNode:
     """Node-like object recording lifecycle calls for the Gateway."""
 
-    def __init__(self):
+    def __init__(self, list_images=None):
         self.executor = None
         self.started = False
         self.closed = False
         self.bootstrapped = []
+        self._list_images = list_images
+
+    def warm_images(self):
+        return self._list_images() if self._list_images else []
 
     async def start(self):
         self.started = True
@@ -154,8 +158,20 @@ class _FakeBastionNode:
 def test_gateway_orchestration_only_wiring():
     async def run():
         fake = _FakeBastionNode()
-        gw = Gateway(compute=False, node_factory=lambda **kw: fake)
+
+        def _factory(**kw):
+            fake._list_images = kw.get("list_images")
+            return fake
+
+        gw = Gateway(compute=False, node_factory=_factory)
         await gw.start()
+        # Orchestration-only must never invoke Podman: warm_images() feeds
+        # hello frames and the /health status path, and its default falls
+        # back to `podman images` — which blocks the event loop on hosts
+        # with no Podman socket (Railway). The Gateway must inject a no-op
+        # lister instead.
+        assert fake._list_images is not None
+        assert fake._list_images() == []
         assert fake.started
         from ephemeral_net.fanout import FanoutExecutor
         from ephemeral_net.offload import OffloadingExecutor
