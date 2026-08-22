@@ -262,8 +262,36 @@ async def run_code(
 
 @app.get("/health")
 async def health_check():
-    """Liveness for the swarm refresh: 200 when the bastion can orchestrate."""
-    gateway: Gateway = app.state.gateway
+    """Liveness probe — 200 whenever the process is up.
+
+    Railway uses this for its deploy healthcheck, so it must return 200
+    as soon as FastAPI is serving, even while the iroh node is still
+    joining the swarm.  Use ``/ready`` for "can orchestrate traffic".
+    """
+    gateway: Gateway = getattr(app.state, "gateway", None)
+    node_ok = gateway is not None and gateway.node is not None
+    status: dict = {
+        "status": "ok" if node_ok else "starting",
+        "bastion": True,
+        "compute": COMPUTE,
+        "public_url": PUBLIC_URL,
+        "cache_entries": len(cache),
+        "concurrent_jobs": concurrency.active,
+    }
+    if node_ok:
+        status.update(gateway.status())
+    # Always 200 — the process is alive and serving.
+    return status
+
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness probe — 200 only when the iroh node has joined the swarm.
+
+    Swarm peers and the refresh script should hit this endpoint to
+    distinguish "alive but not yet wired" from "ready to orchestrate".
+    """
+    gateway: Gateway = getattr(app.state, "gateway", None)
     if gateway is None or gateway.node is None:
         return JSONResponse(
             {"status": "starting", "bastion": True}, status_code=503
