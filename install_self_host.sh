@@ -36,6 +36,13 @@
 #                 always pulls the bash canary image as an end-to-end
 #                 podman check; "1" additionally hydrates the full language
 #                 map (~15-25 GB) so the node is warm from the first hello
+#   EPHEMERAL_AUTOUPDATE    "1" (default) | "0" — distributed + SYSTEMD=1
+#                 installs a user systemd timer that re-runs this installer
+#                 every 6 hours (matching the swarm-refresh cadence) from
+#                 the same source the node was installed from, using the
+#                 node's OWN config (EPHEMERAL_SECRET from the unit, so the
+#                 node_id never changes), restarting the backend only when
+#                 the code actually changed. "0" opts out.
 set -euo pipefail
 
 FLAVOR="${1:-local}"
@@ -256,6 +263,48 @@ ensure_venv() {
     fi
 }
 
+install_autoupdate() {
+    # Distributed + SYSTEMD=1: a user systemd timer re-runs update.sh every
+    # 6 hours (matching the swarm-refresh cadence) so the backend tracks the
+    # latest code — same source as the install, same node config (the
+    # EPHEMERAL_SECRET baked into the unit, so the node_id never changes).
+    # On by default; opt out with EPHEMERAL_AUTOUPDATE=0.
+    if [ "$FLAVOR" = "distributed" ] && [ "${EPHEMERAL_AUTOUPDATE:-1}" != "0" ]; then
+        if [ ! -x "$INSTALL_DIR/update.sh" ]; then
+            echo "WARNING: $INSTALL_DIR/update.sh missing — auto-update skipped" >&2
+            return 0
+        fi
+        UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+        {
+            echo "[Unit]"
+            echo "Description=Ephemeral self-host auto-update"
+            echo ""
+            echo "[Service]"
+            echo "Type=oneshot"
+            echo "Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            echo "ExecStart=$INSTALL_DIR/update.sh"
+        } > "$UNIT_DIR/ephemeral-self-host-update.service"
+        {
+            echo "[Unit]"
+            echo "Description=Ephemeral self-host auto-update (every 6 hours)"
+            echo ""
+            echo "[Timer]"
+            echo "OnCalendar=*-*-* 0/6:00:00"
+            echo "RandomizedDelaySec=300"
+            echo "Persistent=true"
+            echo ""
+            echo "[Install]"
+            echo "WantedBy=timers.target"
+        } > "$UNIT_DIR/ephemeral-self-host-update.timer"
+        systemctl --user daemon-reload
+        systemctl --user enable --now ephemeral-self-host-update.timer
+        echo "==> Auto-update enabled (every 6h): backend refreshes in place, node_id preserved"
+        echo "    Disable: systemctl --user disable --now ephemeral-self-host-update.timer"
+    elif [ "$FLAVOR" = "distributed" ]; then
+        echo "==> Auto-update disabled (EPHEMERAL_AUTOUPDATE=0)"
+    fi
+}
+
 require_podman
 configure_storage_root
 configure_podman_dns
@@ -314,6 +363,107 @@ else
   fi
 fi
 
+# --- Auto-update plumbing: version stamp + config + updater ---------------
+# update.sh is installed here (it is NOT shipped in the tarball) so the
+# 6-hourly systemd timer can refresh the backend. .install-version lets the
+# updater skip the reinstall when the code has not changed, and
+# .update.conf preserves the source selection + hydration choice across
+# reinstalls. Distributed flavor only.
+if [ "$FLAVOR" = "distributed" ]; then
+  if [ -f "$TMP/tarball.tar.gz" ]; then
+    VERSION="release@$(sha256sum "$TMP/tarball.tar.gz" | cut -d' ' -f1)"
+  elif [ -d "$TMP/repo/.git" ]; then
+    VERSION="main@$(git -C "$TMP/repo" rev-parse --short HEAD)"
+  else
+    VERSION="main@$(sha256sum "$TMP/main.tar.gz" | cut -d' ' -f1)"
+  fi
+  printf '%s\n' "$VERSION" > "$INSTALL_DIR/.install-version"
+  cat > "$INSTALL_DIR/.update.conf" <<EOF
+FROM_MAIN=${EPHEMERAL_FROM_MAIN:-0}
+PREHYDRATE=${EPHEMERAL_PREHYDRATE:-0}
+PORT=$PORT
+EOF
+  cat > "$INSTALL_DIR/update.sh" <<'UPDATER'
+#!/usr/bin/env bash
+# Auto-updater for the Ephemeral distributed gateway (systemd timer, every 6h).
+#
+# Re-runs install_self_host.sh from the same source the node was installed
+# from (release tarball or main branch) with the node's OWN config — the
+# EPHEMERAL_SECRET baked into the service unit, so the node_id never
+# changes — and restarts the service only when the code actually changed.
+# The installer (and thus this file) is regenerated on every update.
+set -euo pipefail
+
+REPO="Xyvir/Ephemeral.exe"
+INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+UNIT="$UNIT_DIR/ephemeral-self-host.service"
+CONF="$INSTALL_DIR/.update.conf"
+VERSION_FILE="$INSTALL_DIR/.install-version"
+
+[ -f "$UNIT" ] || { echo "update: no service unit — skipping"; exit 0; }
+[ -f "$VERSION_FILE" ] || { echo "update: no version stamp — skipping"; exit 0; }
+
+# Rebuild the node's own config from the installed unit (identity, storage
+# root, relay/seeds) and export it so the re-run installer sees it.
+set -a
+. <(grep '^Environment=' "$UNIT" | sed 's/^Environment=//') || true
+set +a
+
+FROM_MAIN=0
+PREHYDRATE=0
+if [ -f "$CONF" ]; then
+  . "$CONF"
+  export PORT
+  # Map the conf names onto the installer's env var names. Exported (not
+  # passed on the installer command line) so the env-assignment parse rule
+  # can't trip on an empty source flag.
+  export EPHEMERAL_PREHYDRATE="$PREHYDRATE"
+  if [ "$FROM_MAIN" = "1" ]; then export EPHEMERAL_FROM_MAIN=1; fi
+fi
+
+OLD_STAMP="$(cat "$VERSION_FILE")"
+ASSET="ephemeral-self-host-distributed.tar.gz"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# Cheap change probe — the same source selection as the installer.
+if [ "$FROM_MAIN" = "1" ]; then
+  if command -v git >/dev/null 2>&1; then
+    if ! git clone -q --depth 1 "https://github.com/$REPO.git" "$TMP/src" 2>/dev/null; then
+      echo "update: clone failed — retrying next cycle"; exit 0
+    fi
+    NEW_STAMP="main@$(git -C "$TMP/src" rev-parse --short HEAD)"
+  else
+    if ! curl --retry 3 --retry-delay 2 -fsSL -o "$TMP/main.tar.gz" \
+        "https://github.com/$REPO/archive/refs/heads/main.tar.gz"; then
+      echo "update: source fetch failed — retrying next cycle"; exit 0
+    fi
+    NEW_STAMP="main@$(sha256sum "$TMP/main.tar.gz" | cut -d' ' -f1)"
+  fi
+else
+  if ! curl --retry 3 --retry-delay 2 -fsSL -o "$TMP/rel.tar.gz" \
+      "https://github.com/$REPO/releases/latest/download/$ASSET"; then
+    echo "update: release fetch failed — retrying next cycle"; exit 0
+  fi
+  NEW_STAMP="release@$(sha256sum "$TMP/rel.tar.gz" | cut -d' ' -f1)"
+fi
+
+if [ "$OLD_STAMP" = "$NEW_STAMP" ]; then
+  echo "update: already current ($NEW_STAMP)"
+  exit 0
+fi
+
+echo "update: $OLD_STAMP -> $NEW_STAMP — reinstalling backend"
+export EPHEMERAL_PREHYDRATE="$PREHYDRATE" EPHEMERAL_AUTOUPDATE=1
+curl -fsSL "https://raw.githubusercontent.com/$REPO/main/install_self_host.sh" | \
+  bash -s -- distributed
+systemctl --user restart ephemeral-self-host
+echo "update: backend restarted ($NEW_STAMP)"
+UPDATER
+  chmod +x "$INSTALL_DIR/update.sh"
+fi
+
 # Virtualenv + dependencies.
 ensure_venv
 "$INSTALL_DIR/.venv/bin/pip" install -q --upgrade pip
@@ -358,6 +508,7 @@ if [ "${SYSTEMD:-0}" = "1" ]; then
   echo "==> Installed user service: $UNIT"
   systemctl --user enable --now ephemeral-self-host
   echo "    Follow:  journalctl --user -u ephemeral-self-host -f"
+  install_autoupdate
 else
   echo "==> Installed. Run it with:"
   echo "    $INSTALL_DIR/.venv/bin/uvicorn $APP:app --host 0.0.0.0 --port $PORT"
