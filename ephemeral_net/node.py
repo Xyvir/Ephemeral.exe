@@ -579,8 +579,16 @@ class Node:
 
     def _merge_hello(self, hello: dict) -> None:
         now = time.monotonic()
+        sender = hello.get("node_id")
         infos = []
         for entry in peer_entries_from_hello(hello):
+            # Only the SENDER was directly contacted (we dialed it or it
+            # dialed us) — it alone refreshes last_seen. The sender's
+            # gossiped peers were merely mentioned, so they get last_seen
+            # 0.0 ("never directly seen"): their TTL is NOT refreshed,
+            # letting the PeerTable prune dead peers within PEER_TTL_SECONDS
+            # instead of keeping them alive forever via gossip re-stamping.
+            direct = entry["node_id"] == sender
             infos.append(
                 PeerInfo(
                     node_id=entry["node_id"],
@@ -590,7 +598,7 @@ class Node:
                     active_jobs=int(entry.get("active_jobs") or 0),
                     max_jobs=entry.get("max_jobs"),
                     url=entry.get("url"),
-                    last_seen=now,
+                    last_seen=now if direct else 0.0,
                 )
             )
         self.table.merge(infos)

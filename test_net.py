@@ -829,6 +829,51 @@ def test_peer_table_ttl_eviction():
     print("PASS: peer table TTL eviction")
 
 
+def test_peer_table_gossip_does_not_refresh_ttl():
+    """Regression: a peer refreshed only via GOSSIP (last_seen=0.0) must not
+    have its TTL re-stamped, and must never downgrade a directly-seen peer.
+    Before the fix, every hello stamped last_seen=now on ALL entries, so a
+    dead peer circulated forever — each gossip receipt refreshed its TTL on
+    every node that heard about it, defeating prune()."""
+    import time
+
+    from ephemeral_net.discovery import PEER_TTL_SECONDS, PeerInfo, PeerTable
+
+    now = time.monotonic()
+    t = PeerTable()
+
+    # 1. A stale peer (last directly seen long ago) receives endless gossip
+    #    (last_seen=0.0) — its last_seen must NOT be refreshed, and it must
+    #    be pruned on the next merge.
+    stale = PeerInfo(
+        node_id="zombie",
+        relay="https://relay.example/",
+        last_seen=now - PEER_TTL_SECONDS - 60.0,
+    )
+    t.merge([stale])
+    gossip = PeerInfo(node_id="zombie", relay="https://relay.example/", last_seen=0.0)
+    t.merge([gossip])  # endless gossip re-mentions of the dead peer
+    assert "zombie" not in t.known_peer_ids(), \
+        "gossip must not refresh a stale peer's last_seen"
+
+    # 2. A directly-seen peer is never downgraded by gossip mentioning it
+    #    with last_seen=0.0.
+    live = PeerInfo(
+        node_id="live", relay="https://relay.example/", last_seen=now
+    )
+    t.merge([live])
+    t.merge([PeerInfo(node_id="live", relay="https://relay.example/", last_seen=0.0)])
+    assert "live" in t.known_peer_ids(), \
+        "gossip must not downgrade a directly-seen peer"
+
+    # 3. A never-directly-seen peer (last_seen=0.0) ages out once the
+    #    process has run past the TTL — even without any explicit clock.
+    t3 = PeerTable()
+    t3._peers["ghost"] = PeerInfo(node_id="ghost", last_seen=0.0)
+    assert t3.prune(ttl=-1.0) == 1, "0.0 last_seen must be prunable"
+    print("PASS: gossip never refreshes last_seen (dead peers age out)")
+
+
 def test_genesis_fallback_plan():
     """The previous list is the primary census source; the pinned genesis
     anchor is only consulted when the list is empty or every member is
@@ -1616,6 +1661,7 @@ def main():
     test_probe_helpers()
     test_job_messages()
     test_peer_table_ttl_eviction()
+    test_peer_table_gossip_does_not_refresh_ttl()
     test_genesis_fallback_plan()
     test_swarm_status_badge_payload()
     test_private_mode_helpers()

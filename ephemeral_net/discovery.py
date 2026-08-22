@@ -49,17 +49,21 @@ class PeerTable:
         self._peers: dict[str, PeerInfo] = {}
 
     def prune(self, ttl: float = PEER_TTL_SECONDS) -> int:
-        """Drop peers not seen (directly or via gossip) within ``ttl`` seconds.
+        """Drop peers not DIRECTLY seen within ``ttl`` seconds.
 
         Returns the number of entries evicted. Called on every merge and
         before every snapshot so stale entries both age out locally and
         stop propagating to other nodes through hello gossip.
+
+        ``last_seen`` is stamped only on direct contact (we dialed the
+        peer or it dialed us). A ``0.0`` last_seen means "never directly
+        seen — only gossiped", and ages out like anything else.
         """
         now = time.monotonic()
         dead = [
             nid
             for nid, info in self._peers.items()
-            if now - (info.last_seen or now) > ttl
+            if now - info.last_seen > ttl
         ]
         for nid in dead:
             del self._peers[nid]
@@ -85,7 +89,9 @@ class PeerTable:
                     active_jobs=info.active_jobs,
                     max_jobs=info.max_jobs,
                     url=info.url,
-                    last_seen=info.last_seen or now,
+                    # 0.0 = gossiped only (never directly seen) — kept so
+                    # the entry ages out unless a direct dial refreshes it.
+                    last_seen=info.last_seen,
                 )
                 new_count += 1
             else:
@@ -99,7 +105,12 @@ class PeerTable:
                     existing.url = info.url
                 existing.active_jobs = info.active_jobs
                 existing.max_jobs = info.max_jobs
-                existing.last_seen = info.last_seen or now
+                # Gossip (last_seen == 0.0) must NEVER refresh a peer's
+                # last_seen — otherwise a dead peer keeps circulating: every
+                # hello re-stamps its TTL on every node that hears about it.
+                # Only a direct contact may refresh (and never downgrade).
+                if info.last_seen:
+                    existing.last_seen = info.last_seen
         # Evict stale entries after the merge so a dead peer arriving via
         # gossip can't linger until the next merge call.
         self.prune()
