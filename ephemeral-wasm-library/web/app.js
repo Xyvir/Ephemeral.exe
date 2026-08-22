@@ -120,6 +120,7 @@ function initEditor() {
       spellcheck: false,
       onChange: () => {
         updateLangStatus();
+        syncCodeToUrl();
       },
       // Re-apply the fence-header/shebang highlights after every preview
       // render. OverType replaces the preview DOM wholesale on each
@@ -959,20 +960,63 @@ function decodeParam(s) {
   try { return decodeURIComponent(s); } catch (e) { return s; }
 }
 
-// Parse the location fragment for `seed` and `relay` params.
+// Parse the location fragment for `seed` and `relay` params,
+// and the query string for `code` (base64-encoded editor payload).
 function parseUrlBootstrap() {
-  const out = { seed: null, relay: null };
+  const out = { seed: null, relay: null, code: null };
   const raw = (location.hash || "").replace(/^#/, "");
-  if (!raw) return out;
-  for (const part of raw.split("&")) {
-    const eq = part.indexOf("=");
-    if (eq < 0) continue;
-    const k = decodeParam(part.slice(0, eq)).trim();
-    const v = decodeParam(part.slice(eq + 1)).trim();
-    if (k === "seed" && v) out.seed = v;
-    else if (k === "relay" && v) out.relay = v;
+  if (raw) {
+    for (const part of raw.split("&")) {
+      const eq = part.indexOf("=");
+      if (eq < 0) continue;
+      const k = decodeParam(part.slice(0, eq)).trim();
+      const v = decodeParam(part.slice(eq + 1)).trim();
+      if (k === "seed" && v) out.seed = v;
+      else if (k === "relay" && v) out.relay = v;
+    }
+  }
+  // ?code=<base64> in the query string pre-fills the editor.
+  const qs = location.search.replace(/^\?/, "");
+  if (qs) {
+    for (const part of qs.split("&")) {
+      const eq = part.indexOf("=");
+      if (eq < 0) continue;
+      const k = decodeParam(part.slice(0, eq)).trim();
+      const v = decodeParam(part.slice(eq + 1)).trim();
+      if (k === "code" && v) {
+        try {
+          // Decode base64 — use atob on the raw value (URL-safe base64
+          // normalized on the fly).  If the result contains control chars
+          // or is empty, ignore it.
+          const b64 = v.replace(/-/g, "+").replace(/_/g, "/");
+          const decoded = atob(b64);
+          if (decoded) out.code = decoded;
+        } catch (_) { /* ignore malformed base64 */ }
+      }
+    }
   }
   return out;
+}
+
+// Debounced URL sync: updates ?code=<base64> in the query string so the
+// current editor content is always shareable via the URL bar.
+let _urlSyncTimer = null;
+function syncCodeToUrl() {
+  if (_urlSyncTimer) clearTimeout(_urlSyncTimer);
+  _urlSyncTimer = setTimeout(() => {
+    _urlSyncTimer = null;
+    try {
+      const val = editor ? editor.getValue() : "";
+      const b64 = btoa(val)
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+      const qs = b64 ? `?code=${b64}` : "";
+      // Preserve hash (seed/relay) while updating the query string.
+      const url = qs + location.hash;
+      history.replaceState(null, "", url || location.pathname);
+    } catch (_) { /* quota or encoding error — skip */ }
+  }, 500);
 }
 
 // Convert a #seed value into a discovery candidate (dialCandidate shape).
@@ -1006,6 +1050,12 @@ async function start() {
   $("relay").value = localStorage.getItem("ephemeral.relay") || BOOTSTRAP.relay || "";
   setStatus("loading wasm…");
   await init();
+  // Pre-fill editor from ?code=<base64> query parameter.
+  if (url.code && editor) {
+    editor.setValue(url.code);
+    // Clear the query string so a refresh doesn't re-inject stale code.
+    history.replaceState(null, "", location.pathname + location.hash);
+  }
   const relayUrl = $("relay").value.trim() || BOOTSTRAP.relay || null;
   try {
     client = await EphemeralClient.create(null, relayUrl);
@@ -1272,6 +1322,12 @@ function renderArtifacts(artifacts, markdown) {
 }
 
 $("run").addEventListener("click", run);
+// Share URL: force-sync the current editor content into the URL and copy it.
+$("shareBtn").addEventListener("click", () => {
+  syncCodeToUrl();  // immediate, not debounced
+  const url = location.href;
+  copyText(url, $("shareBtn"), "Share URL");
+});
 // Ctrl+Enter (Cmd+Enter on Mac) anywhere on the page runs the current
 // document — same path as the button, re-entry-guarded inside run().
 document.addEventListener("keydown", (e) => {
