@@ -5,6 +5,7 @@ Notes for maintainers, operators, and advanced self-hosters that are too detaile
 ## Contents
 
 - [The default swarm — full mechanism](#the-default-swarm--full-mechanism)
+- [Bastion server (paper-light clients)](#bastion-server-paper-light-clients)
 - [Implementation history](#implementation-history)
 - [CI/CD Pipeline](#cicd-pipeline)
 - [Hosting the web demo on GitHub Pages](#hosting-the-web-demo-on-github-pages)
@@ -25,6 +26,25 @@ Every distributed binary joins the **same public swarm by default** — no confi
 - **Opt out** — set `EPHEMERAL_SEED_NODES` (comma-separated `node_id@relay`) or `EPHEMERAL_SEEDS` (EndpointTickets) explicitly to bootstrap a private cluster instead (private networks run their own bootstrap — the public list only serves the implicit public swarm); set `EPHEMERAL_SECRET` to pin an identity without touching disk.
 
 > **The browser client is iroh-native too.** The wasm SPA dials by the same stable node id + relay — no asymmetry between tiers. Tickets remain only as a fallback for legacy peers that don't report a relay.
+
+## Bastion server (paper-light clients)
+
+The bastion (`main_bastion.py`) is the realized **paper-thin client** tier — an HTTP(S) gateway that turns a curl-friendly `POST /ephemeral/api/v1/run` into a swarm job.
+
+- **Same routing as the SPA.** It joins as an iroh node and forwards each request through `FanoutExecutor → OffloadingExecutor → CoreJobExecutor`, so a request lands on a warm-image peer first, then the most idle, then the lowest RTT — the same preference sequence `pickTarget()` uses in the wasm SPA.
+- **Orchestration-first, compute-optional.** `EPHEMERAL_COMPUTE=0` (or a host with no Podman) keeps it a pure forwarder: the local executor becomes `OrchestrationOnlyExecutor`, which only rejects when no peer can run the job. With `EPHEMERAL_COMPUTE=1` (or Podman auto-detected) it is a full coderunner node and runs its own requests locally as a fallback.
+- **Guardrails.** `TokenBucketLimiter` (per client IP, `EPHEMERAL_RATE_LIMIT_PER_MIN`/`EPHEMERAL_RATE_LIMIT_BURST`) + `ConcurrencyLimiter` (`EPHEMERAL_MAX_CONCURRENT`), and a `ResultCache` keyed on the exact `document_blob` + timeout (`EPHEMERAL_CACHE_MAX`/`EPHEMERAL_CACHE_TTL`). Cache hits return `X-Ephemeral-Cache: hit`.
+- **Discovery.** The bastion advertises `EPHEMERAL_PUBLIC_URL` (falling back to Railway's `RAILWAY_PUBLIC_DOMAIN`) in its `hello` frames; `Node`/`PeerInfo`/`PeerTable` carry the `url` field, so the refresh Action learns it through the mesh.
+
+### `docs/swarm.json` bastions list
+
+The refresh (`scripts/update_swarm_json.py`) partitions discovered peers by the presence of a `url`: URL-bearing peers go into a separate **`bastions`** array instead of `nodes`, and are verified with an HTTP `GET {url}/health` (200 = `ok`) rather than the bash-echo compute probe — an orchestration-only bastion can therefore stay listed even though it could never execute a probe job. Each entry carries `url`, `node_id`, `relay`, `probe`/`probe_detail`/`probe_ms`, and the same `probe_fails`/`misses` staleness counters as nodes (failed health checks evict after 3 runs; unreachable ones age out after ~36 h, or ~12 h if never once seen healthy). Bastions are ranked by measured HTTP latency, so paper-light clients pick the fastest listed endpoint. The DNS TXT mirror and the README badge still count only compute `nodes`.
+
+### Railway
+
+`railway.json` builds `Dockerfile.bastion` (orchestration-only by default — no Podman socket needed) and sets `healthcheckPath: /health`, `restartPolicyType: ON_FAILURE` (max retries 5), and `generateDomain: true`. `generateDomain` makes Railway auto-generate the service's `.up.railway.app` domain, which it exposes as `RAILWAY_PUBLIC_DOMAIN`; `main_bastion.py` reads that automatically, so a deployed bastion self-registers in `swarm.json` on the next refresh with no manual URL step. There is deliberately **no** `sleepApplication` — an always-on bastion stays in the swarm (and stays listed as healthy) instead of sleeping to zero.
+
+> Railway has deprecated Config as Code (`railway.json`/`railway.toml`): new services cannot opt into it and it stops being read on 2026-12-01. The migration target is Infrastructure as Code — `.railway/railway.ts` in this repo, applied via `railway config plan` / `railway config apply`. The beta IaC DSL doesn't yet document fields for the Dockerfile path, restart policy, or the generated-domain toggle, so those three remain one-time dashboard settings (or are imported with `railway config pull --force`). A service can't be managed by both files at once: once the IaC service is applied, remove `railway.json`. Pin `EPHEMERAL_SECRET` (32-byte hex) so the bastion keeps one node id across redeploys instead of re-keying each deploy and churning its `swarm.json` entry.
 
 ## Implementation history
 

@@ -1,0 +1,49 @@
+# ephemeral-bastion — the paper-light HTTP gateway into the ephemeral swarm.
+#
+# A bastion joins the iroh swarm and forwards curl-friendly REST requests to
+# the best available compute node (warm image first, then idle, then RTT),
+# with per-IP rate limiting, a concurrent-job cap, and an exact-match result
+# cache. By default it is orchestration-only (no Podman required), which is
+# what makes it deployable on Railway with zero compute setup.
+#
+# Optional full-node mode: set EPHEMERAL_COMPUTE=1 and mount a host Podman
+# socket so the bastion can also run its own jobs locally as a fallback:
+#
+#   docker run -d -p 8787:8787 \
+#     -v /run/podman/podman.sock:/run/podman/podman.sock \
+#     -e EPHEMERAL_COMPUTE=1 \
+#     -e EPHEMERAL_PUBLIC_URL="https://bastion.example.com" \
+#     ephemeral-bastion:latest
+FROM python:3.12-slim
+
+# podman CLI + CA certs: only needed for EPHEMERAL_COMPUTE=1 (the bundled
+# client talks to a mounted socket); harmless in orchestration-only mode.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends podman ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python deps first (layer caching).
+COPY requirements-api.txt requirements-net.txt ./
+RUN pip install --no-cache-dir -r requirements-api.txt -r requirements-net.txt
+
+# App code. main_bastion.py imports main_api (wire contract), the gateway
+# pulls in ephemeral_net, and full-node mode needs ephemeral_core.
+COPY ephemeral_core/ ./ephemeral_core/
+COPY ephemeral_net/ ./ephemeral_net/
+COPY ephemeral_self_host/ ./ephemeral_self_host/
+COPY main_bastion.py main_api.py ./
+
+# Runtime configuration (overridable at deploy time). On Railway,
+# RAILWAY_PUBLIC_DOMAIN is read automatically for the advertised URL.
+ENV EPHEMERAL_RELAY=n0 \
+    EPHEMERAL_SEEDS="" \
+    EPHEMERAL_ALLOW_NETWORK=0 \
+    EPHEMERAL_SECRET="" \
+    EPHEMERAL_COMPUTE=0 \
+    EPHEMERAL_PORT=8787
+
+EXPOSE 8787
+
+CMD ["uvicorn", "main_bastion:app", "--host", "0.0.0.0", "--port", "8787"]

@@ -56,6 +56,9 @@ jobs:
     - name: Run self-host distributed gateway tests
       run: python test_self_host.py
 
+    - name: Run bastion server tests
+      run: python test_bastion.py
+
   # ── Windows EXE: local ────────────────────────────────────────
   build-exe:
     runs-on: windows-latest

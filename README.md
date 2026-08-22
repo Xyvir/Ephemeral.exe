@@ -531,7 +531,7 @@ Ephemeral expands into a multi-tier distributed architecture built on the [iroh]
 
 **Client/server thickness** (thinnest → thickest):
 
-1. **Paper-thin clients** — the future static-URL REST API (curl-friendly, no WASM required).
+1. **Paper-thin clients** — curl-friendly REST calls to a **bastion** (the static-URL HTTP gateway; see [Bastion server](#bastion-server-paper-light-clients)).
 2. **Thin clients** — the browser WASM SPA.
 3. **Thick clients** — the desktop tray apps.
 4. **Thick servers** — the self-hosted gateways.
@@ -634,6 +634,22 @@ docker build -f Dockerfile.api -t ephemeral-self-host .
 ```
 
 Mount the host Podman socket (`-v /run/podman/podman.sock:/run/podman/podman.sock`) so the node can execute jobs. Both images listen on port `8787`.
+
+### Bastion server (paper-light clients)
+
+The **bastion** is the public HTTP(S) face of the swarm for paper-light clients — anything that can `curl` but can't run the wasm SPA. It keeps the same `POST /ephemeral/api/v1/run` contract as `main_api.py`, but forwards each request to the best swarm node using the SPA's routing preference (warm image → idle → lowest RTT) instead of running locally-only:
+
+```bash
+uvicorn main_bastion:app --host 0.0.0.0 --port 8787
+docker build -f Dockerfile.bastion -t ephemeral-bastion .
+```
+
+A bastion is **orchestration-first**: it needs no Podman. When it can also run containers (`EPHEMERAL_COMPUTE=1` with a mounted Podman socket, or auto-detected on a host with Podman), it runs its own requests locally as a fallback when no warm peer is available — i.e. it is optionally a full coderunner node. It also guards the public network:
+
+* **Rate limiting** — per-client-IP token bucket (`EPHEMERAL_RATE_LIMIT_PER_MIN`, default 60) plus a concurrent-job cap (`EPHEMERAL_MAX_CONCURRENT`, default 8).
+* **Request cache** — identical requests (same base64 document + timeout) are served from an in-memory LRU (`EPHEMERAL_CACHE_MAX` / `EPHEMERAL_CACHE_TTL`), so repeated runs skip compute entirely.
+
+For discovery, a bastion advertises its public URL in its `hello` handshake (`EPHEMERAL_PUBLIC_URL`, or `RAILWAY_PUBLIC_DOMAIN` on Railway). The scheduled swarm refresh verifies each bastion with an HTTP `GET /health` and writes the reachable ones to the **`bastions`** array in `docs/swarm.json`, ranked by measured HTTP latency — so paper-light clients can look there for the fastest, closest bastion. Deploy it on Railway via the included `railway.json` — it sets `generateDomain: true` so Railway auto-generates the `.up.railway.app` domain (surfaced as `RAILWAY_PUBLIC_DOMAIN`), runs orchestration-only with no compute setup, and stays always-on (no sleep) so it remains listed in the swarm. The `.railway/railway.ts` file is the forward-looking Infrastructure-as-Code migration.
 
 ### Dropping into a Lithic-UK deployment
 

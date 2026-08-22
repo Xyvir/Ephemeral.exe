@@ -97,6 +97,7 @@ def hello_frame(
     relay: str | None = None,
     active_jobs: int = 0,
     max_jobs: int | None = None,
+    url: str | None = None,
 ) -> dict:
     """
     Build a ``hello`` frame.
@@ -109,6 +110,8 @@ def hello_frame(
     stable node id + relay (iroh-native identity) without tickets.
     ``active_jobs`` / ``max_jobs`` advertise the sender's current load
     so peers can route new jobs to idle nodes first.
+    ``url`` is the sender's public HTTP(S) endpoint (bastion servers),
+    carried so the swarm refresh can publish it for paper-light clients.
     """
     return {
         "type": "hello",
@@ -120,6 +123,7 @@ def hello_frame(
         "images": list(images or []),
         "active_jobs": int(active_jobs or 0),
         "max_jobs": max_jobs,
+        "url": url,
     }
 
 
@@ -134,6 +138,7 @@ def peer_entries_from_hello(frame: dict) -> list[dict]:
             "images": frame.get("images"),
             "active_jobs": frame.get("active_jobs", 0),
             "max_jobs": frame.get("max_jobs"),
+            "url": frame.get("url"),
         }
     )
     return [e for e in entries if e and e.get("node_id")]

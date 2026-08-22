@@ -726,6 +726,40 @@ def test_hello_frame():
     print("PASS: hello/error frame helpers (incl. relay + load)")
 
 
+def test_hello_frame_url_and_peer_table():
+    """Bastion public URLs flow through hello frames into the peer table."""
+    import time
+
+    from ephemeral_net.discovery import PeerInfo, PeerTable
+    from ephemeral_net.protocol import hello_frame, peer_entries_from_hello
+
+    f = hello_frame(
+        "node-a",
+        None,
+        [],
+        relay="https://relay.example.com.",
+        url="https://bastion.example.com",
+    )
+    assert f["url"] == "https://bastion.example.com"
+    entries = peer_entries_from_hello(f)
+    assert entries[0]["url"] == "https://bastion.example.com"
+
+    table = PeerTable()
+    table.merge(
+        [
+            PeerInfo(
+                node_id="b",
+                relay="https://relay.example.com.",
+                url="https://bastion.example.com",
+                last_seen=time.monotonic(),
+            )
+        ]
+    )
+    snap = table.snapshot()
+    assert snap[0]["url"] == "https://bastion.example.com"
+    print("PASS: bastion public URL flows through hello frames into the peer table")
+
+
 def test_job_messages():
     from ephemeral_net.jobs import (
         JobDoneEvent,

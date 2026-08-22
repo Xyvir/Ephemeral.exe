@@ -1,0 +1,14 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile.bastion"
+  },
+  "deploy": {
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 100,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 5,
+    "generateDomain": true
+  }
+}

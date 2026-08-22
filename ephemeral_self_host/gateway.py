@@ -45,6 +45,43 @@ class GatewayError(Exception):
     """A job could not be run (bad input or infrastructure failure)."""
 
 
+class OrchestrationOnlyExecutor:
+    """
+    JobExecutor for a bastion with no local compute (no Podman).
+
+    Delegates sanitization/image discovery to a ``CoreJobExecutor`` so the
+    offloading stack can still route jobs to warm peers, but never runs or
+    pulls locally. A job that cannot be offloaded yields a clear
+    ``JobErrorEvent`` instead of a confusing Podman failure.
+    """
+
+    def __init__(self, core) -> None:
+        self.core = core
+
+    def prepare(self, request):
+        """Sanitize + resolve required images (for offload routing)."""
+        return self.core.prepare(request)
+
+    def is_warm(self, image: str) -> bool:
+        """Nothing is warm locally — offload is the only execution path."""
+        return False
+
+    async def pull(self, image: str) -> None:
+        """Never pull images on an orchestration-only node."""
+        return None
+
+    async def __call__(self, request):
+        from ephemeral_net.jobs import JobErrorEvent
+
+        yield JobErrorEvent(
+            message=(
+                "this bastion is orchestration-only (no local runner) and "
+                "no peer had the required images warm"
+            ),
+            job_id=request.job_id,
+        )
+
+
 @dataclass
 class GatewayResult:
     """Outcome of a gateway run — mirrors ``RunResponse`` fields."""
@@ -75,6 +112,12 @@ class Gateway:
         private: when True and no explicit seeds are given, skip the
             public swarm list entirely — this node is its own seed for a
             private cluster (students reach it via a ``#seed=`` link).
+        public_url: this node's public HTTP(S) endpoint, advertised in
+            hello frames so the swarm refresh can list it for paper-light
+            clients (bastion servers).
+        compute: when False the node is orchestration-only — it forwards
+            jobs to the swarm but never runs them locally (no Podman
+            required). Defaults to True (a full compute node).
         node_factory: injectable for tests — callable returning a
             ``Node``-like object (``start``, ``close``, ``executor``,
             ``bootstrap``, ``bootstrap_nodes``, ``node_id``).
@@ -90,6 +133,8 @@ class Gateway:
         allow_network: bool = False,
         image_allowlist: Sequence[str] | None = None,
         private: bool = False,
+        public_url: str | None = None,
+        compute: bool = True,
         node_factory: Callable[..., object] | None = None,
     ) -> None:
         self.secret_key = secret_key
@@ -99,6 +144,8 @@ class Gateway:
         self.allow_network = allow_network
         self.image_allowlist = image_allowlist
         self.private = private
+        self.public_url = public_url
+        self.compute = compute
         self.node_factory = node_factory
         self._node = None
 
@@ -117,13 +164,23 @@ class Gateway:
         from ephemeral_net.sandbox import CoreJobExecutor
 
         factory = self.node_factory or (
-            lambda **kw: Node(secret_key=kw["secret_key"], relay=kw["relay"])
+            lambda **kw: Node(
+                secret_key=kw["secret_key"],
+                relay=kw["relay"],
+                public_url=kw.get("public_url"),
+            )
         )
-        node = factory(secret_key=self.secret_key, relay=self.relay)
+        node = factory(
+            secret_key=self.secret_key,
+            relay=self.relay,
+            public_url=self.public_url,
+        )
         local = CoreJobExecutor(
             allow_network=self.allow_network,
             image_allowlist=self.image_allowlist,
         )
+        if not self.compute:
+            local = OrchestrationOnlyExecutor(local)
         # Fan-out splits multi-run documents across idle warm peers; the
         # offloading stack underneath handles warmest-neighbor routing,
         # background pulls, and local execution.

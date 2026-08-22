@@ -94,6 +94,7 @@ class PeerConnection:
         self.node_id = node_id
         self.ticket: str | None = None      # dial-back ticket from hello (fallback)
         self.relay: str | None = None       # peer's relay URL — dial by id + relay
+        self.url: str | None = None         # peer's public HTTP(S) endpoint (bastions)
         self.hello: dict | None = None      # raw hello frame received
         self.images: set[str] | None = None  # warm images advertised in hello
         self.active_jobs: int = 0           # jobs the peer is currently running
@@ -124,6 +125,8 @@ class Node:
             offloading (defaults to ``ephemeral_core.list_local_images``).
         warm_cache_ttl: seconds to cache the warm-image list between
             hello frames.
+        public_url: this node's public HTTP(S) endpoint (bastion servers);
+            advertised in hello frames so the swarm refresh can publish it.
     """
 
     def __init__(
@@ -137,6 +140,7 @@ class Node:
         list_images=None,
         warm_cache_ttl: float = 30.0,
         max_jobs: int | None = None,
+        public_url: str | None = None,
     ) -> None:
         import iroh  # deferred so non-net code paths don't require the wheel
 
@@ -153,6 +157,7 @@ class Node:
         # only touched from the node's own event loop.
         self._max_jobs = max_jobs
         self._active_jobs = 0
+        self._public_url = public_url
 
         builder = iroh.EndpointBuilder()
         builder.alpns([ALPN])
@@ -227,6 +232,10 @@ class Node:
         if not value or value == "None":
             return None
         return value
+
+    def public_url(self) -> str | None:
+        """This node's advertised public HTTP(S) endpoint (bastions only)."""
+        return self._public_url
 
     def load_info(self) -> dict:
         """This node's current load, advertised in hello frames."""
@@ -313,6 +322,7 @@ class Node:
                     self.relay_url(),
                     self._active_jobs,
                     self._max_jobs,
+                    self._public_url,
                 ),
             )
             reply = await asyncio.wait_for(
@@ -329,6 +339,7 @@ class Node:
         peer.hello = reply
         peer.ticket = reply.get("ticket")
         peer.relay = reply.get("relay")
+        peer.url = reply.get("url")
         peer.images = set(reply.get("images") or [])
         peer.active_jobs = int(reply.get("active_jobs") or 0)
         peer.max_jobs = reply.get("max_jobs")
@@ -578,6 +589,7 @@ class Node:
                     images=set(entry.get("images") or []),
                     active_jobs=int(entry.get("active_jobs") or 0),
                     max_jobs=entry.get("max_jobs"),
+                    url=entry.get("url"),
                     last_seen=now,
                 )
             )
@@ -646,6 +658,7 @@ class Node:
         peer.hello = frame
         peer.ticket = frame.get("ticket")
         peer.relay = frame.get("relay")
+        peer.url = frame.get("url")
         peer.images = set(frame.get("images") or [])
         peer.active_jobs = int(frame.get("active_jobs") or 0)
         peer.max_jobs = frame.get("max_jobs")
@@ -662,6 +675,7 @@ class Node:
                     self.relay_url(),
                     self._active_jobs,
                     self._max_jobs,
+                    self._public_url,
                 ),
             )
         finally:

@@ -29,6 +29,7 @@ class PeerInfo:
     images: set[str] | None = None  # warm container images (for routing)
     active_jobs: int = 0           # jobs the peer is currently running
     max_jobs: int | None = None    # peer's concurrency ceiling (None = unknown)
+    url: str | None = None         # peer's public HTTP(S) endpoint (bastions)
     last_seen: float = 0.0         # time.monotonic() of last contact
 
 
@@ -83,6 +84,7 @@ class PeerTable:
                     images=set(info.images) if info.images else None,
                     active_jobs=info.active_jobs,
                     max_jobs=info.max_jobs,
+                    url=info.url,
                     last_seen=info.last_seen or now,
                 )
                 new_count += 1
@@ -93,6 +95,8 @@ class PeerTable:
                     existing.relay = info.relay
                 if info.images:
                     existing.images = set(info.images)
+                if info.url:
+                    existing.url = info.url
                 existing.active_jobs = info.active_jobs
                 existing.max_jobs = info.max_jobs
                 existing.last_seen = info.last_seen or now
@@ -112,6 +116,7 @@ class PeerTable:
                 "images": sorted(info.images or []),
                 "active_jobs": info.active_jobs,
                 "max_jobs": info.max_jobs,
+                "url": info.url,
             }
             for info in self._peers.values()
         ]

@@ -35,6 +35,13 @@ File shape:
          "probe": "ok", "probe_at": "…", "probe_detail": "…",
          "probe_fails": 0, "misses": 0},
         ...
+      ],
+      "bastions": [
+        {"node_id": "…", "relay": "…", "ticket": "…", "images": ["…"],
+         "url": "https://…",
+         "probe": "ok", "probe_at": "…", "probe_detail": "…",
+         "probe_ms": 123, "probe_fails": 0, "misses": 0},
+        ...
       ]
     }
 
@@ -305,6 +312,64 @@ def _existing_nodes(out_path: Path) -> dict[str, dict]:
     return nodes
 
 
+def _existing_bastions(out_path: Path) -> dict[str, dict]:
+    """
+    Previous bastion entries keyed by node id.
+
+    Carries the staleness bookkeeping (``probe_fails`` / ``misses``) and
+    the advertised public URL forward so bastions age out and re-rank
+    across runs. Missing/malformed file returns {}.
+    """
+    try:
+        data = json.loads(out_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    bastions: dict[str, dict] = {}
+    for entry in data.get("bastions") or []:
+        node_id = entry.get("node_id")
+        if not node_id or not entry.get("url"):
+            continue
+        bastions[node_id] = {
+            "node_id": node_id,
+            "relay": entry.get("relay"),
+            "ticket": entry.get("ticket"),
+            "images": entry.get("images") or [],
+            "url": entry.get("url"),
+            "probe_fails": entry.get("probe_fails") or 0,
+            "misses": entry.get("misses") or 0,
+            "seen_alive": bool(entry.get("seen_alive")),
+        }
+    return bastions
+
+
+def http_health_check(url: str, timeout: float = 10.0) -> dict:
+    """
+    GET ``{url}/health`` and report reachability + latency.
+
+    Returns ``{"ok", "reachable", "detail", "ms"}``. ``reachable``
+    distinguishes "answered but unhealthy" (HTTP non-2xx) from a transport
+    failure, so bookkeeping can record the right status.
+    """
+    started = time.monotonic()
+    endpoint = url.rstrip("/") + "/health"
+    try:
+        req = urllib.request.Request(
+            endpoint, headers={"Accept": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            status = getattr(res, "status", getattr(res, "code", 200))
+            ms = round((time.monotonic() - started) * 1000)
+            ok = 200 <= status < 300
+            return {"ok": ok, "reachable": True, "detail": f"HTTP {status}", "ms": ms}
+    except Exception as e:
+        return {
+            "ok": False,
+            "reachable": False,
+            "detail": f"{type(e).__name__}",
+            "ms": round((time.monotonic() - started) * 1000),
+        }
+
+
 async def discover(
     out_path: Path,
     max_nodes: int,
@@ -332,6 +397,7 @@ async def discover(
     await node.start()
     try:
         prev = {} if reset else _existing_nodes(out_path)
+        prev_bastions = {} if reset else _existing_bastions(out_path)
         if reset:
             print(
                 "reset: previous list forgotten — regenerating from the "
@@ -350,7 +416,7 @@ async def discover(
         #     is exempt from eviction for that run.
         targets: dict[str, tuple[str | None, str | None]] = {
             entry["node_id"]: (entry.get("relay"), entry.get("ticket"))
-            for entry in prev.values()
+            for entry in list(prev.values()) + list(prev_bastions.values())
         }
 
         sem = asyncio.Semaphore(probe_concurrency)
@@ -388,7 +454,9 @@ async def discover(
 
         # Phase 2 — genesis fallback (first run / reset / all-prev-dead).
         if genesis_anchor_required(
-            reset=reset, has_prev=bool(prev), prev_reached=len(reached)
+            reset=reset,
+            has_prev=bool(prev),
+            prev_reached=sum(1 for nid in prev if nid in reached),
         ):
             seed_ids = {nid for nid, _ in genesis}
             await asyncio.gather(
@@ -429,11 +497,21 @@ async def discover(
                 "relay": info.relay,
                 "ticket": info.ticket,
                 "images": sorted(info.images or []),
+                "url": info.url,
             }
         for entry in prev.values():
             nid = entry["node_id"]
             if nid in infos:
                 # Live hello data wins; carry the staleness bookkeeping over.
+                for key in ("probe_fails", "misses", "seen_alive"):
+                    if entry.get(key):
+                        infos[nid][key] = entry[key]
+            else:
+                infos[nid] = dict(entry)
+        for entry in prev_bastions.values():
+            nid = entry["node_id"]
+            if nid in infos:
+                # Live hello data wins for identity; carry staleness over.
                 for key in ("probe_fails", "misses", "seen_alive"):
                     if entry.get(key):
                         infos[nid][key] = entry[key]
@@ -453,6 +531,18 @@ async def discover(
 
         now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
+        # Partition into compute nodes and bastions (nodes advertising a
+        # public HTTP URL). Bastions are verified by an HTTP health check
+        # instead of a compute-job probe, and are published separately so
+        # paper-light clients can discover them without iroh.
+        node_infos: dict[str, dict] = {}
+        bastion_infos: dict[str, dict] = {}
+        for nid, entry in infos.items():
+            if entry.get("url"):
+                bastion_infos[nid] = entry
+            else:
+                node_infos[nid] = entry
+
         async def _probe_one(node_id: str, entry: dict) -> None:
             """Submit a real job to one reachable node and record the verdict."""
             result = await run_probe(
@@ -465,9 +555,9 @@ async def discover(
             entry["probe_detail"] = result["detail"]
             entry["probe_ms"] = result["ms"]
             # mark_probe returns a NEW entry carrying the counters — write it
-            # back into infos, or the bookkeeping is silently lost and stale
-            # nodes are never evicted.
-            infos[node_id] = mark_probe(
+            # back into node_infos, or the bookkeeping is silently lost and
+            # stale nodes are never evicted.
+            node_infos[node_id] = mark_probe(
                 entry,
                 prev.get(node_id),
                 status="ok" if result["ok"] else "failed",
@@ -479,19 +569,19 @@ async def discover(
             await asyncio.gather(
                 *(
                     _probe_one(nid, entry)
-                    for nid, entry in infos.items()
+                    for nid, entry in node_infos.items()
                     if nid in peers
                 )
             )
 
         # Nodes we could not dial: record the miss (and that we tried).
-        for node_id, entry in infos.items():
+        for node_id, entry in node_infos.items():
             if node_id in peers:
                 continue
             if not (entry.get("relay") or entry.get("ticket")):
                 entry["probe"] = "skipped"  # nothing to dial — leave untouched
                 continue
-            entry = infos[node_id] = mark_probe(
+            entry = node_infos[node_id] = mark_probe(
                 entry, prev.get(node_id), status="unreachable"
             )
             entry["probe"] = "unreachable"
@@ -505,7 +595,7 @@ async def discover(
         # (first run / reset / all-prev-dead fallback); otherwise it is an
         # ordinary member and ages out like any other node.
         kept: list[dict] = []
-        for node_id, entry in infos.items():
+        for node_id, entry in node_infos.items():
             if should_evict(entry, seed_ids=seed_ids):
                 if (entry.get("probe_fails") or 0) >= PROBE_MAX_FAILS:
                     reason = f"{entry.get('probe_fails')} failed probes"
@@ -524,7 +614,7 @@ async def discover(
         def rank_key(nid: str) -> tuple[int, float, str]:
             if nid in seed_ids:
                 return (0, 0.0, nid)
-            status = infos[nid].get("probe")
+            status = node_infos[nid].get("probe")
             rtt = reached.get(nid) if reached.get(nid) is not None else float("inf")
             if status == "ok":
                 return (1, rtt, nid)
@@ -542,16 +632,80 @@ async def discover(
             if rtt is not None:
                 n["rtt_ms"] = round(rtt * 1000)
 
-        if probe:
-            ok_n = sum(1 for n in infos.values() if n.get("probe") == "ok")
-            fail_n = sum(1 for n in infos.values() if n.get("probe") == "failed")
-            unreach_n = sum(1 for n in infos.values() if n.get("probe") == "unreachable")
+        # --- Bastions: HTTP health check instead of a compute-job probe ---
+        async def _health_one(node_id: str, entry: dict) -> None:
+            url = entry.get("url")
+            result = await asyncio.to_thread(http_health_check, url)
+            status = (
+                "ok"
+                if result["ok"]
+                else ("failed" if result["reachable"] else "unreachable")
+            )
+            entry["probe"] = status
+            entry["probe_at"] = now_iso
+            entry["probe_detail"] = result["detail"]
+            entry["probe_ms"] = result["ms"]
+            bastion_infos[node_id] = mark_probe(
+                entry, prev_bastions.get(node_id), status=status
+            )
+            tag = "bastion ok" if result["ok"] else "bastion DOWN"
             print(
-                f"probe: {ok_n} verified alive, {fail_n} reachable but not running "
-                f"jobs, {unreach_n} unreachable",
+                f"  {tag:14} {url} {result['detail']} ({result['ms']} ms)",
                 flush=True,
             )
-            if len(reached) and ok_n == 0:
+
+        if probe:
+            await asyncio.gather(
+                *(
+                    _health_one(nid, entry)
+                    for nid, entry in bastion_infos.items()
+                )
+            )
+        else:
+            for nid, entry in bastion_infos.items():
+                entry = bastion_infos[nid] = mark_probe(
+                    entry, prev_bastions.get(nid), status="reached"
+                )
+                entry["probe"] = "skipped"
+                entry["probe_at"] = now_iso
+
+        kept_bastions: list[dict] = []
+        for node_id, entry in bastion_infos.items():
+            if should_evict(entry):
+                if (entry.get("probe_fails") or 0) >= PROBE_MAX_FAILS:
+                    reason = f"{entry.get('probe_fails')} failed health checks"
+                else:
+                    reason = f"{entry.get('misses')} unreachable runs"
+                print(f"  evicting       {entry.get('url')} ({reason})", flush=True)
+                continue
+            kept_bastions.append(entry)
+
+        def bastion_rank_key(nid: str) -> tuple[int, float, str]:
+            status = bastion_infos[nid].get("probe")
+            ms = bastion_infos[nid].get("probe_ms")
+            if ms is None:
+                ms = reached.get(nid, 0.0) * 1000
+            if status == "ok":
+                return (0, ms, nid)
+            if status == "failed":
+                return (1, ms, nid)
+            return (2, 0.0, nid)
+
+        ordered_bastions = sorted(
+            kept_bastions, key=lambda b: bastion_rank_key(b["node_id"])
+        )
+
+        if probe:
+            ok_n = sum(1 for n in node_infos.values() if n.get("probe") == "ok")
+            fail_n = sum(1 for n in node_infos.values() if n.get("probe") == "failed")
+            unreach_n = sum(1 for n in node_infos.values() if n.get("probe") == "unreachable")
+            bastion_ok = sum(1 for b in bastion_infos.values() if b.get("probe") == "ok")
+            print(
+                f"probe: {ok_n} verified alive, {fail_n} reachable but not running "
+                f"jobs, {unreach_n} unreachable; bastions: {bastion_ok} healthy",
+                flush=True,
+            )
+            if len(reached) and ok_n == 0 and not bastion_infos:
                 print(
                     "WARNING: every reachable node failed the probe — the swarm may "
                     "be down, or the probe payload itself is broken",
@@ -559,7 +713,7 @@ async def discover(
                 )
         else:
             print(
-                f"dial: {len(reached)} reached, {len(infos) - len(reached)} unreachable",
+                f"dial: {len(reached)} reached, {len(node_infos) - len(reached)} unreachable",
                 flush=True,
             )
 
@@ -568,6 +722,7 @@ async def discover(
             "relay": DEFAULT_RELAY,
             "max_nodes": max_nodes,
             "nodes": ordered[:max_nodes],
+            "bastions": ordered_bastions[:max_nodes],
         }
     finally:
         await node.close()
@@ -626,7 +781,8 @@ async def main() -> None:
     tmp.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     tmp.replace(args.out)
     print(
-        f"swarm.json updated: {len(result['nodes'])} node(s) -> {args.out}",
+        f"swarm.json updated: {len(result['nodes'])} node(s), "
+        f"{len(result.get('bastions') or [])} bastion(s) -> {args.out}",
         flush=True,
     )
 
