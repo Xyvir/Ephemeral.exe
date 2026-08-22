@@ -606,7 +606,7 @@ Run an AppImage like any executable: `chmod +x ephemeral-distributed-x86_64.AppI
 
 ### Install the self-host server in one line
 
-Both self-host flavors install with a single curl (`install_self_host.sh` — installs into `~/ephemeral-self-host`, creates a venv, **installs and configures rootless Podman itself** (subuid/subgid ranges, linger, the user socket — sudo is used only for that; it verifies Podman end-to-end by pulling the bash canary image), and either prints the `uvicorn` run command or installs **and starts** a user systemd service with `SYSTEMD=1`):
+Both self-host flavors install with a single curl (`install_self_host.sh` — installs into `~/ephemeral-self-host`, creates a venv — **self-healing a missing `python3-venv` on minimal images** — **installs and configures rootless Podman itself** (subuid/subgid ranges, linger, the user socket — sudo is used only for that; it verifies Podman end-to-end by pulling the bash canary image), validates `EPHEMERAL_SECRET` before installing, and either prints the `uvicorn` run command or installs **and starts** a user systemd service with `SYSTEMD=1`):
 
 ```bash
 # Non-distributed REST API — local-only execution (the Lithic-UK build)

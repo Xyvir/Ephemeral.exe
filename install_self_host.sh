@@ -25,7 +25,9 @@
 #
 # Podman is part of the install: the script installs the binary if missing
 # (sudo), configures rootless storage (subuid/subgid ranges, linger, the
-# user socket), and can pre-hydrate the language image map.
+# user socket), and can pre-hydrate the language image map. It also
+# self-heals a missing python3-venv on minimal images and validates
+# EPHEMERAL_SECRET before installing.
 #   EPHEMERAL_STORAGE_ROOT  relocate rootless Podman's image cache to this
 #                 host path (e.g. a big attached block volume) — written to
 #                 ~/.config/containers/storage.conf before first use, and
@@ -96,6 +98,11 @@ configure_storage_root() {
     if [ -z "${EPHEMERAL_STORAGE_ROOT:-}" ]; then
         return 0
     fi
+    case "$EPHEMERAL_STORAGE_ROOT" in
+        /*) ;;
+        *)  echo "ERROR: EPHEMERAL_STORAGE_ROOT must be an absolute path (got '$EPHEMERAL_STORAGE_ROOT')." >&2
+            exit 1 ;;
+    esac
     if ! mkdir -p "$EPHEMERAL_STORAGE_ROOT" 2>/dev/null; then
         echo "ERROR: EPHEMERAL_STORAGE_ROOT ($EPHEMERAL_STORAGE_ROOT) is not writable." >&2
         echo "       Format and mount the block volume there first, e.g.:" >&2
@@ -204,10 +211,53 @@ prehydrate_images() {
     fi
 }
 
+ensure_venv() {
+    # A fresh minimal Ubuntu image ships python3 without ensurepip, so
+    # `python3 -m venv` fails outright. Detect that, self-heal by installing
+    # the distro's venv package (sudo), then retry; other venv failures still
+    # abort with the original error and instructions.
+    if [ -d "$INSTALL_DIR/.venv" ]; then
+        return 0
+    fi
+    if ! python3 -c "import ensurepip" >/dev/null 2>&1; then
+        echo "==> python3-venv missing — installing it (${SUDO:-root} required)..."
+        if [ -n "$SUDO" ] || [ "$(id -u)" -eq 0 ]; then
+            if command -v apt-get >/dev/null 2>&1; then
+                $SUDO apt-get update -qq || true
+                $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv python3-pip
+            elif command -v dnf >/dev/null 2>&1; then
+                $SUDO dnf install -y python3-virtualenv python3-pip 2>/dev/null || $SUDO dnf install -y python3-venv
+            elif command -v yum >/dev/null 2>&1; then
+                $SUDO yum install -y python3-virtualenv python3-pip
+            elif command -v zypper >/dev/null 2>&1; then
+                $SUDO zypper --non-interactive install python3-virtualenv python3-pip
+            elif command -v pacman >/dev/null 2>&1; then
+                $SUDO pacman -Sy --noconfirm python-virtualenv
+            elif command -v apk >/dev/null 2>&1; then
+                $SUDO apk add --no-cache py3-virtualenv
+            fi
+        fi
+    fi
+    if ! python3 -m venv "$INSTALL_DIR/.venv" 2>"$TMP/venv.err"; then
+        echo "Could not create a virtualenv. On Debian/Ubuntu, install python3-venv first:" >&2
+        echo "  sudo apt-get install -y python3-venv" >&2
+        cat "$TMP/venv.err" >&2
+        exit 1
+    fi
+}
+
 require_podman
 configure_storage_root
 configure_podman_dns
 setup_rootless_podman
+
+# Guardrail: a non-hex EPHEMERAL_SECRET crashes the gateway at import time
+# (bytes.fromhex at module load) — fail here with an actionable message.
+if [ -n "${EPHEMERAL_SECRET:-}" ] && ! printf '%s' "$EPHEMERAL_SECRET" | grep -Eq '^[0-9a-fA-F]{64}$'; then
+    echo "ERROR: EPHEMERAL_SECRET must be exactly 64 hex characters (32 bytes)." >&2
+    echo "       Generate one with:  openssl rand -hex 32" >&2
+    exit 1
+fi
 
 echo "==> Installing ephemeral-self-host ($FLAVOR) into $INSTALL_DIR"
 
@@ -255,14 +305,7 @@ else
 fi
 
 # Virtualenv + dependencies.
-if [ ! -d "$INSTALL_DIR/.venv" ]; then
-  if ! python3 -m venv "$INSTALL_DIR/.venv" 2>"$TMP/venv.err"; then
-    echo "Could not create a virtualenv. On Debian/Ubuntu, install python3-venv first:" >&2
-    echo "  sudo apt-get install -y python3-venv" >&2
-    cat "$TMP/venv.err" >&2
-    exit 1
-  fi
-fi
+ensure_venv
 "$INSTALL_DIR/.venv/bin/pip" install -q --upgrade pip
 "$INSTALL_DIR/.venv/bin/pip" install -q -r "$INSTALL_DIR/requirements-api.txt"
 if [ "$FLAVOR" = "distributed" ]; then
