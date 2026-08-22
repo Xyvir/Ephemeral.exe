@@ -42,13 +42,19 @@ File shape:
          "probe": "ok", "probe_at": "…", "probe_detail": "…",
          "probe_ms": 123, "probe_fails": 0, "misses": 0},
         ...
-      ]
+      ],
+      "evicted": {"<node_id>": 1787452800.0, ...}
     }
 
 ``node_id`` + ``relay`` are the stable, iroh-native dial target; ``ticket``
 is kept as a fallback for clients that still dial by EndpointTicket. The
 ``probe*``/``misses`` fields are diagnostic, written by this script, and
-ignored by all consumers.
+ignored by all consumers. ``evicted`` is a tombstone map of node ids that
+have aged out (``{node_id: epoch_seconds}``): gossip discoveries are
+filtered against it so a dead node can't bounce back via a live peer's
+stale gossip table. Tombstones expire after :data:`EVICT_TTL_SECONDS` so a
+recovered node can rejoin, and they persist across ``--reset`` (a reset is
+a fresh census of who is alive, not a pardon for dead nodes).
 
 Usage:
     python scripts/update_swarm_json.py [--out docs/swarm.json]
@@ -58,7 +64,8 @@ Usage:
 ``--reset`` forgets the entire previous list and regenerates a fresh
 census from the genesis anchor alone (and whatever it reveals via
 hello). Use it when the list has gone stale and you want a clean
-regeneration instead of the incremental merge.
+regeneration instead of the incremental merge. The eviction tombstone
+set is preserved across a reset.
 """
 from __future__ import annotations
 
@@ -102,6 +109,12 @@ DEFAULT_OUT = Path(__file__).resolve().parent.parent / "docs" / "swarm.json"
 GENESIS_DEFAULT: list[tuple[str, str]] = [
     ("ed7106bced606bede735b4c9b215052855f9747e8cb56629759ae672ce29b9c8", "https://euc1-1.relay.n0.iroh.link./"),
 ]
+
+# How long an evicted node stays tombstoned before gossip may rediscover
+# it (~7 days = ~28 refresh cycles). A node that RECOVERS must be able to
+# rejoin the list once its tombstone expires; a genuinely-dead one stays
+# filtered from gossip rediscovery meanwhile.
+EVICT_TTL_SECONDS = 7 * 24 * 3600
 
 # How long each dial attempt may take (matches Node._dial_timeout).
 DIAL_TIMEOUT = 20.0
@@ -317,6 +330,37 @@ def _existing_nodes(out_path: Path) -> dict[str, dict]:
     return nodes
 
 
+def _load_evicted(out_path: Path) -> dict[str, float]:
+    """
+    Previous eviction tombstones: ``{node_id: epoch_seconds}``.
+
+    Entries older than :data:`EVICT_TTL_SECONDS` are dropped so a node
+    that recovers can rejoin; the set is capped by the caller. Tolerates
+    the transitional plain-list format ``["<node_id>", ...]`` (treated as
+    evicted now). Missing/malformed file returns {}.
+    """
+    try:
+        data = json.loads(out_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    raw = data.get("evicted") or {}
+    now = time.time()
+    out: dict[str, float] = {}
+    if isinstance(raw, dict):
+        for nid, ts in raw.items():
+            try:
+                ts = float(ts)
+            except (TypeError, ValueError):
+                continue
+            if now - ts <= EVICT_TTL_SECONDS:
+                out[nid] = ts
+    elif isinstance(raw, list):
+        for nid in raw:
+            if isinstance(nid, str) and nid:
+                out[nid] = now
+    return out
+
+
 def _existing_bastions(out_path: Path) -> dict[str, dict]:
     """
     Previous bastion entries keyed by node id.
@@ -404,14 +448,9 @@ async def discover(
     try:
         prev = {} if reset else _existing_nodes(out_path)
         prev_bastions = {} if reset else _existing_bastions(out_path)
-        evicted_ids: set[str] = set()
-        if not reset:
-            try:
-                evicted_ids = set(
-                    json.loads(out_path.read_text(encoding="utf-8")).get("evicted") or []
-                )
-            except Exception:
-                pass
+        # Tombstones persist across resets (a reset is a fresh census of
+        # who is ALIVE, not a pardon for previously-evicted dead nodes).
+        evicted: dict[str, float] = _load_evicted(out_path)
         if reset:
             print(
                 "reset: previous list forgotten — regenerating from the "
@@ -542,7 +581,7 @@ async def discover(
         for info in node.table:
             if info.node_id == my_id:
                 continue
-            if info.node_id in evicted_ids:
+            if info.node_id in evicted:
                 continue
             pre_gossip.add(info.node_id)
             infos[info.node_id] = {
@@ -659,11 +698,14 @@ async def discover(
                 evicted_now.append(node_id)
                 continue
             kept.append(entry)
-        # Merge with the persisted set and cap at 100 to prevent
-        # unbounded growth across refresh cycles.
-        evicted_ids = (evicted_ids | set(evicted_now)) - seed_ids
-        if len(evicted_ids) > 100:
-            evicted_ids = set(sorted(evicted_ids)[-100:])
+        # Merge with the persisted tombstones (timestamped, TTL-expiring,
+        # genesis-exempt) and cap at 100 newest to prevent unbounded growth.
+        evict_ts = time.time()
+        for nid in evicted_now:
+            evicted[nid] = evict_ts
+        evicted = {nid: ts for nid, ts in evicted.items() if nid not in seed_ids}
+        if len(evicted) > 100:
+            evicted = dict(sorted(evicted.items(), key=lambda kv: kv[1])[-100:])
 
         # Rank: genesis anchor first, then verified nodes (fastest probe /
         # hello RTT first), then reachable-but-unverified, then hello-
@@ -783,7 +825,9 @@ async def discover(
             "max_nodes": max_nodes,
             "nodes": ordered[:max_nodes],
             "bastions": ordered_bastions[:max_nodes],
-            "evicted": sorted(evicted_ids),
+            "evicted": {
+                nid: ts for nid, ts in sorted(evicted.items(), key=lambda kv: kv[1])
+            },
         }
     finally:
         await node.close()

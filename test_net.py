@@ -835,43 +835,70 @@ def test_peer_table_gossip_does_not_refresh_ttl():
     Before the fix, every hello stamped last_seen=now on ALL entries, so a
     dead peer circulated forever — each gossip receipt refreshed its TTL on
     every node that heard about it, defeating prune()."""
-    import time
-
+    import ephemeral_net.discovery as discovery
     from ephemeral_net.discovery import PEER_TTL_SECONDS, PeerInfo, PeerTable
 
-    now = time.monotonic()
-    t = PeerTable()
+    # Deterministic clock. The table's TTL is compared against
+    # time.monotonic(), which starts near zero on a fresh CI runner — a
+    # never-directly-seen entry (last_seen=0.0) then survives every prune
+    # until the machine has been up past the TTL, making the test pass on
+    # long-lived dev boxes and fail in CI. Pin the clock instead.
+    clock = [1000.0]  # pretend the machine has been up well past the TTL
 
-    # 1. A stale peer (last directly seen long ago) receives endless gossip
-    #    (last_seen=0.0) — its last_seen must NOT be refreshed, and it must
-    #    be pruned on the next merge.
-    stale = PeerInfo(
-        node_id="zombie",
-        relay="https://relay.example/",
-        last_seen=now - PEER_TTL_SECONDS - 60.0,
-    )
-    t.merge([stale])
-    gossip = PeerInfo(node_id="zombie", relay="https://relay.example/", last_seen=0.0)
-    t.merge([gossip])  # endless gossip re-mentions of the dead peer
-    assert "zombie" not in t.known_peer_ids(), \
-        "gossip must not refresh a stale peer's last_seen"
+    def fake_monotonic() -> float:
+        return clock[0]
 
-    # 2. A directly-seen peer is never downgraded by gossip mentioning it
-    #    with last_seen=0.0.
-    live = PeerInfo(
-        node_id="live", relay="https://relay.example/", last_seen=now
-    )
-    t.merge([live])
-    t.merge([PeerInfo(node_id="live", relay="https://relay.example/", last_seen=0.0)])
-    assert "live" in t.known_peer_ids(), \
-        "gossip must not downgrade a directly-seen peer"
+    real_monotonic = discovery.time.monotonic
+    discovery.time.monotonic = fake_monotonic
+    try:
+        t = PeerTable()
 
-    # 3. A never-directly-seen peer (last_seen=0.0) ages out once the
-    #    process has run past the TTL — even without any explicit clock.
-    t3 = PeerTable()
-    t3._peers["ghost"] = PeerInfo(node_id="ghost", last_seen=0.0)
-    assert t3.prune(ttl=-1.0) == 1, "0.0 last_seen must be prunable"
-    print("PASS: gossip never refreshes last_seen (dead peers age out)")
+        # 1. A peer directly seen in the past, then quiet, receives endless
+        #    gossip (last_seen=0.0): its last_seen must NOT be refreshed,
+        #    and it must age out once the TTL passes.
+        t.merge(
+            [
+                PeerInfo(
+                    node_id="zombie",
+                    relay="https://relay.example/",
+                    last_seen=clock[0] - 100.0,
+                )
+            ]
+        )
+        assert "zombie" in t.known_peer_ids()
+
+        clock[0] += PEER_TTL_SECONDS + 60.0  # sit idle past the TTL
+        t.merge(
+            [
+                PeerInfo(
+                    node_id="zombie", relay="https://relay.example/", last_seen=0.0
+                )
+            ]
+        )  # endless gossip re-mentions of the dead peer
+        assert "zombie" not in t.known_peer_ids(), \
+            "gossip must not refresh a stale peer's last_seen"
+
+        # 2. A directly-seen peer is never downgraded by gossip mentioning it
+        #    with last_seen=0.0.
+        t.merge(
+            [
+                PeerInfo(
+                    node_id="live", relay="https://relay.example/",
+                    last_seen=clock[0],
+                )
+            ]
+        )
+        t.merge([PeerInfo(node_id="live", relay="https://relay.example/", last_seen=0.0)])
+        assert "live" in t.known_peer_ids(), \
+            "gossip must not downgrade a directly-seen peer"
+
+        # 3. A never-directly-seen peer (last_seen=0.0) is prunable.
+        t3 = PeerTable()
+        t3._peers["ghost"] = PeerInfo(node_id="ghost", last_seen=0.0)
+        assert t3.prune(ttl=-1.0) == 1, "0.0 last_seen must be prunable"
+        print("PASS: gossip never refreshes last_seen (dead peers age out)")
+    finally:
+        discovery.time.monotonic = real_monotonic
 
 
 def test_genesis_fallback_plan():
@@ -908,6 +935,47 @@ def test_genesis_fallback_plan():
     assert should_evict(entry, seed_ids={genesis[0][0]}) is False, \
         "genesis is exempt only while it is the active anchor"
     print("PASS: genesis fallback plan (prev-list first, anchor only as fallback)")
+
+
+def test_evicted_tombstones_ttl():
+    """Eviction tombstones expire so a recovered node can rejoin, and the
+    loader tolerates the transitional plain-list format."""
+    import json
+    import tempfile
+    import time
+    from pathlib import Path
+
+    import scripts.update_swarm_json as upd
+
+    now = time.time()
+    with tempfile.TemporaryDirectory(prefix="ephemeral-evict-ttl-") as d:
+        out = Path(d) / "swarm.json"
+
+        # Fresh tombstone kept; expired one dropped.
+        out.write_text(
+            json.dumps(
+                {
+                    "evicted": {
+                        "a" * 64: now - 60.0,                            # fresh
+                        "b" * 64: now - upd.EVICT_TTL_SECONDS - 10.0,   # expired
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        loaded = upd._load_evicted(out)
+        assert "a" * 64 in loaded and "b" * 64 not in loaded, \
+            "expired tombstones must be dropped so recovered nodes can rejoin"
+
+        # Transitional plain-list format is tolerated (evicted as of now).
+        out.write_text(json.dumps({"evicted": ["c" * 64]}), encoding="utf-8")
+        loaded = upd._load_evicted(out)
+        assert "c" * 64 in loaded, "plain-list format must be accepted"
+
+        # Malformed file yields an empty set.
+        out.write_text("{not json", encoding="utf-8")
+        assert upd._load_evicted(out) == {}
+        print("PASS: evicted tombstones TTL-expire and tolerate legacy format")
 
 
 def test_swarm_status_badge_payload():
@@ -1615,10 +1683,13 @@ async def _run_eviction_integration() -> bool:
             f"previously-alive entry should carry 2 misses, got {by_id[recovering_id]}"
         # The evicted set must be written to the output so the next run
         # can filter gossip discoveries against it.
-        evicted_out = set(r1.get("evicted") or [])
+        evicted_out = set(r1.get("evicted") or {})
         assert never_id in evicted_out, "evicted node must appear in evicted set"
         assert genesis_id not in evicted_out, "genesis must never be in evicted set"
-        assert isinstance(r1["evicted"], list), "evicted must be a sorted list"
+        assert isinstance(r1["evicted"], dict), "evicted must be a timestamped map"
+        assert all(
+            isinstance(ts, (int, float)) for ts in r1["evicted"].values()
+        ), "evicted timestamps must be numeric"
         print("  run 1: never-verified evicted; recovering kept; genesis kept")
 
         # Persist run 1 the way main() does (discover() returns the list;
@@ -1632,7 +1703,7 @@ async def _run_eviction_integration() -> bool:
         assert by_id2[recovering_id]["misses"] == 3, \
             f"misses must accumulate across runs, got {by_id2[recovering_id]}"
         # The evicted set persists across runs.
-        evicted_r2 = set(r2.get("evicted") or [])
+        evicted_r2 = set(r2.get("evicted") or {})
         assert never_id in evicted_r2, "evicted set must persist across runs"
         print("  run 2: counters persisted; recovering entry still kept")
 
@@ -1663,6 +1734,7 @@ def main():
     test_peer_table_ttl_eviction()
     test_peer_table_gossip_does_not_refresh_ttl()
     test_genesis_fallback_plan()
+    test_evicted_tombstones_ttl()
     test_swarm_status_badge_payload()
     test_private_mode_helpers()
     test_sanitize_strips_unsafe_and_overrides()
