@@ -236,10 +236,10 @@ jobs:
         # EPHEMERAL_FROM_MAIN=1 makes the installer test deterministic against
         # the current branch (the released tarball is only rebuilt on release).
         export INSTALL_DIR="$HOME/.ephemeral-smoke-local"
-        curl -fsSL https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/install_self_host.sh | EPHEMERAL_FROM_MAIN=1 bash -s -- local
+        curl -fsSL https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/install_self_host.sh | EPHEMERAL_FROM_MAIN=1 EPHEMERAL_PREHYDRATE=0 bash -s -- local
         (cd "$INSTALL_DIR" && .venv/bin/python -c "from main_api import app; print('local API imports OK')")
         export INSTALL_DIR="$HOME/.ephemeral-smoke-dist"
-        curl -fsSL https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/install_self_host.sh | EPHEMERAL_FROM_MAIN=1 bash -s -- distributed
+        curl -fsSL https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/install_self_host.sh | EPHEMERAL_FROM_MAIN=1 EPHEMERAL_PREHYDRATE=0 bash -s -- distributed
         (cd "$INSTALL_DIR" && .venv/bin/python -c "from main_distributed import app; print('distributed gateway imports OK')")
         # Verify the tarballs that releases/installer users actually receive are
         # complete (main_distributed imports main_api -> ephemeral_core, and the

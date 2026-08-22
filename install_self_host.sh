@@ -12,7 +12,8 @@
 #   PORT          uvicorn port (default: 8787 — Lithic-UK's Caddyfile
 #                 proxies /ephemeral/api/v1/* to this port, so the REST
 #                 API drops straight into the existing sidecar slot)
-#   SYSTEMD=1     install a user systemd unit instead of printing the run command
+#   SYSTEMD=1     install a user systemd unit AND start it, instead of
+#                 printing the run command
 #   EPHEMERAL_FROM_MAIN=1
 #                 skip the released tarball and install from the main branch
 #                 (used by CI to test the installer deterministically)
@@ -21,6 +22,18 @@
 #   EPHEMERAL_PRIVATE=1
 #                 skip the public swarm list — run a private classroom node
 #                 (distributed flavor only; prints a student-ready #seed= URL)
+#
+# Podman is part of the install: the script installs the binary if missing
+# (sudo), configures rootless storage (subuid/subgid ranges, linger, the
+# user socket), and can pre-hydrate the language image map.
+#   EPHEMERAL_STORAGE_ROOT  relocate rootless Podman's image cache to this
+#                 host path (e.g. a big attached block volume) — written to
+#                 ~/.config/containers/storage.conf before first use, and
+#                 passed to the service as the runtime's space-check root
+#   EPHEMERAL_PREHYDRATE    "1" | "0" (default "0" — off). The installer
+#                 always pulls the bash canary image as an end-to-end
+#                 podman check; "1" additionally hydrates the full language
+#                 map (~15-25 GB) so the node is warm from the first hello
 set -euo pipefail
 
 FLAVOR="${1:-local}"
@@ -34,6 +47,152 @@ INSTALL_DIR="${INSTALL_DIR:-$HOME/ephemeral-self-host}"
 # (handle /ephemeral/api/v1/* { reverse_proxy 127.0.0.1:8787 }).
 PORT="${PORT:-8787}"
 REPO="Xyvir/Ephemeral.exe"
+
+# --- Podman (rootless) — required for job execution -----------------------
+# The one-line installer owns the whole Podman story: installs the binary if
+# missing (sudo), wires up rootless storage (subuid/subgid ranges, linger,
+# the user socket), and can point the image cache at a big attached volume.
+
+SUDO=""
+[ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1 && SUDO="sudo"
+
+require_podman() {
+    if command -v podman >/dev/null 2>&1; then
+        echo "==> podman $(podman --version | awk '{print $NF}') detected"
+        return 0
+    fi
+    echo "==> podman not found — installing it (${SUDO:-root} required)..."
+    if [ -n "$SUDO" ] || [ "$(id -u)" -eq 0 ]; then
+        if command -v apt-get >/dev/null 2>&1; then
+            $SUDO apt-get update -qq || true
+            $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq podman
+        elif command -v dnf >/dev/null 2>&1; then
+            $SUDO dnf install -y podman
+        elif command -v yum >/dev/null 2>&1; then
+            $SUDO yum install -y podman
+        elif command -v zypper >/dev/null 2>&1; then
+            $SUDO zypper --non-interactive install podman
+        elif command -v pacman >/dev/null 2>&1; then
+            $SUDO pacman -Sy --noconfirm podman
+        elif command -v apk >/dev/null 2>&1; then
+            $SUDO apk add --no-cache podman
+        else
+            echo "    ! no supported package manager found" >&2
+        fi
+    fi
+    command -v podman >/dev/null 2>&1 || {
+        echo "ERROR: podman is required to execute code but could not be installed." >&2
+        echo "       Install it manually (e.g. 'sudo apt-get install -y podman') and re-run." >&2
+        exit 1
+    }
+}
+
+configure_storage_root() {
+    # EPHEMERAL_STORAGE_ROOT moves the image cache off the boot volume — e.g.
+    # onto a big attached block device. Written BEFORE the first podman run
+    # so the storage graph is created there from the start.
+    if [ -z "${EPHEMERAL_STORAGE_ROOT:-}" ]; then
+        return 0
+    fi
+    mkdir -p "$EPHEMERAL_STORAGE_ROOT"
+    { [ -n "$SUDO" ] && $SUDO chown -R "$(id -u)":"$(id -g)" "$EPHEMERAL_STORAGE_ROOT"; } 2>/dev/null || true
+    mkdir -p "$HOME/.config/containers"
+    cat > "$HOME/.config/containers/storage.conf" <<EOF
+[storage]
+driver = "overlay"
+graphroot = "$EPHEMERAL_STORAGE_ROOT"
+EOF
+    echo "==> Podman image cache -> $EPHEMERAL_STORAGE_ROOT"
+}
+
+configure_podman_dns() {
+    # Rootless systemd-resolved loopback (127.0.0.53) breaks container DNS on
+    # many Ubuntu hosts — pin public resolvers (mirrors install.sh).
+    mkdir -p "$HOME/.config/containers"
+    if [ ! -f "$HOME/.config/containers/containers.conf" ]; then
+        cat > "$HOME/.config/containers/containers.conf" <<'EOF'
+[containers]
+dns_servers = [
+  "8.8.8.8",
+  "1.1.1.1"
+]
+EOF
+    fi
+}
+
+setup_rootless_podman() {
+    # Rootful (running as root) needs none of this.
+    [ "$(id -u)" -eq 0 ] && return 0
+
+    MY_UID=$(id -u)
+    # Over SSH the XDG runtime dir is often missing — create it (sudo) and
+    # export it so the user systemd manager and rootless podman can start.
+    if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+        export XDG_RUNTIME_DIR="/run/user/$MY_UID"
+    fi
+    if [ ! -d "$XDG_RUNTIME_DIR" ] && [ -n "$SUDO" ]; then
+        $SUDO mkdir -p "$XDG_RUNTIME_DIR"
+        $SUDO chown "$MY_UID":"$(id -g)" "$XDG_RUNTIME_DIR"
+        $SUDO chmod 700 "$XDG_RUNTIME_DIR"
+    fi
+
+    if [ -n "$SUDO" ]; then
+        # One dedicated pool of sub-UIDs/sub-GIDs for rootless containers
+        # (the same range install.sh uses for its service user).
+        if ! grep -q "^$USER:" /etc/subuid 2>/dev/null; then
+            $SUDO usermod --add-subuids 1000000-1065535 --add-subgids 1000000-1065535 "$USER" \
+                || echo "    ! could not add subuid/subgid ranges — rootless podman will fail" >&2
+        fi
+        # Survive logout: keep the user systemd manager + socket alive.
+        $SUDO loginctl enable-linger "$USER" 2>/dev/null || true
+    fi
+    # The engine shells out to the podman CLI; the user socket keeps the
+    # rootless service addressable (and is what `systemctl --user` units use).
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl --user enable --now podman.socket 2>/dev/null || true
+    fi
+    # Initialize the (possibly redirected) storage graph once.
+    podman system migrate >/dev/null 2>&1 || podman info >/dev/null 2>&1 \
+        || echo "    ! podman self-check failed — inspect with 'podman info'" >&2
+    echo "==> rootless Podman configured"
+}
+
+prehydrate_images() {
+    # End-to-end podman check: pull the bash canary image. If the rootless
+    # stack works (storage graph, DNS, subuids), this pull succeeds — the
+    # same one-shot verification install.sh performs. Best-effort, never fatal.
+    if podman pull docker.io/library/alpine:latest >/dev/null 2>&1; then
+        echo "==> podman end-to-end OK — bash image warm"
+    else
+        echo "    ! could not pull the bash image — inspect 'podman info' (and containers.conf DNS)" >&2
+    fi
+
+    # Full language-map hydration is opt-in (EPHEMERAL_PREHYDRATE=1): it pulls
+    # ~15-25 GB and can take a while, so it is OFF by default. "1" turns a
+    # thick node into a super-seed — every image the allowlist may request,
+    # warm from the first hello frame.
+    if [ "${EPHEMERAL_PREHYDRATE:-0}" != "1" ]; then
+        return 0
+    fi
+    echo "==> Pre-hydrating every language-map image (set EPHEMERAL_PREHYDRATE=0 to skip)..."
+    # hydrate_images.py isn't shipped in the self-host tarball — fetch the
+    # canonical copy from the repo (pulls mapped_images(), skips cached
+    # images, retries with backoff, never aborts on a single image).
+    if curl --retry 3 --retry-delay 2 -fsSL \
+        "https://raw.githubusercontent.com/$REPO/main/scripts/hydrate_images.py" \
+        -o "$INSTALL_DIR/.hydrate_images.py"; then
+        PYTHONPATH="$INSTALL_DIR" "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/.hydrate_images.py" \
+            || echo "    ! pre-hydration finished with failures (see above)" >&2
+        rm -f "$INSTALL_DIR/.hydrate_images.py"
+    else
+        echo "    ! could not fetch hydrate_images.py — images will pull on demand" >&2
+    fi
+}
+
+require_podman
+configure_storage_root
+configure_podman_dns
+setup_rootless_podman
 
 echo "==> Installing ephemeral-self-host ($FLAVOR) into $INSTALL_DIR"
 
@@ -98,6 +257,10 @@ fi
 # Systemd unit (optional) or a plain run command.
 APP="main_api"
 [ "$FLAVOR" = "distributed" ] && APP="main_distributed"
+# Verify podman end-to-end (bash canary pull); full-map hydration is opt-in
+# via EPHEMERAL_PREHYDRATE=1 and runs here too, before the service starts.
+prehydrate_images
+
 if [ "${SYSTEMD:-0}" = "1" ]; then
   UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
   mkdir -p "$UNIT_DIR"
@@ -117,6 +280,7 @@ if [ "${SYSTEMD:-0}" = "1" ]; then
       [ -n "${EPHEMERAL_ALLOW_NETWORK:-}" ] && echo "Environment=EPHEMERAL_ALLOW_NETWORK=$EPHEMERAL_ALLOW_NETWORK"
       [ -n "${EPHEMERAL_PRIVATE:-}" ]      && echo "Environment=EPHEMERAL_PRIVATE=$EPHEMERAL_PRIVATE"
     fi
+    [ -n "${EPHEMERAL_STORAGE_ROOT:-}" ]  && echo "Environment=EPHEMERAL_STORAGE_ROOT=$EPHEMERAL_STORAGE_ROOT"
     echo "Restart=on-failure"
     echo ""
     echo "[Install]"
@@ -124,7 +288,7 @@ if [ "${SYSTEMD:-0}" = "1" ]; then
   } > "$UNIT"
   systemctl --user daemon-reload
   echo "==> Installed user service: $UNIT"
-  echo "    Start:   systemctl --user enable --now ephemeral-self-host"
+  systemctl --user enable --now ephemeral-self-host
   echo "    Follow:  journalctl --user -u ephemeral-self-host -f"
 else
   echo "==> Installed. Run it with:"

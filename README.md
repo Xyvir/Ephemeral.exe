@@ -606,7 +606,7 @@ Run an AppImage like any executable: `chmod +x ephemeral-distributed-x86_64.AppI
 
 ### Install the self-host server in one line
 
-Both self-host flavors install with a single curl (`install_self_host.sh` — installs into `~/ephemeral-self-host`, creates a venv, and either prints the `uvicorn` run command or installs a user systemd service with `SYSTEMD=1`):
+Both self-host flavors install with a single curl (`install_self_host.sh` — installs into `~/ephemeral-self-host`, creates a venv, **installs and configures rootless Podman itself** (subuid/subgid ranges, linger, the user socket — sudo is used only for that; it verifies Podman end-to-end by pulling the bash canary image), and either prints the `uvicorn` run command or installs **and starts** a user systemd service with `SYSTEMD=1`):
 
 ```bash
 # Non-distributed REST API — local-only execution (the Lithic-UK build)
@@ -616,12 +616,12 @@ curl -fsSL https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/install_se
 curl -fsSL https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/install_self_host.sh | bash -s -- distributed
 ```
 
-Overrides: `INSTALL_DIR` (target directory), `PORT` (default **8787** — the Lithic-UK sidecar slot; see below), and for the distributed flavor `EPHEMERAL_RELAY` / `EPHEMERAL_SEEDS` / `EPHEMERAL_SECRET` / `EPHEMERAL_ALLOW_NETWORK`. Example: `curl -fsSL .../install_self_host.sh | EPHEMERAL_SEEDS="..." SYSTEMD=1 bash -s -- distributed`.
+Overrides: `INSTALL_DIR` (target directory), `PORT` (default **8787** — the Lithic-UK sidecar slot; see below), `EPHEMERAL_STORAGE_ROOT` (relocate Podman's image cache to a path on a big attached volume — written to `~/.config/containers/storage.conf` before first use, ideal for block-volume-backed VPS nodes), `EPHEMERAL_PREHYDRATE=1` (additionally pull the full ~15-25 GB language image map so the node is warm immediately; off by default — only the bash canary is pulled as the Podman end-to-end check), and for the distributed flavor `EPHEMERAL_RELAY` / `EPHEMERAL_SEEDS` / `EPHEMERAL_SECRET` / `EPHEMERAL_ALLOW_NETWORK`. Example: `curl -fsSL .../install_self_host.sh | EPHEMERAL_SECRET="..." EPHEMERAL_STORAGE_ROOT=/mnt/ephemeral SYSTEMD=1 bash -s -- distributed` (or add `EPHEMERAL_PREHYDRATE=1` to pre-pull every language).
 
 ### Two installers, two slots
 
 * **`install.sh`** — root, one-shot sidecar deployer (systemd service + rootless Podman, bound to `127.0.0.1:8787`). This is what Lithic-UK's `ENABLE_EPHEMERAL=true` flag invokes.
-* **`install_self_host.sh`** — no root required; user-space install to `~/ephemeral-self-host`, both local and distributed flavors, optional `SYSTEMD=1` user service.
+* **`install_self_host.sh`** — one-line, user-space install to `~/ephemeral-self-host`, both local and distributed flavors. Owns the whole Podman story (installs the binary if missing, configures rootless storage, optional `EPHEMERAL_STORAGE_ROOT` relocation, bash-canary end-to-end check) and auto-starts a user systemd service with `SYSTEMD=1`.
 
 ### Docker
 
