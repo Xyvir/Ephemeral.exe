@@ -20,6 +20,12 @@ let peers = new Map();
 // private swarm on this hosted site without editing config.js.
 const urlBootstrap = { seed: null, relay: null };
 
+// "Good neighbor" metric: a public node that is alive (has a measured
+// RTT) and advertises at least this many warm container images.
+// Used as a quick swarm-health shorthand in the status pill tooltip.
+const GOOD_NEIGHBOR_THRESHOLD = 5;
+let goodNeighborCount = 0;
+
 // Artifacts streamed by the current run's node (one "artifact" frame per
 // file, before job_done). Cleared at the start of each run.
 let runArtifacts = [];
@@ -277,19 +283,26 @@ let pillErr = "";
 
 function renderMode() {
   const el = $("mode");
-  let label, cls;
+  let label, cls, title;
   if (connState === "error") {
     label = pillErr;
     cls = "mode mode-err";
+    title = pillErr;
   } else if (connState === "ready") {
     label = modePrivate ? "Private" : "Public";
     cls = modePrivate ? "mode mode-private" : "mode mode-public";
+    const nn = goodNeighborCount;
+    title = modePrivate
+      ? "Private cluster"
+      : `Public swarm — ${nn} live neighbor${nn !== 1 ? "s" : ""}`;
   } else {
     label = modePrivate ? "joining private…" : "joining public…";
     cls = (modePrivate ? "mode mode-private" : "mode mode-public") + " mode-joining";
+    title = "Connecting to cluster…";
   }
   el.textContent = label;
   el.className = cls;
+  if (title !== undefined) el.title = title;
 }
 
 // Connection/validation status: updates the tooltip and drives the pill.
@@ -805,6 +818,13 @@ function renderCluster() {
     list.appendChild(li);
   }
   $("clusterCount").textContent = `${peers.size} node${peers.size === 1 ? "" : "s"}`;
+
+  // "Good neighbors": alive peers (measured RTT) with >= threshold warm images.
+  // This count surfaces in the status pill tooltip as a quick swarm-health signal.
+  goodNeighborCount = sorted.filter(
+    (p) => p.rtt_ms != null && p.images && p.images.length >= GOOD_NEIGHBOR_THRESHOLD
+  ).length;
+  renderMode();
 }
 
 // A candidate to dial: { node_id, relay, ticket } — node-id + relay is
