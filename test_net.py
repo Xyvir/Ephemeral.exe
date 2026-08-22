@@ -1156,6 +1156,55 @@ def test_peer_table_gossip_does_not_refresh_ttl():
         discovery.time.monotonic = real_monotonic
 
 
+def test_peer_table_gossiped_new_peer_survives_merge():
+    """Regression: a brand-new peer arriving via GOSSIP (last_seen=0.0)
+    must survive the very merge that added it, then age out after the TTL.
+
+    last_seen is compared against time.monotonic(), an uptime clock that
+    is thousands of seconds on any real machine. Storing 0.0 for a
+    gossiped peer made ``now - 0.0 > TTL`` true immediately, so every
+    gossip-learned peer was pruned in the same merge that inserted it —
+    discovery could never learn any peer from a hello. New entries now
+    get ``last_seen = now`` so they have a real TTL window to be dialed;
+    only *repeated* gossip (an existing entry) is barred from refreshing.
+    """
+    import ephemeral_net.discovery as discovery
+    from ephemeral_net.discovery import PEER_TTL_SECONDS, PeerInfo, PeerTable
+
+    clock = [74316.0]  # a long-lived machine, well past the TTL
+
+    def fake_monotonic() -> float:
+        return clock[0]
+
+    real_monotonic = discovery.time.monotonic
+    discovery.time.monotonic = fake_monotonic
+    try:
+        # 1. Gossiped newcomer survives the merge that added it.
+        t = PeerTable()
+        t.merge([PeerInfo(node_id="gossiped", relay="https://relay.example/", last_seen=0.0)])
+        assert "gossiped" in t.known_peer_ids(), \
+            "a newly gossiped peer must survive the merge that added it"
+
+        # 2. ...but ages out once the TTL passes if never dialed directly.
+        clock[0] += PEER_TTL_SECONDS + 60.0
+        t.merge([])  # prune on next merge
+        assert "gossiped" not in t.known_peer_ids(), \
+            "a gossiped-only peer must age out after the TTL"
+
+        # 3. Repeated gossip (0.0) must not refresh a directly-seen peer.
+        t2 = PeerTable()
+        t2.merge(
+            [PeerInfo(node_id="live", relay="https://relay.example/", last_seen=clock[0])]
+        )
+        clock[0] += PEER_TTL_SECONDS - 30.0  # still within the TTL
+        t2.merge([PeerInfo(node_id="live", relay="https://relay.example/", last_seen=0.0)])
+        assert "live" in t2.known_peer_ids(), \
+            "gossip must never refresh a directly-seen peer"
+        print("PASS: gossiped newcomers survive merge, age out after TTL")
+    finally:
+        discovery.time.monotonic = real_monotonic
+
+
 def test_genesis_fallback_plan():
     """The previous list is the primary census source; the pinned genesis
     anchor is only consulted when the list is empty or every member is
@@ -2066,6 +2115,7 @@ def main():
     test_job_messages()
     test_peer_table_ttl_eviction()
     test_peer_table_gossip_does_not_refresh_ttl()
+    test_peer_table_gossiped_new_peer_survives_merge()
     test_genesis_fallback_plan()
     test_evicted_tombstones_ttl()
     test_swarm_status_badge_payload()

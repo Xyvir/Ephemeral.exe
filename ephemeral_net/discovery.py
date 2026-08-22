@@ -89,9 +89,17 @@ class PeerTable:
                     active_jobs=info.active_jobs,
                     max_jobs=info.max_jobs,
                     url=info.url,
-                    # 0.0 = gossiped only (never directly seen) — kept so
-                    # the entry ages out unless a direct dial refreshes it.
-                    last_seen=info.last_seen,
+                    # A NEW entry gets a real TTL window from NOW, even
+                    # when it arrived via gossip (last_seen=0.0). last_seen
+                    # is compared against time.monotonic() — an uptime
+                    # clock — so storing 0.0 means "seen at boot", which
+                    # overflows the TTL on any machine up longer than
+                    # PEER_TTL_SECONDS and prunes the entry in the very
+                    # merge that added it (gossip discovery would never
+                    # learn any peer). Existing entries are never refreshed
+                    # by gossip — the ``if info.last_seen:`` guard below
+                    # preserves that guarantee.
+                    last_seen=info.last_seen or now,
                 )
                 new_count += 1
             else:
