@@ -216,8 +216,18 @@ ensure_venv() {
     # `python3 -m venv` fails outright. Detect that, self-heal by installing
     # the distro's venv package (sudo), then retry; other venv failures still
     # abort with the original error and instructions.
-    if [ -d "$INSTALL_DIR/.venv" ]; then
+    #
+    # A dir left behind by a FAILED venv creation is broken (python exists,
+    # pip doesn't), so validate the venv is actually usable, not just present
+    # — otherwise the subsequent pip install dies with "No such file or
+    # directory" on a half-created .venv from a previous run.
+    if [ -x "$INSTALL_DIR/.venv/bin/python" ] \
+        && "$INSTALL_DIR/.venv/bin/python" -m pip --version >/dev/null 2>&1; then
         return 0
+    fi
+    if [ -e "$INSTALL_DIR/.venv" ]; then
+        echo "==> removing broken venv at $INSTALL_DIR/.venv and recreating..."
+        rm -rf "$INSTALL_DIR/.venv"
     fi
     if ! python3 -c "import ensurepip" >/dev/null 2>&1; then
         echo "==> python3-venv missing — installing it (${SUDO:-root} required)..."
