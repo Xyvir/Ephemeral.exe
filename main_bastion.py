@@ -147,40 +147,65 @@ async def lifespan(app: FastAPI):
         public_url=PUBLIC_URL,
         compute=COMPUTE,
     )
-    try:
-        await gateway.start()
-    except Exception as e:
-        # REST orchestration can still forward through peers even if the
-        # local network join hiccupped — but a bastion that never joined has
-        # no swarm to orchestrate, so surface the error and serve degraded.
-        app.state.gateway = gateway
-        app.state.gateway_error = str(e)
-        yield
-        await gateway.close()
-        return
     app.state.gateway = gateway
-    node = gateway.node
-    print(f"SWARM NODE_ID {node.node_id()}", flush=True)
-    print(f"SWARM RELAY {node.relay_url()}", flush=True)
-    print(f"SWARM SEED TICKET {node.ticket()}", flush=True)
-    if PUBLIC_URL:
-        print(f"BASTION PUBLIC URL {PUBLIC_URL}", flush=True)
-        print(
-            "BASTION this URL is advertised in hello frames and will be "
-            "published in docs/swarm.json on the next swarm refresh.",
-            flush=True,
-        )
-    else:
-        print(
-            "BASTION no public URL configured (set EPHEMERAL_PUBLIC_URL or "
-            "RAILWAY_PUBLIC_DOMAIN) — this bastion will not be listed.",
-            flush=True,
-        )
-    print(f"BASTION COMPUTE {'on' if COMPUTE else 'off'} (local fallback)", flush=True)
-    if PRIVATE_MODE:
-        print(f"SWARM PRIVATE URL {private_student_url(node.ticket())}", flush=True)
-    yield
-    await gateway.close()
+
+    # Start the gateway in the BACKGROUND: iroh's relay join can take
+    # 30-60+ s, and FastAPI's lifespan runs BEFORE uvicorn binds the
+    # port — so blocking here makes Railway's healthcheck get
+    # "service unavailable" (connection refused) the whole time. Running
+    # the join as a task lets uvicorn bind immediately, so /health answers
+    # 200 while /ready stays 503 until the node is actually wired up.
+    import asyncio
+
+    start_task = asyncio.create_task(gateway.start())
+
+    def _on_done(task: asyncio.Task) -> None:
+        try:
+            task.result()
+            node = gateway.node
+            if node is not None:
+                print(f"SWARM NODE_ID {node.node_id()}", flush=True)
+                print(f"SWARM RELAY {node.relay_url()}", flush=True)
+                print(f"SWARM SEED TICKET {node.ticket()}", flush=True)
+                if PRIVATE_MODE:
+                    print(f"SWARM PRIVATE URL {private_student_url(node.ticket())}", flush=True)
+            if PUBLIC_URL:
+                print(f"BASTION PUBLIC URL {PUBLIC_URL}", flush=True)
+                print(
+                    "BASTION this URL is advertised in hello frames and will be "
+                    "published in docs/swarm.json on the next swarm refresh.",
+                    flush=True,
+                )
+            else:
+                print(
+                    "BASTION no public URL configured (set EPHEMERAL_PUBLIC_URL or "
+                    "RAILWAY_PUBLIC_DOMAIN) — this bastion will not be listed.",
+                    flush=True,
+                )
+            print(
+                f"BASTION COMPUTE {'on' if COMPUTE else 'off'} (local fallback)",
+                flush=True,
+            )
+        except Exception as e:
+            # A bastion that never joined has no swarm to orchestrate, but
+            # the process stays alive so /health still answers 200 and the
+            # deploy can succeed while the operator sees the error.
+            app.state.gateway_error = str(e)
+            print(f"BASTION gateway failed to start: {e}", flush=True)
+
+    start_task.add_done_callback(_on_done)
+    try:
+        yield
+    finally:
+        # Best-effort shutdown: if the join is still in flight, cancel it
+        # first so we don't race close() against a half-started node.
+        if not start_task.done():
+            start_task.cancel()
+            try:
+                await start_task
+            except Exception:
+                pass
+        await gateway.close()
 
 
 app = FastAPI(
@@ -229,6 +254,12 @@ async def run_code(
         raise HTTPException(
             status_code=500,
             detail=f"Gateway failed to start: {getattr(app.state, 'gateway_error', 'unknown')}",
+        )
+    if gateway.node is None:
+        raise HTTPException(
+            status_code=503,
+            detail="bastion is still joining the swarm",
+            headers={"Retry-After": "1"},
         )
 
     if not await concurrency.acquire():
