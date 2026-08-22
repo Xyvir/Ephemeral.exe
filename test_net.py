@@ -1241,6 +1241,40 @@ def test_genesis_fallback_plan():
     print("PASS: genesis fallback plan (prev-list first, anchor only as fallback)")
 
 
+def test_resolve_genesis_from_url():
+    """A bastion URL alone bootstraps the refresh — node identity is read
+    from its /health, so no node id is hard-coded in code."""
+    import scripts.update_swarm_json as upd
+
+    real_fetch = upd.fetch_genesis_from_url
+    try:
+        # No explicit genesis ids -> the URL is the sole source.
+        upd.fetch_genesis_from_url = lambda url, timeout=15.0: (
+            "a" * 64, "https://euc1-1.relay.n0.iroh.link./", "ticket-1"
+        )
+        targets, tickets = upd.resolve_genesis([], "https://bastion.example")
+        assert targets and len(targets) == 1, targets
+        nid, relay = targets[0]
+        assert nid == "a" * 64
+        assert relay.startswith("https://")
+        assert tickets == {"a" * 64: "ticket-1"}
+
+        # Explicit genesis ids win outright and carry no ticket.
+        explicit, t2 = upd.resolve_genesis(
+            [("b" * 64, "https://relay.example")], "https://bastion.example"
+        )
+        assert explicit == [("b" * 64, "https://relay.example")] and t2 == {}
+
+        # URL that fails to resolve its identity -> empty anchor.
+        upd.fetch_genesis_from_url = lambda url, timeout=15.0: None
+        targets3, _ = upd.resolve_genesis([], "https://down.example")
+        assert targets3 == []
+    finally:
+        upd.fetch_genesis_from_url = real_fetch
+
+    print("PASS: genesis resolved from a bastion URL (no hardcoded node id)")
+
+
 def test_evicted_tombstones_ttl():
     """Eviction tombstones expire so a recovered node can rejoin, and the
     loader tolerates the transitional plain-list format."""
@@ -2117,6 +2151,7 @@ def main():
     test_peer_table_gossip_does_not_refresh_ttl()
     test_peer_table_gossiped_new_peer_survives_merge()
     test_genesis_fallback_plan()
+    test_resolve_genesis_from_url()
     test_evicted_tombstones_ttl()
     test_swarm_status_badge_payload()
     test_private_mode_helpers()

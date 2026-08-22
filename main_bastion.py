@@ -342,8 +342,13 @@ async def health_check():
 async def readiness_check():
     """Readiness probe — 200 only when the iroh node has joined the swarm.
 
-    Swarm peers and the refresh script should hit this endpoint to
-    distinguish "alive but not yet wired" from "ready to orchestrate".
+    Carries the identity fields (node_id, relay, seed ticket) the swarm
+    refresh needs to bootstrap from this bastion purely by URL (see
+    scripts/update_swarm_json.py): node_id is the stable iroh dial target,
+    relay the dial path, and the seed ticket a fallback. Exposed on /ready
+    (not /health) so /health stays a trivial liveness probe for Railway's
+    healthcheck — an operator only has to publish the public URL as the
+    SWARM_GENESIS_URL repo variable; no hardcoded node identity anywhere.
     """
     gateway: Gateway = getattr(app.state, "gateway", None)
     if gateway is None or gateway.node is None:
@@ -356,6 +361,14 @@ async def readiness_check():
     status["public_url"] = PUBLIC_URL
     status["cache_entries"] = len(cache)
     status["concurrent_jobs"] = concurrency.active
+    try:
+        status["relay"] = gateway.node.relay_url()
+    except Exception:
+        status["relay"] = None
+    try:
+        status["ticket"] = gateway.node.ticket()
+    except Exception:
+        status["ticket"] = None
     status["version"] = VERSION
     return status
 

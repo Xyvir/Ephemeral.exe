@@ -42,19 +42,19 @@ jobs:
     - name: Install networking tier deps
       run: pip install -r requirements-net.txt
 
-    # The genesis anchor is config, not code: set the SWARM_GENESIS repo
-    # variable (Settings -> Secrets and variables -> Actions -> Variables,
-    # comma-separated node_id@relay) to point at your own always-on node.
-    # Unset, the script uses its built-in default. The list is self-
+    # The genesis anchor is config, not code: set SWARM_GENESIS_URL (a
+    # repo variable) to the public URL of your always-on bastion (e.g.
+    # https://your-bastion.up.railway.app). The refresh resolves the
+    # anchor's node_id/relay/ticket from its /health endpoint — no
+    # hardcoded identity anywhere. Optionally SWARM_GENESIS pins the
+    # anchor directly as comma-separated node_id@relay. The list is self-
     # sustaining: each run regenerates from the previous list's members,
-    # and the pinned genesis anchor is only consulted when no member is
+    # and the genesis anchor is only consulted when no member is
     # reachable (or the list is empty — first run / manual reset).
     #
-    # SWARM_GENESIS_URL (variable): the public HTTP URL of the genesis
-    # anchor (e.g. https://your-bastion.up.railway.app). Used to ping
-    # /health before the iroh dial — Railway free tier sleeps idle
-    # services, and QUIC/UDP dials can't wake them. The HTTP hit
-    # triggers the cold-start so the iroh endpoint is bound in time.
+    # The same URL is used to wake a sleeping bastion: Railway free tier
+    # sleeps idle services, and QUIC/UDP dials can't wake them. The HTTP
+    # |hit triggers the cold-start so the iroh endpoint is bound in time.
     #
     # DNS TXT redundancy (optional): set EPHEMERAL_DNS_TXT (variable, the
     # TXT record hostname) and EPHEMERAL_DNS_TOKEN (secret, a Cloudflare

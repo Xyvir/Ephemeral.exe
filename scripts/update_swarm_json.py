@@ -95,20 +95,19 @@ from ephemeral_net.swarm import DEFAULT_RELAY
 
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "docs" / "swarm.json"
 
-# The genesis anchor — the ONLY hard-coded node in the whole system, and it
-# lives here in the refresh script, never in the shipped binaries. It exists
-# solely to bootstrap the very first, empty list: once the list has any live
-# member, it regenerates from its own members and the genesis node can go
-# offline forever. Override with the SWARM_GENESIS repo variable / env var
-# (comma-separated node_id@relay) or the --genesis flag.
+# The genesis anchor — how the very first, empty list gets bootstrapped.
+# Once the list has any live member it regenerates from its own members and
+# the genesis node can go offline forever; the anchor is only needed to seed
+# the first-ever list or rescue one whose every member went dark.
 #
-# The anchor is the always-on Railway bastion (paper-light HTTP gateway). Its
-# identity is pinned via the EPHEMERAL_SECRET env var on the Railway service,
-# so this (node_id, relay) pair is stable across redeploys. Note the relay is
-# the EU one the bastion actually advertises, not DEFAULT_RELAY.
-GENESIS_DEFAULT: list[tuple[str, str]] = [
-    ("ed7106bced606bede735b4c9b215052855f9747e8cb56629759ae672ce29b9c8", "https://euc1-1.relay.n0.iroh.link./"),
-]
+# There is deliberately NO hardcoded node identity here. The anchor is a
+# public bastion (paper-light HTTP gateway) whose identity is resolved at
+# runtime from its public URL: set the SWARM_GENESIS_URL repo variable to the
+# bastion's URL and the refresh fetches /health to discover its node_id,
+# relay and seed ticket (all exposed by the bastion for exactly this).
+# Alternatively SWARM_GENESIS (comma-separated node_id@relay) pins the anchor
+# directly. Unset both and a fresh/empty list cannot bootstrap.
+GENESIS_DEFAULT: list[tuple[str, str]] = []
 
 # How long an evicted node stays tombstoned before gossip may rediscover
 # it (~7 days = ~28 refresh cycles). A node that RECOVERS must be able to
@@ -138,7 +137,7 @@ def genesis_anchor_required(
 
 
 def parse_genesis(value: str | None) -> list[tuple[str, str]]:
-    """Parse a ``node_id@relay`` list; None/empty uses :data:`GENESIS_DEFAULT`."""
+    """Parse a ``node_id@relay`` list; None/empty returns []."""
     if not value or not value.strip():
         return list(GENESIS_DEFAULT)
     nodes: list[tuple[str, str]] = []
@@ -152,6 +151,72 @@ def parse_genesis(value: str | None) -> list[tuple[str, str]]:
         else:
             nodes.append((raw, DEFAULT_RELAY))
     return nodes
+
+
+def fetch_genesis_from_url(url: str, timeout: float = 15.0) -> tuple[str, str, str | None] | None:
+    """Resolve a genesis anchor's identity from a bastion's public URL.
+
+    GETs ``{url}/ready`` and reads the node_id, relay and seed ticket the
+    bastion publishes there (deliberately on /ready, not /health, so the
+    liveness endpoint stays a trivial probe for the platform healthcheck).
+    Returns ``(node_id, relay, ticket)`` or None when the endpoint is
+    unreachable or does not advertise an identity. This lets an operator
+    point the refresh at a bastion purely by URL (the ``SWARM_GENESIS_URL``
+    repo variable) — no hardcoded node id anywhere.
+    """
+    endpoint = url.rstrip("/") + "/ready"
+    # /ready returns 503 while the bastion's iroh node is still joining the
+    # swarm (Railway cold-start can take 30-60s). Retry through that window
+    # so a sleeping bastion still resolves its identity once it's wired up.
+    last_err = ""
+    for _attempt in range(4):
+        try:
+            req = urllib.request.Request(endpoint, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                data = json.loads(res.read().decode("utf-8"))
+            node_id = data.get("node_id")
+            relay = data.get("relay")
+            if not node_id:
+                print(
+                    f"  genesis URL {endpoint} did not advertise a node_id",
+                    flush=True,
+                )
+                return None
+            return node_id, relay or DEFAULT_RELAY, data.get("ticket")
+        except Exception as e:  # 503 not-ready, or transport failure
+            last_err = f"{type(e).__name__}: {e}"
+            time.sleep(5)
+    print(f"  genesis URL {endpoint} did not become ready: {last_err}", flush=True)
+    return None
+
+
+def resolve_genesis(
+    genesis: list[tuple[str, str]], genesis_url: str | None
+) -> tuple[list[tuple[str, str]], dict[str, str | None]]:
+    """Return the effective genesis dial targets + their seed tickets.
+
+    Explicit ``genesis`` (node_id@relay) wins; otherwise, when
+    ``genesis_url`` is set, the anchor is resolved from the bastion's
+    /health over HTTP. Returns ``(targets, tickets)`` where targets is a
+    list of (node_id, relay) and tickets maps node_id -> seed ticket.
+    """
+    if genesis:
+        return genesis, {}
+    if genesis_url:
+        resolved = fetch_genesis_from_url(genesis_url)
+        if resolved:
+            node_id, relay, ticket = resolved
+            print(
+                f"  genesis anchor from {genesis_url}: {node_id[:12]}... ({relay})",
+                flush=True,
+            )
+            return [(node_id, relay)], {node_id: ticket}
+        print(
+            "  could not resolve a genesis anchor from SWARM_GENESIS_URL — "
+            "bootstrap will produce an empty list",
+            flush=True,
+        )
+    return [], {}
 
 
 # DNS TXT strings are capped at 255 chars. Two compact entries fit in a
@@ -543,11 +608,24 @@ async def discover(
                         flush=True,
                     )
 
-            seed_ids = {nid for nid, _ in genesis}
+            # Resolve the effective anchor: explicit SWARM_GENESIS ids win,
+            # otherwise the anchor is looked up from the bastion's /health
+            # via SWARM_GENESIS_URL (no hardcoded identity in code).
+            genesis_ids, genesis_tickets = resolve_genesis(genesis, genesis_url)
+            seed_ids = {nid for nid, _ in genesis_ids}
             await asyncio.gather(
-                *(_dial_one(nid, relay, None) for nid, relay in genesis)
+                *(
+                    _dial_one(nid, relay, genesis_tickets.get(nid))
+                    for nid, relay in genesis_ids
+                )
             )
-            if not reset and not prev:
+            if not seed_ids:
+                print(
+                    "  no genesis anchor configured — set SWARM_GENESIS_URL (or "
+                    "SWARM_GENESIS) or this list cannot bootstrap",
+                    flush=True,
+                )
+            elif not reset and not prev:
                 print(
                     "  first run: no previous list — seeding from the genesis anchor",
                     flush=True,
@@ -555,7 +633,7 @@ async def discover(
             elif not reset:
                 print(
                     "  fallback: no previous-list node reachable — dialing the "
-                    "pinned genesis anchor",
+                    "genesis anchor",
                     flush=True,
                 )
             # (reset was announced above)
@@ -845,7 +923,8 @@ async def main() -> None:
     parser.add_argument(
         "--genesis",
         default=None,
-        help="genesis node_id@relay list (default: SWARM_GENESIS env or GENESIS_DEFAULT)",
+        help="genesis node_id@relay list (default: SWARM_GENESIS env; else the "
+        "anchor is resolved from SWARM_GENESIS_URL's /health)",
     )
     parser.add_argument(
         "--no-probe",
