@@ -720,6 +720,17 @@ function imageMatches(image, lang) {
   return image.toLowerCase().includes("/" + l + ":") || image.toLowerCase().includes(l + "-");
 }
 
+// Short, human-readable name for a warm-image pill in the cluster list:
+// strip the docker.io registry, the library/ namespace, and the noise
+// `:latest` tag — keep tags that actually differ (alpine, slim, act-22.04).
+function shortImageName(img) {
+  let s = img;
+  if (s.startsWith("docker.io/")) s = s.slice("docker.io/".length);
+  if (s.startsWith("library/")) s = s.slice("library/".length);
+  if (s.endsWith(":latest")) s = s.slice(0, -":latest".length);
+  return s;
+}
+
 // Pick the best compute node for a doc: probe-verified peers first (the
 // swarm refresh proved they actually run jobs), then warm-image coverage,
 // then lowest RTT. A node that merely answers hello (unverified — e.g.
@@ -763,7 +774,19 @@ function renderCluster() {
     }
     const imgs = document.createElement("span");
     imgs.className = "images";
-    imgs.textContent = p.images && p.images.length ? p.images.join(", ") : "no warm images";
+    if (p.images && p.images.length) {
+      // One language-chip-style pill per warm image — the full ref stays
+      // available on hover, and the pills wrap instead of ellipsizing.
+      for (const img of p.images) {
+        const chip = document.createElement("span");
+        chip.className = "lang-chip ok";
+        chip.textContent = shortImageName(img);
+        chip.title = img;
+        imgs.appendChild(chip);
+      }
+    } else {
+      imgs.textContent = "no warm images";
+    }
     li.appendChild(imgs);
     const rtt = document.createElement("span");
     rtt.className = "rtt";
