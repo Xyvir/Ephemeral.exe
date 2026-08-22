@@ -1,12 +1,12 @@
 {
-  "updated": "2026-08-22T06:49:29Z",
+  "updated": "2026-08-22T12:49:41Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh3xmicaeaevjzgb6spwaqbacwbouabrh7qgaiaycuaaf4j74bq",
+      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh2j6ycaeaevjzgb7toqaybacwbouabrh7qgaiaycuaaf4j74bq",
       "images": [
         "docker.io/esolang/05ab1e:latest",
         "docker.io/hdlc/iverilog:latest",
@@ -23,17 +23,53 @@
       "url": null,
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-22T06:49:29Z",
+      "probe_at": "2026-08-22T12:49:41Z",
       "probe_detail": "ok",
-      "probe_ms": 1701,
+      "probe_ms": 1775,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 8611
+      "rtt_ms": 12475
+    },
+    {
+      "node_id": "19a5d4f810caa9c9537ac29bfa75dcb314c10913c3c5e3ec2de95ad82ecd950f",
+      "relay": null,
+      "ticket": "endpointaam2lvhycdfktsktplbjx6tv3szrjqijcpb4ly7mfxuvvwbozwkq6aiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4",
+      "images": [],
+      "url": null,
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-22T12:49:41Z"
+    },
+    {
+      "node_id": "1c1969fbf91dc21eaa6d09d328000ab10c5025fe670c71b383808f4c81ffe14a",
+      "relay": "https://euc1-1.relay.n0.iroh.link./",
+      "ticket": "endpointaaobs2p37eo4ehvknue5gkaabkyqyubf7ztqy4ntqoai6teb77quuayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacw7hxtnjjycaeajqn5zi7kkoaq",
+      "images": [],
+      "url": null,
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-22T12:49:41Z"
+    },
+    {
+      "node_id": "267188831204048b180babab82edfa9b61238072417812c1982a8d80b4933536",
+      "relay": "https://usw1-1.relay.n0.iroh.link./",
+      "ticket": "endpointaathdcedcicajcyybov2xaxn7knwci4aojaxqewbtavi3afusm2tmbaaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqabe3ivayriacaeaauaiap253gaybacwbcaabxozqg",
+      "images": [],
+      "url": null,
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-22T12:49:41Z"
     },
     {
       "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh55rqcaeakyhcaahrysaybadakqaau4oeqg",
+      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh6hcidaeaevjzgb7zpeaybacwbyqab4oeqgaiaycuaafhdrebq",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/catthehacker/ubuntu:act-latest",
@@ -73,23 +109,119 @@
         "mcr.microsoft.com/powershell:latest"
       ],
       "url": null,
+      "misses": 2,
       "seen_alive": true,
       "probe_fails": 0,
-      "misses": 1,
       "probe": "unreachable",
-      "probe_at": "2026-08-22T06:49:29Z"
+      "probe_at": "2026-08-22T12:49:41Z"
     },
     {
-      "node_id": "d6450f0028f5941210f0248ba57ea5c031225a5f0a51d00345285cfcbf3a0b51",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointadlekdyafd2zieqq6asixjl6uxadcis2l4ffduadiuufz7f7hifvcbaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbacw7juqdaeaifa6dqkansaqbacwbcaab6tjag",
+      "node_id": "2c6275f05e0793d8562e78c62c6a3eb3ca943780f59c5ffff277926d2264a1f8",
+      "relay": "https://euc1-1.relay.n0.iroh.link./",
+      "ticket": "endpointaawge5pqlydzhwcwfz4mmldkh2z4vfbxqd2zyx776j3ze3jcmsq7qayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacx6may2paycaeajqn5zlktygaq",
       "images": [],
       "url": null,
       "probe_fails": 0,
       "misses": 1,
       "seen_alive": false,
       "probe": "unreachable",
-      "probe_at": "2026-08-22T06:49:29Z"
+      "probe_at": "2026-08-22T12:49:41Z"
+    },
+    {
+      "node_id": "3fc498dec8170cc92812f95a6507ed61236ed2a0de963f3f0e713a7fb8c6c0e9",
+      "relay": "https://euc1-1.relay.n0.iroh.link./",
+      "ticket": "endpointaa74jgg6zalqzsjicl4vuzih5vqsg3wsudpjmpz7bzytu75yy3aosayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqaculazmjhjacaeajqn5zw2j2iaq",
+      "images": [],
+      "url": null,
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-22T12:49:41Z"
+    },
+    {
+      "node_id": "4d16aee02216569e42324c80279562db2268b0d3145eed8b22b87c7f03b5068c",
+      "relay": "https://euc1-1.relay.n0.iroh.link./",
+      "ticket": "endpointabgrnlxaeilfnhscgjgiaj4vmlnse2fq2mkf53mlek4hy7ydwudiyayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacvavvs2heicaeajqn5zvsrzcaq",
+      "images": [],
+      "url": null,
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-22T12:49:41Z"
+    },
+    {
+      "node_id": "770bf2f867135df4c28056908555888c3b06b6e4bdfe3bbef536e9617c49bed1",
+      "relay": "https://usw1-1.relay.n0.iroh.link./",
+      "ticket": "endpointab3qx4xym4jv35gcqbljbbkvrcgdwbvw4s674o566u3osyl4jg7ncbaaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbaarlfjqdaeadj6wsi2ujaaybacwbcaabwktag",
+      "images": [],
+      "url": null,
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-22T12:49:41Z"
+    },
+    {
+      "node_id": "83ceea111574cd65f4447e0464800202c77e07040d6139c68fa1d3f44d27d66e",
+      "relay": "https://euc1-1.relay.n0.iroh.link./",
+      "ticket": "endpointacb452qrcv2m2zpuir7aizeaaibmo7qhaqgwcoogr6q5h5cne7lg4ayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacxpy5k53cycaeanatpuu3oywaq",
+      "images": [],
+      "url": null,
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-22T12:49:41Z"
+    },
+    {
+      "node_id": "9c8e25ff3dad0db795e84eb29452b9c1da54515ab14a659c8cec7deac4f8c1c7",
+      "relay": "https://euc1-1.relay.n0.iroh.link./",
+      "ticket": "endpointacoi4jp7hwwq3n4v5bhlffcsxha5uvcrlkyuuzm4rtwh32we7da4oaibaafo7r2vrwaqe",
+      "images": [],
+      "url": null,
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-22T12:49:41Z"
+    },
+    {
+      "node_id": "a62e2eea380be167ef5c33a69fb41f3987348dad351e07a858d9fbd1ff3ce00b",
+      "relay": "https://euc1-1.relay.n0.iroh.link./",
+      "ticket": "endpointactc4lxkhaf6cz7plqz2nh5ud44yonenvu2r4b5ildm7xup7htqawayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacu356nk3jacaeajqn5zmgw2iaq",
+      "images": [],
+      "url": null,
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-22T12:49:41Z"
+    },
+    {
+      "node_id": "d2114dae67a5faaff81d38af60bf86f9df8f37395ce22f6ca40117ce1609c2bd",
+      "relay": "https://euc1-1.relay.n0.iroh.link./",
+      "ticket": "endpointadjbctnom6s7vl7ydu4k6yf7q3457dzxhfooel3muqarptqwbhbl2ayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacvsza4jrcqcaeajqn5zi6miuaq",
+      "images": [],
+      "url": null,
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-22T12:49:41Z"
+    },
+    {
+      "node_id": "f849c40c7d0894570de5897585cb99eb872a3782bab54abc545f7632a47fb2a8",
+      "relay": "https://euc1-1.relay.n0.iroh.link./",
+      "ticket": "endpointad4etrampuejivyn4wexlbolthvyokrxqk5lksv4krpxmmvep6zkqayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacwmowopfkqcaeajqn5zrlzkuaq",
+      "images": [],
+      "url": null,
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-22T12:49:41Z"
     },
     {
       "node_id": "fac349d19278576c930481b5f279d3b4c2f5f77330ee0aecd12dc4165d79c46a",
@@ -98,26 +230,26 @@
       "images": [],
       "url": null,
       "probe_fails": 1,
+      "misses": 2,
       "seen_alive": true,
-      "misses": 1,
       "probe": "unreachable",
-      "probe_at": "2026-08-22T06:49:29Z"
+      "probe_at": "2026-08-22T12:49:41Z"
     }
   ],
   "bastions": [
     {
       "node_id": "ed7106bced606bede735b4c9b215052855f9747e8cb56629759ae672ce29b9c8",
       "relay": "https://euc1-1.relay.n0.iroh.link./",
-      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacwggc4l3jqcaeajqn5zgo62maq",
+      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacvvpdyihgicaeajqn5zxobzsaq",
       "images": [],
       "url": "https://ephemeralexe-production.up.railway.app",
+      "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-22T06:49:29Z",
+      "probe_at": "2026-08-22T12:49:41Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 368,
+      "probe_ms": 331,
       "probe_fails": 0,
-      "misses": 0,
-      "seen_alive": true
+      "misses": 0
     }
   ]
 }
