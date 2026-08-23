@@ -1,12 +1,12 @@
 {
-  "updated": "2026-08-23T06:50:09Z",
+  "updated": "2026-08-23T12:50:13Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6ljbqdaeakhqdbmw2imay",
+      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6o3aycaeakhqdbmxwygaq",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/clfoundation/sbcl:slim",
@@ -37,65 +37,38 @@
       "url": null,
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-23T06:50:09Z",
+      "probe_at": "2026-08-23T12:50:13Z",
       "probe_detail": "ok",
-      "probe_ms": 968,
+      "probe_ms": 928,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 4151
+      "rtt_ms": 4365
     },
     {
-      "node_id": "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh5jhadaeaevjzgb7nmiaybacwbouab3lcagaiaycuaaf62yqbq",
-      "images": [
-        "docker.io/esolang/05ab1e:latest",
-        "docker.io/hdlc/iverilog:latest",
-        "docker.io/library/alpine:latest",
-        "docker.io/library/eclipse-temurin:21-jdk-alpine",
-        "docker.io/library/gcc:latest",
-        "docker.io/library/golang:alpine",
-        "docker.io/library/node:18-alpine",
-        "docker.io/library/perl:slim",
-        "docker.io/library/php:alpine",
-        "docker.io/nickblah/lua:5.4-alpine",
-        "docker.io/rhysd/actionlint:latest"
-      ],
-      "url": null,
-      "probe_fails": 2,
-      "seen_alive": true,
-      "probe": "failed",
-      "probe_at": "2026-08-23T06:50:09Z",
-      "probe_detail": "probe failed (JobError): Could not start Podman: Command '['podman', 'machine', 'init']' returned non-zero exit status 125.",
-      "probe_ms": 772,
-      "misses": 0,
-      "rtt_ms": 252
-    },
-    {
-      "node_id": "a965e42aaa5456d85fa2e202a4ba47f0740eb8f61771056dde93b13a27edd857",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointacuwlzbkvjkfnwc7ulrafjf2i7yhidvy6ylxcbln32j3corh5xmfobaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbab3l5sadaeacqvgykcajqaybacwbcaabx3eag",
+      "node_id": "84d9a42b7930f8862a33b695a87ad54bacb4938cc9cf2a11d027d455a51cc140",
+      "relay": "https://usw1-1.relay.n0.iroh.link./",
+      "ticket": "endpointaccntjblpeyprbrkgo3jlkd22vf2znetrte46kqr2at5ivnfdtauabaaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbacbz3vqdaeakyeiaago5maybacwlr7sbqaea",
       "images": [],
       "url": null,
       "probe_fails": 0,
       "misses": 1,
       "seen_alive": false,
       "probe": "unreachable",
-      "probe_at": "2026-08-23T06:50:09Z"
+      "probe_at": "2026-08-23T12:50:13Z"
     }
   ],
   "bastions": [
     {
       "node_id": "ed7106bced606bede735b4c9b215052855f9747e8cb56629759ae672ce29b9c8",
       "relay": "https://euc1-1.relay.n0.iroh.link./",
-      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacw2vu6odcycaeajqn5ztpqywaq",
+      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacxvikyylbicaeajqn5zbocykaq",
       "images": [],
       "url": "https://ephemeralexe-production.up.railway.app",
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-23T06:50:09Z",
+      "probe_at": "2026-08-23T12:50:13Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 428,
+      "probe_ms": 346,
       "probe_fails": 0,
       "misses": 0
     }
@@ -130,6 +103,8 @@
     "6b8528742d0bc0b3f2322951b810d4caff3c2b7d2613b0aa162a228d9cfd3d81": 1787449460.353813,
     "efe3273d7124efff8b68ecbac9d945858dd84be7c90e94ae43cff79aaaf22936": 1787449460.353813,
     "beb20d674d25f6382ddc5b1e76b378a770d049919bca4b2586082f061e6388ea": 1787467809.9875538,
-    "eb988bf374bb1302bc2e5c8da4d1e78e68c11fa8fdf54cadd706692012797c68": 1787467809.9875538
+    "eb988bf374bb1302bc2e5c8da4d1e78e68c11fa8fdf54cadd706692012797c68": 1787467809.9875538,
+    "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c": 1787489414.9224796,
+    "a965e42aaa5456d85fa2e202a4ba47f0740eb8f61771056dde93b13a27edd857": 1787489414.9224796
   }
 }
