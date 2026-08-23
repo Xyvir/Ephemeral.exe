@@ -619,77 +619,6 @@ def _confirm_hydration(text_lines: list[str], warn: bool) -> bool:
     return False
 
 
-def _ensure_podman_machine(timeout_s: int = 90) -> bool:
-    """Ensure the podman machine is up and ``podman info`` responds.
-
-    Returns True once podman answers, False after ``timeout_s``.
-
-    Guardrail for the classic Windows trap: ``podman machine start`` ERRORS
-    when the machine is already running ("machine could not be started"),
-    and ``podman info`` can lag the VM state by tens of seconds while the
-    socket comes up. So: read the machine state before starting, skip the
-    start when it's already running, and poll ``podman info`` instead of
-    aborting on the first failure.
-    """
-    def alive() -> bool:
-        try:
-            subprocess.run(
-                ["podman", "info"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                startupinfo=startupinfo, timeout=15,
-            )
-            return True
-        except Exception:
-            return False
-
-    startupinfo = get_startupinfo()
-    if alive():
-        return True
-
-    # What state is the machine in? (None = list failed / unknown)
-    state = None
-    machines: list = []
-    try:
-        out = subprocess.run(
-            ["podman", "machine", "list", "--format", "json"],
-            capture_output=True, text=True, startupinfo=startupinfo, timeout=30,
-        )
-        if out.returncode == 0:
-            machines = json.loads(out.stdout or "[]")
-            if machines:
-                default = next(
-                    (m for m in machines if m.get("DefaultMachine")), machines[0]
-                )
-                state = str(default.get("State", "")).lower()
-    except Exception:
-        pass
-
-    if state == "running":
-        logging.getLogger("ephemeral").warning(
-            "podman machine already running — waiting for the socket to respond"
-        )
-    else:
-        if state is None and not machines:
-            logging.getLogger("ephemeral").warning(
-                "no podman machine found — start will fail unless one exists"
-            )
-        try:
-            subprocess.run(
-                ["podman", "machine", "start"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                startupinfo=startupinfo, timeout=300,
-            )
-        except Exception:
-            pass
-
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if alive():
-            return True
-        time.sleep(5)
-    return False
-
-
 def _hydrate_all_images(icon=None, images: list[str] | None = None) -> None:
     """Pull every mapped image not already cached (daemon-thread target).
 
@@ -698,13 +627,22 @@ def _hydrate_all_images(icon=None, images: list[str] | None = None) -> None:
     """
     startupinfo = get_startupinfo()
     images = images if images is not None else mapped_images()
-    if not _ensure_podman_machine():
-        if icon:
-            icon.notify(
-                "Podman could not be started — pre-hydration aborted.",
-                title="Ephemeral Error",
+    if not ephemeral_core.check_podman_alive():
+        try:
+            subprocess.run(
+                ["podman", "machine", "start"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                startupinfo=startupinfo, timeout=300,
             )
-        return
+        except Exception:
+            pass
+        if not ephemeral_core.check_podman_alive():
+            if icon:
+                icon.notify(
+                    "Podman could not be started — pre-hydration aborted.",
+                    title="Ephemeral Error",
+                )
+            return
     pulled = 0
     skipped = 0
     failed: list[str] = []
@@ -1123,67 +1061,30 @@ def main():
     print(f"{'=' * 60}")
     print()
 
-    # --- Ensure podman is running ----------------------------------------
-    # Guardrail: `podman machine start` ERRORS when the machine is already
-    # running ("machine could not be started"), and `podman info` can lag the
-    # VM state by tens of seconds while the socket comes up. So read the
-    # machine state first, skip the start when it's already up, and poll
-    # `podman info` instead of aborting on the first failure.
-    def _podman_alive():
+    # Ensure podman is running.
+    try:
+        alive = subprocess.run(
+            ["podman", "info"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15,
+        ).returncode == 0
+    except Exception:
+        alive = False
+    if not alive:
+        print("Starting podman machine...")
         try:
-            return subprocess.run(
+            subprocess.run(
+                ["podman", "machine", "start"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300,
+            )
+        except Exception:
+            pass
+        try:
+            alive = subprocess.run(
                 ["podman", "info"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15,
             ).returncode == 0
         except Exception:
-            return False
-
-    def _machine_state():
-        """Lowercased state of the default machine, 'none', or None."""
-        try:
-            out = subprocess.run(
-                ["podman", "machine", "list", "--format", "json"],
-                capture_output=True, text=True, timeout=30,
-            )
-            if out.returncode != 0:
-                return None
-            machines = json.loads(out.stdout or "[]")
-            if not machines:
-                return "none"
-            default = next(
-                (m for m in machines if m.get("DefaultMachine")), machines[0]
-            )
-            return str(default.get("State", "")).lower() or None
-        except Exception:
-            return None
-
-    alive = _podman_alive()
-    if not alive:
-        state = _machine_state()
-        if state == "running":
-            print("Podman machine is already running — waiting for the socket...")
-        else:
-            if state == "none":
-                print("No podman machine found — run `podman machine init` first.")
-            print("Starting podman machine...")
-            try:
-                start = subprocess.run(
-                    ["podman", "machine", "start"],
-                    capture_output=True, text=True, timeout=300,
-                )
-                if start.returncode != 0:
-                    detail = (start.stdout or "") + (start.stderr or "")
-                    lines = [l for l in detail.splitlines() if l.strip()]
-                    print(f"  podman machine start: {lines[-1] if lines else 'failed'}")
-            except Exception as e:
-                print(f"  podman machine start raised: {e}")
-        # A freshly-started machine can take a while before podman responds —
-        # poll for up to 90s instead of giving up on the first `info` failure.
-        for _ in range(18):
-            if _podman_alive():
-                alive = True
-                break
-            time.sleep(5)
+            alive = False
     if not alive:
         print("ERROR: podman is not available. Aborting.")
         sys.exit(1)
