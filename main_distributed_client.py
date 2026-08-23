@@ -1325,6 +1325,12 @@ def setup_tray_mode(icon):
     icon.visible = True
     keyboard.add_hotkey(HOTKEY, lambda: on_hotkey(icon))
     keyboard.add_hotkey(CONVERT_HOTKEY, lambda: on_convert_hotkey(icon))
+    # Startup confirmation: cluster warmup runs in the background, so the
+    # node may take a few seconds to fully join the swarm.
+    icon.notify(
+        "Ephemeral tray started — node warming up in the background.",
+        title="Ephemeral",
+    )
 
 
 class DummyIcon:
