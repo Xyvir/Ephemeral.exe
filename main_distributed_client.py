@@ -1014,106 +1014,20 @@ def force_stop_all(icon, item_unused):
 # in a native terminal window — shows real-time podman pull output.
 def _hydration_script(images: list[str], est_gb: float, free: int,
                       drive: str, warn: bool, cap: float | None) -> str:
-    """Generate a self-contained hydration script (.bat on Windows, .sh else).
+    """Generate a self-contained .sh hydration script (Linux tray builds).
 
     Deliberately NOT a Python child process: the frozen tray exe cannot
     re-invoke itself as a python interpreter (PyInstaller's bootloader
     rejects it with a "Security validation failure: parent process has
     different executable!" dialog). The live-output terminal instead runs a
-    generated native script — the same mechanism as the confirmation dialog,
-    which already works from the EXE.
+    generated native script. Windows uses the PowerShell driver/worker pair
+    (see _hydration_ps1_pair); Linux uses this .sh.
     """
     drive_txt = (drive or "storage drive").rstrip(":")
     est_txt = f"{est_gb:.0f}"
     free_txt = f"{free / 2**30:.1f}" if free else None
     cap_txt = f"{cap:.0f}" if cap is not None else None
     img_list = " ".join(f'"{i}"' for i in images)
-
-    if sys.platform == "win32":
-        L: list[str] = []
-        a = L.append
-        a("@echo off")
-        a("title Ephemeral: Pre-hydrate All Images")
-        a("echo ============================================================")
-        a("echo   Ephemeral: Pre-hydrate All Images")
-        a("echo ============================================================")
-        a("echo.")
-        a(f"echo   {len(images)} images in the language set.")
-        a(f"echo   Worst-case download: ~{est_txt} GB (cached images skipped)")
-        if free_txt:
-            a(f"echo   Free on {drive_txt}: {free_txt} GB")
-        if cap_txt:
-            a(f"echo   Podman VM disk cap: {cap_txt} GB")
-        if warn:
-            a("echo.")
-            a("echo   *** WARNING: free space may be insufficient - pulls may fail ***")
-        a("echo.")
-        a("echo   The node keeps running during the pull. Jobs land on already-warm")
-        a("echo   images. If space runs short, cold cached images are evicted.")
-        a("echo.")
-        a("echo   Press Ctrl+C to abort at any time.")
-        a("echo ============================================================")
-        a("echo.")
-        a("")
-        a("rem --- Ensure podman is running ---")
-        a("podman info >nul 2>&1")
-        a("if errorlevel 1 (")
-        a("    echo Starting podman machine...")
-        a("    podman machine start")
-        a("    podman info >nul 2>&1")
-        a("    if errorlevel 1 (")
-        a("        echo ERROR: podman is not available. Aborting.")
-        a("        pause")
-        a("        exit /b 1")
-        a("    )")
-        a(")")
-        a("echo Podman is running.")
-        a("echo.")
-        a("")
-        a("set /a pulled=0")
-        a("set /a skipped=0")
-        a("set /a failed=0")
-        a("")
-        a(f"for %%i in ({img_list}) do (")
-        a('    podman image inspect "%%~i" >nul 2>&1')
-        a("    if not errorlevel 1 (")
-        a("        echo [skip] %%~i  -- already cached")
-        a("        set /a skipped+=1")
-        a("    ) else (")
-        a('        call :pull "%%~i"')
-        a("    )")
-        a(")")
-        a("goto :done")
-        a("")
-        a(":pull")
-        a("set /a attempt=0")
-        a(":retry")
-        a("set /a attempt+=1")
-        a("echo [pull] %~1  -- pulling...")
-        a('podman pull "%~1"')
-        a("if not errorlevel 1 goto pulled_ok")
-        a("if %attempt% GEQ 3 goto pulled_fail")
-        a("echo         retry %attempt%/3")
-        a("%SystemRoot%\\System32\\timeout.exe /t 5 /nobreak >nul")
-        a("goto retry")
-        a(":pulled_ok")
-        a("echo [ok] %~1  -- pulled")
-        a("set /a pulled+=1")
-        a("exit /b 0")
-        a(":pulled_fail")
-        a("echo [FAIL] %~1")
-        a("set /a failed+=1")
-        a("exit /b 0")
-        a("")
-        a(":done")
-        a("echo.")
-        a("echo ============================================================")
-        a("echo   Pre-hydration complete")
-        a("echo   Pulled: %pulled%  ^|  Cached: %skipped%  ^|  Failed: %failed%")
-        a("echo ============================================================")
-        a("echo.")
-        a("pause")
-        return "\r\n".join(L) + "\r\n"
 
     # POSIX .sh — used by the Linux AppImage / dev tray builds.
     L = []
@@ -1192,6 +1106,215 @@ def _hydration_script(images: list[str], est_gb: float, free: int,
     return "\n".join(L) + "\n"
 
 
+def _hydration_ps1_pair(images: list[str], est_gb: float, free: int,
+                        drive: str, warn: bool, cap: float | None):
+    """Generate (driver, worker) PowerShell scripts for Windows hydration.
+
+    Windows podman-machine has a known quirk: ``podman pull`` can hang in
+    its finalize phase AFTER the image is fully pulled on the machine side
+    (the CLI never exits, so the old batch appeared frozen on every pull's
+    last blob). This design keeps pulls strictly linear but decouples the
+    UI from the hung CLI:
+
+    * the worker runs hidden, pulls one image at a time, and writes all
+      status + podman output to a log;
+    * each pull is a detached process with a 30-minute watchdog, and the
+      worker probes the machine side with a capped ``podman image inspect``
+      so a finished-but-hung CLI is killed and the batch moves on;
+    * the driver (the visible console window) tails the log live, so the
+      window never freezes.
+
+    Returns (driver_text, worker_text, paths) with the temp paths baked in.
+    """
+    def ps(s: str) -> str:
+        """Single-quote for PowerShell (escape embedded quotes)."""
+        return s.replace("'", "''")
+
+    token = f"ephhyd{time.time_ns()}{os.getpid()}"
+    base = os.path.join(tempfile.gettempdir(), token)
+    paths = {
+        "log": base + ".log",
+        "pull_out": base + "_pull.out.log",
+        "pull_err": base + "_pull.err.log",
+        "driver": base + "_driver.ps1",
+        "worker": base + "_worker.ps1",
+    }
+    log, po, pe = ps(paths["log"]), ps(paths["pull_out"]), ps(paths["pull_err"])
+    worker_path = ps(paths["worker"])
+
+    drive_txt = (drive or "storage drive").rstrip(":")
+    est_txt = f"{est_gb:.0f}"
+    free_txt = f"{free / 2**30:.1f}" if free else None
+    cap_txt = f"{cap:.0f}" if cap is not None else None
+    img_list = ", ".join(f"'{ps(i)}'" for i in images)
+
+    # --- worker -----------------------------------------------------------
+    wl: list[str] = []
+    a = wl.append
+    a("$ErrorActionPreference = 'Continue'")
+    a(f"$log = '{log}'")
+    a(f"$pullOut = '{po}'")
+    a(f"$pullErr = '{pe}'")
+    a("function Log([string]$msg) { Add-Content -LiteralPath $log -Value $msg }")
+    a("")
+    a("function Test-Image([string]$img) {")
+    a("    $o = Join-Path $env:TEMP 'ephem_ins_out.tmp'")
+    a("    $e = Join-Path $env:TEMP 'ephem_ins_err.tmp'")
+    a("    try {")
+    a("        $p = Start-Process podman -ArgumentList @('image','inspect',$img) -WindowStyle Hidden -RedirectStandardOutput $o -RedirectStandardError $e -PassThru")
+    a("        $exited = $p.WaitForExit(10000)")
+    a("        if ($exited) {")
+    a("            $p.Refresh()")
+    a("            if ($null -ne $p.ExitCode) { return ($p.ExitCode -eq 0) }")
+    a("        } else {")
+    a("            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue")
+    a("        }")
+    a("        # podman on Windows machine builds does not populate ExitCode;")
+    a("        # fall back to the inspect JSON, which contains an Id when the image exists.")
+    a("        $raw = Get-Content -LiteralPath $o -Raw -ErrorAction SilentlyContinue")
+    a("        if ($raw -and $raw.Contains('\"Id\"')) { return $true }")
+    a("    } catch { }")
+    a("    return $false")
+    a("}")
+    a("")
+    a("Log '============================================================'")
+    a("Log '  Ephemeral: Pre-hydrate All Images'")
+    a("Log '============================================================'")
+    a("Log ''")
+    a(f"Log '  {len(images)} images in the language set.'")
+    a(f"Log '  Worst-case download: ~{est_txt} GB (cached images skipped)'")
+    if free_txt:
+        a(f"Log '  Free on {drive_txt}: {free_txt} GB'")
+    if cap_txt:
+        a(f"Log '  Podman VM disk cap: {cap_txt} GB'")
+    if warn:
+        a("Log '  *** WARNING: free space may be insufficient - pulls may fail ***'")
+    a("Log ''")
+    a("Log '  The node keeps running during the pull. Jobs land on already-warm'")
+    a("Log '  images. If space runs short, cold cached images are evicted.'")
+    a("Log ''")
+    a("Log '  This window tails the worker log. Ctrl+C here stops the display'")
+    a("Log '  only; pulls continue, each with a 30-minute watchdog.'")
+    a("Log '============================================================'")
+    a("Log ''")
+    a("")
+    a("podman info *> $null")
+    a("if ($LASTEXITCODE -ne 0) {")
+    a("    Log 'Starting podman machine...'")
+    a("    podman machine start | Out-Null")
+    a("    podman info *> $null")
+    a("    if ($LASTEXITCODE -ne 0) {")
+    a("        Log 'ERROR: podman is not available. Aborting.'")
+    a("        exit 1")
+    a("    }")
+    a("}")
+    a("Log 'Podman is running.'")
+    a("Log ''")
+    a("")
+    a("$pulled = 0; $skipped = 0; $failed = 0")
+    a(f"$images = @({img_list})")
+    a("")
+    a("foreach ($img in $images) {")
+    a("    if (Test-Image $img) {")
+    a("        Log \"[skip] $img  -- already cached\"")
+    a("        $skipped++")
+    a("        continue")
+    a("    }")
+    a("    $ok = $false")
+    a("    for ($attempt = 1; $attempt -le 3; $attempt++) {")
+    a("        Log \"[pull] $img  -- pulling... (attempt $attempt/3)\"")
+    a("        $proc = Start-Process podman -ArgumentList @('pull',$img) -WindowStyle Hidden -RedirectStandardOutput $pullOut -RedirectStandardError $pullErr -PassThru")
+    a("        $waited = 0; $checked = 0; $hb = 0")
+    a("        while ((-not $proc.HasExited) -and ($waited -lt 1800)) {")
+    a("            Start-Sleep -Seconds 2")
+    a("            $waited += 2; $checked++; $hb++")
+    a("            if ($checked -ge 3) {")
+    a("                $checked = 0")
+    a("                if (Test-Image $img) { break }   # machine side done")
+    a("            }")
+    a("            if ($hb -ge 15) {")
+    a("                $hb = 0")
+    a("                Log \"  [wait] $img - $([math]::Floor($waited / 60))m elapsed, still pulling\"")
+    a("            }")
+    a("        }")
+    a("        if (-not $proc.HasExited) {")
+    a("            Log '  pull process still alive - terminating it'")
+    a("            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue")
+    a("        }")
+    a("        if (Test-Image $img) { $ok = $true; break }")
+    a("        if ($attempt -lt 3) {")
+    a("            Log \"  retry $attempt/3 - waiting 5s\"")
+    a("            Start-Sleep -Seconds 5")
+    a("        }")
+    a("    }")
+    a("    if ($ok) { Log \"[ok] $img  -- pulled\"; $pulled++ }")
+    a("    else     { Log \"[FAIL] $img\"; $failed++ }")
+    a("}")
+    a("")
+    a("Log ''")
+    a("Log '============================================================'")
+    a("Log '  Pre-hydration complete'")
+    a("Log \"  Pulled: $pulled  |  Cached: $skipped  |  Failed: $failed\"")
+    a("Log '============================================================'")
+    a("exit 0")
+    worker_text = "\r\n".join(wl) + "\r\n"
+
+    # --- driver (the visible console window: tails the log) --------------
+    dl: list[str] = []
+    b = dl.append
+    b("$Host.UI.RawUI.WindowTitle = 'Ephemeral: Pre-hydrate All Images'")
+    b(f"$log = '{log}'; $pullOut = '{po}'; $pullErr = '{pe}'")
+    b(f"$w = Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','{worker_path}') -WindowStyle Hidden -PassThru")
+    b("$posLog = 0; $posOut = 0; $posErr = 0")
+    b("")
+    b("while (-not $w.HasExited) {")
+    b("    if (Test-Path -LiteralPath $log) {")
+    b("        $c = @(Get-Content -LiteralPath $log).Count")
+    b("        if ($c -lt $posLog) { $posLog = 0 }")
+    b("        if ($c -gt $posLog) {")
+    b("            Get-Content -LiteralPath $log | Select-Object -Skip $posLog | ForEach-Object { Write-Host $_ }")
+    b("            $posLog = $c")
+    b("        }")
+    b("    }")
+    b("    if (Test-Path -LiteralPath $pullOut) {")
+    b("        $c = @(Get-Content -LiteralPath $pullOut).Count")
+    b("        if ($c -lt $posOut) { $posOut = 0 }")
+    b("        if ($c -gt $posOut) {")
+    b("            Get-Content -LiteralPath $pullOut | Select-Object -Skip $posOut | ForEach-Object { Write-Host $_ }")
+    b("            $posOut = $c")
+    b("        }")
+    b("    }")
+    b("    if (Test-Path -LiteralPath $pullErr) {")
+    b("        $c = @(Get-Content -LiteralPath $pullErr).Count")
+    b("        if ($c -lt $posErr) { $posErr = 0 }")
+    b("        if ($c -gt $posErr) {")
+    b("            Get-Content -LiteralPath $pullErr | Select-Object -Skip $posErr | ForEach-Object { Write-Host $_ }")
+    b("            $posErr = $c")
+    b("        }")
+    b("    }")
+    b("    Start-Sleep -Milliseconds 400")
+    b("}")
+    b("# final flush")
+    b("foreach ($f in @($log,$pullOut,$pullErr)) {")
+    b("    if (Test-Path -LiteralPath $f) {")
+    b("        $c = @(Get-Content -LiteralPath $f).Count")
+    b("        $s = 0")
+    b("        if ($f -eq $log) { $s = $posLog } elseif ($f -eq $pullOut) { $s = $posOut } else { $s = $posErr }")
+    b("        if ($c -gt $s) {")
+    b("            Get-Content -LiteralPath $f | Select-Object -Skip $s | ForEach-Object { Write-Host $_ }")
+    b("        }")
+    b("    }")
+    b("}")
+    b("Write-Host ''")
+    b("Write-Host 'Pre-hydration finished. Press Enter to close...'")
+    b("Read-Host | Out-Null")
+    b(f"Remove-Item -LiteralPath '{worker_path}' -Force -ErrorAction SilentlyContinue")
+    b("Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue")
+    driver_text = "\r\n".join(dl) + "\r\n"
+
+    return driver_text, worker_text, paths
+
+
 def _spawn_hydration_console(images: list[str], est_gb: float,
                              free: int, drive: str, warn: bool,
                              cap: float | None) -> None:
@@ -1202,26 +1325,35 @@ def _spawn_hydration_console(images: list[str], est_gb: float,
     native script (not a python child) so it works from the frozen EXE.
     """
     try:
+        if sys.platform == "win32":
+            # Windows: a hidden worker pulls one image at a time (linear,
+            # watchdogged, machine-side completion probe) writing to a log,
+            # while the visible PowerShell console tails the log. The window
+            # never freezes even when the podman CLI hangs after a pull
+            # completes (known podman-machine/WSL2 behavior).
+            driver_text, worker_text, paths = _hydration_ps1_pair(
+                images, est_gb, free, drive, warn, cap
+            )
+            for path, text in [(paths["driver"], driver_text),
+                               (paths["worker"], worker_text)]:
+                with open(path, "w", encoding="utf-8", newline="") as f:
+                    f.write(text)
+            subprocess.Popen(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                 "-File", paths["driver"]],
+                creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+            )
+            return
+
+        # Linux: generate a .sh and launch it in a terminal emulator.
         script_text = _hydration_script(images, est_gb, free, drive, warn, cap)
-        is_win = sys.platform == "win32"
-        suffix = ".bat" if is_win else ".sh"
         script = tempfile.NamedTemporaryFile(
-            suffix=suffix, prefix="ephemeral_hydrate_",
+            suffix=".sh", prefix="ephemeral_hydrate_",
             mode="w", delete=False, encoding="utf-8", newline="",
         )
         script.write(script_text)
         script.close()
 
-        if is_win:
-            # Open a new cmd.exe window running the batch script (the same
-            # mechanism as the confirmation dialog, which works from the EXE).
-            subprocess.Popen(
-                ["cmd", "/k", script.name],
-                creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
-            )
-            return
-
-        # Linux: try common terminal emulators.
         bash = shutil.which("bash") or "/bin/bash"
         for term, flag in [
             ("gnome-terminal", "--"),
