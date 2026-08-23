@@ -797,6 +797,11 @@ def setup_tray_mode(icon):
     threading.Thread(target=idle_monitor, args=(icon,), daemon=True).start()
     keyboard.add_hotkey(HOTKEY, lambda: on_hotkey(icon))
     keyboard.add_hotkey(CONVERT_HOTKEY, lambda: on_convert_hotkey(icon))
+    # Startup confirmation (parity with the distributed tray).
+    icon.notify(
+        "Ephemeral tray started — ready for clipboard runs.",
+        title="Ephemeral",
+    )
 
 
 def setup_oneshot_mode(icon, file_path):
