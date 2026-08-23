@@ -1,12 +1,12 @@
 {
-  "updated": "2026-08-23T01:44:19Z",
+  "updated": "2026-08-23T06:50:09Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6m5bqdaeakhqdbmxhimay",
+      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6ljbqdaeakhqdbmw2imay",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/clfoundation/sbcl:slim",
@@ -37,17 +37,17 @@
       "url": null,
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-23T01:44:19Z",
+      "probe_at": "2026-08-23T06:50:09Z",
       "probe_detail": "ok",
-      "probe_ms": 805,
+      "probe_ms": 968,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 5483
+      "rtt_ms": 4151
     },
     {
       "node_id": "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh2nmqdaeaevjzgb7nmiaybacwbouab3lcagaiaycuaaf62yqbq",
+      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh5jhadaeaevjzgb7nmiaybacwbouab3lcagaiaycuaaf62yqbq",
       "images": [
         "docker.io/esolang/05ab1e:latest",
         "docker.io/hdlc/iverilog:latest",
@@ -62,52 +62,40 @@
         "docker.io/rhysd/actionlint:latest"
       ],
       "url": null,
+      "probe_fails": 2,
       "seen_alive": true,
       "probe": "failed",
-      "probe_at": "2026-08-23T01:44:19Z",
+      "probe_at": "2026-08-23T06:50:09Z",
       "probe_detail": "probe failed (JobError): Could not start Podman: Command '['podman', 'machine', 'init']' returned non-zero exit status 125.",
-      "probe_ms": 817,
-      "probe_fails": 1,
+      "probe_ms": 772,
       "misses": 0,
-      "rtt_ms": 305
+      "rtt_ms": 252
     },
     {
-      "node_id": "beb20d674d25f6382ddc5b1e76b378a770d049919bca4b2586082f061e6388ea",
-      "relay": null,
-      "ticket": "endpointac7ledlhjus7mobn3rnr45vtpctxbucjsgn4uszfqyec6bq6moeouaa",
-      "images": [],
-      "url": null,
-      "probe_fails": 0,
-      "misses": 1,
-      "seen_alive": false,
-      "probe": "unreachable",
-      "probe_at": "2026-08-23T01:44:19Z"
-    },
-    {
-      "node_id": "eb988bf374bb1302bc2e5c8da4d1e78e68c11fa8fdf54cadd706692012797c68",
+      "node_id": "a965e42aaa5456d85fa2e202a4ba47f0740eb8f61771056dde93b13a27edd857",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointadvzrc7tos5rgav4fzoi3jgr46hgrqi7vd67ktfn24dgsiaspf6gqbaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbab65fnicaeadtf2tacajqaybacwbcaab2k2qe",
+      "ticket": "endpointacuwlzbkvjkfnwc7ulrafjf2i7yhidvy6ylxcbln32j3corh5xmfobaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbab3l5sadaeacqvgykcajqaybacwbcaabx3eag",
       "images": [],
       "url": null,
       "probe_fails": 0,
       "misses": 1,
       "seen_alive": false,
       "probe": "unreachable",
-      "probe_at": "2026-08-23T01:44:19Z"
+      "probe_at": "2026-08-23T06:50:09Z"
     }
   ],
   "bastions": [
     {
       "node_id": "ed7106bced606bede735b4c9b215052855f9747e8cb56629759ae672ce29b9c8",
-      "relay": "https://usw1-1.relay.n0.iroh.link./",
-      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacxpbb3mjfycaeajqn5ro3cjoaq",
+      "relay": "https://euc1-1.relay.n0.iroh.link./",
+      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacw2vu6odcycaeajqn5ztpqywaq",
       "images": [],
       "url": "https://ephemeralexe-production.up.railway.app",
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-23T01:44:19Z",
+      "probe_at": "2026-08-23T06:50:09Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 423,
+      "probe_ms": 428,
       "probe_fails": 0,
       "misses": 0
     }
@@ -140,6 +128,8 @@
     "96f9df3009a01794a4320b3eb9cac11033b91412cc834957eb12fca79a93c865": 1787449460.353813,
     "30d96cd78b9a6b20ea0b3d34b845ce255a617ede1e6d6e5bc1fdb2e959ba897d": 1787449460.353813,
     "6b8528742d0bc0b3f2322951b810d4caff3c2b7d2613b0aa162a228d9cfd3d81": 1787449460.353813,
-    "efe3273d7124efff8b68ecbac9d945858dd84be7c90e94ae43cff79aaaf22936": 1787449460.353813
+    "efe3273d7124efff8b68ecbac9d945858dd84be7c90e94ae43cff79aaaf22936": 1787449460.353813,
+    "beb20d674d25f6382ddc5b1e76b378a770d049919bca4b2586082f061e6388ea": 1787467809.9875538,
+    "eb988bf374bb1302bc2e5c8da4d1e78e68c11fa8fdf54cadd706692012797c68": 1787467809.9875538
   }
 }
