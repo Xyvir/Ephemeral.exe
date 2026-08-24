@@ -2,7 +2,7 @@
 Swarm — shared bootstrap configuration for the default ephemeral network.
 
 One big implicit swarm: every distributed binary — desktop client
-(``main_distributed_client.py``), self-host gateway (``main_distributed.py``),
+(``ephemeral_ui/backends/distributed.py``), self-host gateway (``main_distributed.py``),
 and the wasm thin client (``ephemeral-wasm-library/web/``) — joins the same
 public iroh network by default and discovers the rest of it through the
 **live bootstrap list** (``docs/swarm.json``, served by GitHub Pages / raw

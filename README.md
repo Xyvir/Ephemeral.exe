@@ -504,10 +504,15 @@ ephemeral_core/          ← Platform-agnostic engine (parsing + Podman orchestr
 ├── models.py            ← ExecutionResult, GroupResult, BlockResult dataclasses
 └── __init__.py
 
-main_local.py            ← Windows tray client (clipboard → Podman → clipboard)
+ephemeral_ui/            ← Unified desktop front end (one tray, two backends)
+├── tray.py              ← Shared tray UI (menu, hotkeys, modes) — calls generic backend functions
+├── platform.py          ← Shared platform plumbing (clipboard, prompts, artifacts, autostart)
+└── backends/            ← local.py (Podman) | distributed.py (iroh cluster)
+
+main_local.py            ← Thin entry: LocalBackend (clipboard → Podman → clipboard)
 main_api.py              ← FastAPI server (POST /ephemeral/api/v1/run, base64 payloads)
 main_distributed.py      ← Self-host distributed gateway (REST + cluster compute node)
-main_distributed_client.py ← Distributed desktop tray client (local run + offloading)
+main_distributed_client.py ← Thin entry: DistributedBackend (per-user node + offloading)
 
 ephemeral_net/           ← Distributed networking tier (iroh QUIC + peer discovery)
 ephemeral_self_host/     ← Distributed gateway internals (sandboxed + offloading executor)
@@ -583,7 +588,7 @@ To rebuild the wasm module: `cd ephemeral-wasm-library && bash build.sh` (see `b
 
 ### Desktop tiers & Linux AppImages
 
-The desktop tray clients (`main_local.py` local-only, `main_distributed_client.py` distributed) are cross-platform: the same code builds a Windows EXE (PyInstaller) and a Linux **AppImage** (PyInstaller onedir + appimagetool, via `packaging/build_appimage.sh local|distributed`). Platform plumbing is guarded: the language prompt uses zenity/kdialog/tkinter on Linux, image-clipboard uses wl-copy/xclip, login autostart writes a `~/.config/autostart/ephemeral.desktop` entry, and Podman lifecycle uses the native rootless socket (`systemctl --user start podman.socket`) instead of `podman machine`. Both apps also expose `--cli script.md` (headless) and `--self-check` (install verification) modes. The distributed tray runs a per-user node (one stable identity per account, serving the swarm while logged in or the PC is locked) — for a node that survives logout, run the Linux self-host gateway.
+The desktop tray clients are cross-platform: the same code builds a Windows EXE (PyInstaller) and a Linux **AppImage** (PyInstaller onedir + appimagetool, via `packaging/build_appimage.sh local|distributed`). Both flavors share **one front end** (`ephemeral_ui/tray.py`) that calls a small generic backend interface; `ephemeral_ui/backends/local.py` routes execution to local Podman and `ephemeral_ui/backends/distributed.py` routes it through the iroh cluster. The entry points (`main_local.py`, `main_distributed_client.py`) are thin selectors — so the local client never shows the Distributed menu, and behavior parity between tiers is a matter of one shared menu/hotkey/mode implementation. Platform plumbing is guarded: the language prompt uses zenity/kdialog/tkinter on Linux, image-clipboard uses wl-copy/xclip, login autostart writes a `~/.config/autostart/ephemeral.desktop` entry, and Podman lifecycle uses the native rootless socket (`systemctl --user start podman.socket`) instead of `podman machine`. Both apps also expose `--cli script.md` (headless) and `--self-check` (install verification) modes. The distributed tray runs a per-user node (one stable identity per account, serving the swarm while logged in or the PC is locked) — for a node that survives logout, run the Linux self-host gateway.
 
 ---
 
@@ -727,7 +732,7 @@ wine python -m pip install -r requirements.txt pyinstaller Pillow
 wine python -c "from PIL import Image, ImageDraw; img=Image.new('RGB', (64, 64), (30, 30, 30)); dc=ImageDraw.Draw(img); dc.rectangle((16,16,48,48), fill=(255,255,255)); dc.rectangle((20,20,44,28), fill=(0,120,215)); img.save('ephemeral.ico')"
 
 # Inject build timestamp as version
-sed -i "s/Version number (injected from the github workflow)/LOCAL_$(date +%Y%m%d-%H%M%S)/g" main_local.py
+sed -i "s/Version number (injected from the github workflow)/LOCAL_$(date +%Y%m%d-%H%M%S)/g" ephemeral_ui/backends/local.py
 
 # Build — main_local.py is the entry point, ephemeral_core is bundled as a hidden import
 wine pyinstaller --noconsole --onefile --name Ephemeral --icon=ephemeral.ico --hidden-import=ephemeral_core main_local.py

@@ -86,7 +86,7 @@ jobs:
         FULL_SHA="${{ github.sha }}"
         SHORT_SHA="${FULL_SHA:0:7}"
         VERSION="$(date +'%Y%m%d')-${SHORT_SHA}"
-        sed -i "s/Version number (injected from the github workflow)/${VERSION}/g" main_local.py
+        sed -i "s/Version number (injected from the github workflow)/${VERSION}/g" ephemeral_ui/backends/local.py
 
     - name: Build EXE
       run: pyinstaller --noconsole --onefile --name Ephemeral --icon=ephemeral.ico --hidden-import=ephemeral_core main_local.py
@@ -125,7 +125,7 @@ jobs:
         FULL_SHA="${{ github.sha }}"
         SHORT_SHA="${FULL_SHA:0:7}"
         VERSION="$(date +'%Y%m%d')-${SHORT_SHA}"
-        sed -i "s/Version number (injected from the github workflow)/${VERSION}/g" main_distributed_client.py
+        sed -i "s/Version number (injected from the github workflow)/${VERSION}/g" ephemeral_ui/backends/distributed.py
 
     - name: Build EXE
       run: pyinstaller --noconsole --onefile --name Ephemeral-Distributed --icon=ephemeral.ico --hidden-import=ephemeral_core --hidden-import=ephemeral_net --collect-all iroh main_distributed_client.py

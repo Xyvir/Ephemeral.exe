@@ -43,7 +43,7 @@ fi
 
 # 2) Version stamp (same placeholder the Windows job injects) ------------
 sed -i "s/Version number (injected from the github workflow)/${VERSION}/g" \
-  main_local.py main_distributed_client.py
+  ephemeral_ui/backends/local.py ephemeral_ui/backends/distributed.py
 
 # 3) PyInstaller onedir bundle -------------------------------------------
 "$VENV/bin/pyinstaller" --noconfirm --clean "packaging/${NAME}.spec"

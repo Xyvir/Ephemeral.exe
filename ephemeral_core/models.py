@@ -2,7 +2,7 @@
 Standardized data models for Ephemeral execution results.
 
 These dataclasses define the contract between ephemeral_core and its callers
-(main_api.py, main_local.py). All execution results flow through these types.
+(main_api.py, ephemeral_ui/backends/local.py). All execution results flow through these types.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field

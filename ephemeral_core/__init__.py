@@ -6,7 +6,7 @@ parsing, and artifact extraction logic for Ephemeral. It is designed to
 be driven by either:
 
   - main_api.py  (FastAPI server for remote execution)
-  - main_local.py (Windows tray client for local execution)
+  - ephemeral_ui/backends/local.py (Windows tray client, local execution)
 
 Public API:
     parse_and_execute(markdown_text, timeout) -> ExecutionResult

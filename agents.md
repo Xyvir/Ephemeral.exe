@@ -17,11 +17,16 @@ ephemeral_core/          ← Platform-agnostic engine (no GUI/HTTP)
 └── __init__.py          ← Public API re-exports
 
 main_api.py              ← FastAPI server (POST /ephemeral/api/v1/run, base64 Pydantic model)
-main_local.py            ← Windows tray client (clipboard, hotkeys, pystray)
+ephemeral_ui/            ← Unified desktop front end (one tray, two backends)
+├── tray.py              ← Shared tray UI (menu, hotkeys, modes) — drives generic backend functions
+├── platform.py          ← Shared platform plumbing (clipboard, prompts, artifacts, autostart)
+└── backends/            ← local.py (Podman) | distributed.py (iroh cluster)
+main_local.py            ← Thin entry: LocalBackend
+main_distributed_client.py ← Thin entry: DistributedBackend
 install.sh               ← One-shot sidecar deployment (systemd + rootless Podman)
 ```
 
-**Key rule:** `ephemeral_core/` must never import GUI, clipboard, HTTP, or platform-specific code. All platform logic lives in the entry points.
+**Key rule:** `ephemeral_core/` must never import GUI, clipboard, HTTP, or platform-specific code. All platform logic lives in `ephemeral_ui/` (the unified front end + backends). The tray front end never imports `ephemeral_core`/`ephemeral_net` directly — backends own that, so the local build stays free of the networking tier.
 
 ### Core API
 
@@ -55,6 +60,15 @@ Artifact routing is the caller's responsibility, not the core's:
 - **API** (`main_api.py`): Zips to `/data/ephemeral/` (WebDAV mount)
 - **Local** (`main_local.py`): Single image → clipboard, single file → Downloads, multiple → zipped to Downloads
 
+### Tray Feedback (two mechanisms only)
+
+The unified tray front end (`ephemeral_ui/`) has exactly two user-feedback surfaces:
+
+1. **Toast notifications** (`icon.notify`) — transient / successful messages: "Launching bash...", "Results copied", validation ("Clipboard is empty").
+2. **Terminal windows** (`ephemeral_ui.platform.show_terminal_window`) — anything needing longer review: errors (execution failures, cluster failures), About (with node status), long-running status. Non-blocking and log-backed (same pattern as pre-hydration); interactive prompts (language / seed / pre-hydration confirmation) stay on their own blocking consoles.
+
+Do NOT introduce a third surface, and don't toast error output — route it through `show_terminal_window`.
+
 ### Dependencies
 
 - `requirements.txt` — Windows tray client (pystray, Pillow, pyperclip, keyboard)
@@ -76,7 +90,7 @@ GitHub Actions (`.github/workflows/build.yml`):
 **The Issue:** Antivirus software, particularly Windows Defender, relies heavily on heuristic scanning for self-extracting zip files containing Python bootloaders (which PyInstaller creates). In this case, the virus detection was NOT due to a random hash collision, but specifically due to the behavior of passing the local filename through the hotkey clipboard generation mechanism.
 
 **Specific Example (June 2026):**
-A change to the `on_convert_hotkey` function (now in `main_local.py`) caused Windows Defender to flag the output executable. The change involved taking a file copied to the clipboard, reading its contents, and injecting its local filename into the clipboard output as a "pass-thru" variable (`filename.replace(' ', '_')` or using `os.path.basename(file_path)` directly into the output string).
+A change to the `on_convert_hotkey` function (now in `ephemeral_ui/platform.py`) caused Windows Defender to flag the output executable. The change involved taking a file copied to the clipboard, reading its contents, and injecting its local filename into the clipboard output as a "pass-thru" variable (`filename.replace(' ', '_')` or using `os.path.basename(file_path)` directly into the output string).
 
 Because the executable was:
 1. Grabbing clipboard data (`ImageGrab.grabclipboard()`)

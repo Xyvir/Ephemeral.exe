@@ -12,10 +12,10 @@ This is the shared guardrail for every entry point that downloads an
 image:
 
 * the backend API server (``main_api.py`` -> ``ephemeral_core.pull_image``)
-* the local tray client (``main_local.py`` -> ``ephemeral_core.pull_image``)
+* the local tray client (``ephemeral_ui/backends/local.py`` -> ``ephemeral_core.pull_image``)
 * distributed nodes (``main_distributed.py`` / ``ephemeral_net.offload``
   background pulls -> ``ephemeral_core.pull_image``)
-* the distributed client's pre-hydration (``main_distributed_client.py``)
+* the distributed client's pre-hydration (``ephemeral_ui/backends/distributed.py``)
 
 Everything is best-effort: if podman is unreachable or the free-space
 probe fails, the pull proceeds as before rather than being blocked.
