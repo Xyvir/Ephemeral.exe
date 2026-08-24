@@ -1,12 +1,12 @@
 {
-  "updated": "2026-08-23T18:36:30Z",
+  "updated": "2026-08-24T01:41:25Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6nbuidaeakhqdbmxincay",
+      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6mt3icaeakhqdbmxe62aq",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/clfoundation/sbcl:slim",
@@ -37,24 +37,24 @@
       "url": null,
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-23T18:36:30Z",
+      "probe_at": "2026-08-24T01:41:25Z",
       "probe_detail": "ok",
-      "probe_ms": 983,
+      "probe_ms": 1224,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 6838
+      "rtt_ms": 2107
     },
     {
-      "node_id": "7a05f9a1aef4cb4715b77ec6f90ccb621da940bba08d1946054ff5b325b389c8",
+      "node_id": "9f22b99029b669c992b0475ffa1660de6e4470bb6e85fca4aaf46673da3e206c",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointab5al6nbv32mwryvw57mn6imznrb3kkaxoqi2gkgavh7lmzfwoe4qbaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbaf5j7uidaeaev22pe6anqaybacwbcaabt7iqg",
+      "ticket": "endpointacpsfomqfg3gtsmswbdv76qwmdpg4rdqxnxil7fevl2gm462hyqgybaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbaaiivhacaeaj4fyteomnaaibacwbcaabrkoae",
       "images": [],
       "url": null,
       "probe_fails": 0,
       "misses": 1,
       "seen_alive": false,
       "probe": "unreachable",
-      "probe_at": "2026-08-23T18:36:30Z"
+      "probe_at": "2026-08-24T01:41:25Z"
     }
   ],
   "bastions": [
@@ -66,9 +66,9 @@
       "url": "https://ephemeralexe-production.up.railway.app",
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-23T18:36:30Z",
+      "probe_at": "2026-08-24T01:41:25Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 587,
+      "probe_ms": 414,
       "probe_fails": 0,
       "misses": 0
     }
@@ -106,6 +106,7 @@
     "eb988bf374bb1302bc2e5c8da4d1e78e68c11fa8fdf54cadd706692012797c68": 1787467809.9875538,
     "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c": 1787489414.9224796,
     "a965e42aaa5456d85fa2e202a4ba47f0740eb8f61771056dde93b13a27edd857": 1787489414.9224796,
-    "84d9a42b7930f8862a33b695a87ad54bacb4938cc9cf2a11d027d455a51cc140": 1787510191.7542272
+    "84d9a42b7930f8862a33b695a87ad54bacb4938cc9cf2a11d027d455a51cc140": 1787510191.7542272,
+    "7a05f9a1aef4cb4715b77ec6f90ccb621da940bba08d1946054ff5b325b389c8": 1787535687.055982
   }
 }
