@@ -1,12 +1,12 @@
 {
-  "updated": "2026-08-25T01:36:15Z",
+  "updated": "2026-08-25T06:56:06Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6jx2ycaeakhqdbmwn6waq",
+      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6ihsadaeakhqdbmwb4qay",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/clfoundation/sbcl:slim",
@@ -37,26 +37,26 @@
       "url": null,
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-25T01:36:15Z",
+      "probe_at": "2026-08-25T06:56:06Z",
       "probe_detail": "ok",
-      "probe_ms": 918,
+      "probe_ms": 912,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 2959
+      "rtt_ms": 3025
     }
   ],
   "bastions": [
     {
       "node_id": "ed7106bced606bede735b4c9b215052855f9747e8cb56629759ae672ce29b9c8",
       "relay": "https://euc1-1.relay.n0.iroh.link./",
-      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacwbuohjzcycaeajqn5zwcoiwaq",
+      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacvtaixjbjacaeajqn5y6oikiaq",
       "images": [],
       "url": "https://ephemeralexe-production.up.railway.app",
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-25T01:36:15Z",
+      "probe_at": "2026-08-25T06:56:06Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 514,
+      "probe_ms": 430,
       "probe_fails": 0,
       "misses": 0
     }
