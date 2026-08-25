@@ -1,12 +1,12 @@
 {
-  "updated": "2026-08-25T12:56:34Z",
+  "updated": "2026-08-25T18:46:47Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6p5jicaeakhqdbmx7kkaq",
+      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6obuidaeakhqdbmxqncay",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/clfoundation/sbcl:slim",
@@ -37,24 +37,24 @@
       "url": null,
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-25T12:56:34Z",
+      "probe_at": "2026-08-25T18:46:47Z",
       "probe_detail": "ok",
-      "probe_ms": 922,
+      "probe_ms": 932,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 9683
+      "rtt_ms": 7865
     },
     {
-      "node_id": "7cf923e21258b1e4776d7974d73216cb7f839d76e73f633552c7eed991c4b6dd",
+      "node_id": "ccc008fd6f1ade8004c59e06750f666041e14c604799bf398842ab02a7135ca2",
       "relay": "https://usw1-1.relay.n0.iroh.link./",
-      "ticket": "endpointab6psi7ccjmldzdxnv4xjvzsc3fx7a45o3tt6yzvkld65wmrys3n2baaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbacvnrsqdaeabji2s62ioqaqbacwbcaab3dfag",
+      "ticket": "endpointadgmach5n4nn5aaeywpam5ipmzqedykmmbdztpzzrbbkwavhcnokebaaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbacz4x5acaeadtgqdykioqaqbacwbcaabzp2ae",
       "images": [],
       "url": null,
       "probe_fails": 0,
       "misses": 1,
       "seen_alive": false,
       "probe": "unreachable",
-      "probe_at": "2026-08-25T12:56:34Z"
+      "probe_at": "2026-08-25T18:46:47Z"
     }
   ],
   "bastions": [
@@ -66,9 +66,9 @@
       "url": "https://ephemeralexe-production.up.railway.app",
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-25T12:56:34Z",
+      "probe_at": "2026-08-25T18:46:47Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 486,
+      "probe_ms": 464,
       "probe_fails": 0,
       "misses": 0
     }
@@ -108,6 +108,7 @@
     "a965e42aaa5456d85fa2e202a4ba47f0740eb8f61771056dde93b13a27edd857": 1787489414.9224796,
     "84d9a42b7930f8862a33b695a87ad54bacb4938cc9cf2a11d027d455a51cc140": 1787510191.7542272,
     "7a05f9a1aef4cb4715b77ec6f90ccb621da940bba08d1946054ff5b325b389c8": 1787535687.055982,
-    "9f22b99029b669c992b0475ffa1660de6e4470bb6e85fca4aaf46673da3e206c": 1787555279.7105582
+    "9f22b99029b669c992b0475ffa1660de6e4470bb6e85fca4aaf46673da3e206c": 1787555279.7105582,
+    "7cf923e21258b1e4776d7974d73216cb7f839d76e73f633552c7eed991c4b6dd": 1787683608.13944
   }
 }
