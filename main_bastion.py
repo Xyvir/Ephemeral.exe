@@ -421,7 +421,10 @@ def main() -> None:
     """Run the API server directly — ``python main_bastion.py``.
 
     Listens on ``$PORT`` when set (Railway injects it and health-checks
-    that port), falling back to ``EPHEMERAL_PORT`` (default 8787).
+    that port), falling back to ``EPHEMERAL_PORT`` (default 8787). Proxy
+    headers are trusted so the app sees the original https scheme and
+    client IPs from Railway's TLS-terminating edge proxy (or any other
+    reverse proxy) with no extra configuration.
     """
     import uvicorn
 
@@ -430,6 +433,8 @@ def main() -> None:
         "main_bastion:app",
         host="0.0.0.0",
         port=port,
+        proxy_headers=True,
+        forwarded_allow_ips="*",
     )
 
 

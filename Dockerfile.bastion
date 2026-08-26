@@ -35,13 +35,20 @@ COPY ephemeral_net/ ./ephemeral_net/
 COPY ephemeral_self_host/ ./ephemeral_self_host/
 COPY main_bastion.py main_api.py ./
 
-# Runtime configuration (overridable at deploy time). On Railway,
-# RAILWAY_PUBLIC_DOMAIN is read automatically for the advertised URL.
+# Runtime configuration (overridable at deploy time). Railway provides
+# the URL, TLS, and proxy for free, so the container only has to:
 #
-# NOTE: Railway injects its own PORT variable and health-checks THAT port.
-# The CMD below listens on ${PORT} (falling back to 8787 locally) so the
-# healthcheck doesn't get "service unavailable" while the app sits on a
-# different port.
+#   * listen on the injected $PORT — Railway health-checks that same port
+#     and its generated domain auto-detects the single listening port as
+#     the target, so app / healthcheck / domain converge with zero port
+#     config (8787 is just the local fallback; EXPOSE keeps docker users
+#     on the documented port);
+#   * trust the proxy's forwarded headers — Railway terminates TLS at its
+#     edge and forwards X-Forwarded-Proto / X-Forwarded-For, so uvicorn
+#     must be told to honor them or it sees plain http and the proxy's
+#     address instead of the real client.
+#
+# RAILWAY_PUBLIC_DOMAIN is read automatically for the advertised URL.
 ENV EPHEMERAL_RELAY=n0 \
     EPHEMERAL_SEEDS="" \
     EPHEMERAL_ALLOW_NETWORK=0 \
@@ -51,5 +58,7 @@ ENV EPHEMERAL_RELAY=n0 \
 
 EXPOSE 8787
 
-# shell form so Railway's injected $PORT is expanded at runtime.
-CMD ["sh", "-c", "uvicorn main_bastion:app --host 0.0.0.0 --port ${PORT:-8787}"]
+# shell form so Railway's injected $PORT is expanded at runtime;
+# --proxy-headers/--forwarded-allow-ips make FastAPI honor Railway's
+# X-Forwarded-Proto (https) and X-Forwarded-For (real client IP).
+CMD ["sh", "-c", "uvicorn main_bastion:app --host 0.0.0.0 --port ${PORT:-8787} --proxy-headers --forwarded-allow-ips='*'"]

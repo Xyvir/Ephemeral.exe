@@ -32,18 +32,18 @@ export default defineRailway(() => {
     // Always-on: no sleepApplication, so the bastion stays in the swarm and
     // stays listed in docs/swarm.json while idle.
     replicas: 1,
-    // Pin a stable node identity across redeploys so the bastion keeps one
-    // node id (and one swarm.json entry) instead of re-keying every deploy.
-    // Generate once:
-    //   python -c "import secrets; print(secrets.token_bytes(32).hex())"
+    // Railway provides the per-project URL, TLS, and reverse proxy for
+    // free, so no port or domain config is needed here: the app listens on
+    // Railway's injected $PORT, the healthcheck follows that same PORT,
+    // and the generated domain auto-detects the single listening port as
+    // its target. (If a stale domain target port ever mismatches, fix it
+    // once in the dashboard's domain settings — not with env config.)
     //
-    // PORT must be pinned to 8787 (the app's EXPOSE/documented port).
-    // Railway injects PORT=8080 by default and health-checks THAT port,
-    // while the generated public domain routes to 8787 — a mismatch that
-    // produces 502 "Application failed to respond". Setting PORT=8787 makes
-    // the healthcheck, the app, and the domain all converge on one port.
+    // The one variable worth pinning is EPHEMERAL_SECRET, so the bastion
+    // keeps one node id (and one swarm.json entry) across redeploys
+    // instead of re-keying every deploy. Generate once:
+    //   python -c "import secrets; print(secrets.token_bytes(32).hex())"
     // env: {
-    //   PORT: "8787",
     //   EPHEMERAL_SECRET: "...",
     // },
   });
