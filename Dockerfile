@@ -22,16 +22,22 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Install Python deps first (layer caching).
-COPY requirements-api.txt requirements-net.txt ./
-RUN pip install --no-cache-dir -r requirements-api.txt -r requirements-net.txt
+# Install Python deps first (layer caching). Public distributed images stay
+# REST-only; private operators opt in with --build-arg INSTALL_MCP=1.
+ARG INSTALL_MCP=0
+COPY requirements-api.txt requirements-net.txt requirements-mcp.txt ./
+RUN pip install --no-cache-dir -r requirements-api.txt -r requirements-net.txt \
+    && if [ "$INSTALL_MCP" = "1" ]; then pip install --no-cache-dir -r requirements-mcp.txt; fi
 
-# App code. main_distributed.py imports main_api (wire contract), so it
-# must be present alongside the gateway and the execution/net tiers.
+# App code. main_distributed.py imports the shared API wire contract, so it
+# must be present alongside the gateway and the execution/net tiers. The MCP
+# source is included for private builds; public mode never registers its route.
+COPY ephemeral_api/ ./ephemeral_api/
 COPY ephemeral_core/ ./ephemeral_core/
 COPY ephemeral_net/ ./ephemeral_net/
+COPY ephemeral_mcp/ ./ephemeral_mcp/
 COPY ephemeral_self_host/ ./ephemeral_self_host/
-COPY main_distributed.py main_api.py ./
+COPY main_distributed.py ./
 
 # Runtime configuration (overridable at deploy time).
 ENV EPHEMERAL_RELAY=n0 \

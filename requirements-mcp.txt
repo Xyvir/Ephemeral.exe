@@ -1,0 +1,3 @@
+# --- Trusted MCP server integration ---
+# MCP v2 supports the 2026-07-28 protocol and Streamable HTTP.
+mcp>=2.0.0,<3

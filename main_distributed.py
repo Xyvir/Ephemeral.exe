@@ -42,12 +42,13 @@ up by the next scheduled refresh automatically.
 """
 from __future__ import annotations
 
+import base64
 import os
 import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
-from main_api import RunResponse  # same wire contract as the local API server
+from ephemeral_api import RunResponse
 
 from ephemeral_net.swarm import (
     load_or_create_secret,
@@ -77,9 +78,62 @@ EPHEMERAL_ALLOW_NETWORK = os.getenv("EPHEMERAL_ALLOW_NETWORK", "0") == "1"
 # private cluster. Enable via ``--private`` (direct run) or
 # ``EPHEMERAL_PRIVATE=1`` (systemd/uvicorn).
 PRIVATE_MODE = private_mode_enabled(argv=sys.argv)
+# Explicit seeds are also a private deployment, even when --private was not
+# needed to select the bootstrap path. This is the operator's opt-in to a
+# non-public cluster, so it is eligible for the trusted MCP surface.
+PRIVATE_DEPLOYMENT = PRIVATE_MODE or bool(EPHEMERAL_SEEDS or EPHEMERAL_SEED_NODES)
+
+try:
+    if PRIVATE_DEPLOYMENT:
+        from ephemeral_mcp import (
+            MCPBearerMiddleware,
+            create_mcp_server,
+            mcp_bearer_token,
+            mcp_transport_security,
+        )
+    else:
+        MCPBearerMiddleware = None
+        create_mcp_server = None
+        mcp_bearer_token = None
+        mcp_transport_security = None
+except ImportError:  # pragma: no cover - public REST-only packages omit MCP
+    MCPBearerMiddleware = None
+    create_mcp_server = None
+    mcp_bearer_token = None
+    mcp_transport_security = None
 
 
 # --- Application ---------------------------------------------------------
+
+_mcp_server = None
+
+
+async def execute_private_markdown(markdown_text: str, timeout: int) -> RunResponse:
+    """Run Markdown through the private distributed gateway."""
+    gateway: Gateway = app.state.gateway
+    if gateway is None or getattr(app.state, "gateway_error", None):
+        raise GatewayError(
+            f"Gateway failed to start: {getattr(app.state, 'gateway_error', 'unknown')}"
+        )
+    document_blob = base64.b64encode(markdown_text.encode("utf-8")).decode("ascii")
+    result = await gateway.run(document_blob, timeout=timeout)
+    return RunResponse(
+        exit_code=result.exit_code,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        artifact_file=result.artifact_file,
+        artifact_ext=result.artifact_ext,
+    )
+
+
+@asynccontextmanager
+async def _mcp_context():
+    if _mcp_server is None:
+        yield
+        return
+    async with _mcp_server.session_manager.run():
+        yield
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -99,7 +153,8 @@ async def lifespan(app: FastAPI):
         # REST still works via the local sandboxed executor path.
         app.state.gateway = gateway
         app.state.gateway_error = str(e)
-        yield
+        async with _mcp_context():
+            yield
         await gateway.close()
         return
     app.state.gateway = gateway
@@ -121,7 +176,8 @@ async def lifespan(app: FastAPI):
             "on the next refresh. NODE_ID/RELAY above are its stable identity.",
             flush=True,
         )
-    yield
+    async with _mcp_context():
+        yield
     await gateway.close()
 
 
@@ -134,6 +190,18 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+if PRIVATE_DEPLOYMENT and create_mcp_server is not None:
+    _mcp_server = create_mcp_server(execute_private_markdown)
+    if mcp_bearer_token() and MCPBearerMiddleware is not None:
+        app.add_middleware(MCPBearerMiddleware, token=mcp_bearer_token())
+    app.mount(
+        "/mcp",
+        _mcp_server.streamable_http_app(
+            streamable_http_path="/",
+            transport_security=mcp_transport_security(),
+        ),
+    )
 
 
 @app.post(

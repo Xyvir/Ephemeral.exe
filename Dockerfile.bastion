@@ -28,12 +28,13 @@ WORKDIR /app
 COPY requirements-api.txt requirements-net.txt ./
 RUN pip install --no-cache-dir -r requirements-api.txt -r requirements-net.txt
 
-# App code. main_bastion.py imports main_api (wire contract), the gateway
+# App code. main_bastion.py imports the shared API wire contract, the gateway
 # pulls in ephemeral_net, and full-node mode needs ephemeral_core.
+COPY ephemeral_api/ ./ephemeral_api/
 COPY ephemeral_core/ ./ephemeral_core/
 COPY ephemeral_net/ ./ephemeral_net/
 COPY ephemeral_self_host/ ./ephemeral_self_host/
-COPY main_bastion.py main_api.py ./
+COPY main_bastion.py ./
 
 # Runtime configuration (overridable at deploy time). Railway provides
 # the URL, TLS, and proxy for free, so the container only has to:

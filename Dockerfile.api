@@ -18,11 +18,13 @@ RUN apt-get update \
 WORKDIR /app
 
 # Install Python deps first (layer caching).
-COPY requirements-api.txt ./
-RUN pip install --no-cache-dir -r requirements-api.txt
+COPY requirements-api.txt requirements-mcp.txt ./
+RUN pip install --no-cache-dir -r requirements-api.txt -r requirements-mcp.txt
 
 # App code.
+COPY ephemeral_api/ ./ephemeral_api/
 COPY ephemeral_core/ ./ephemeral_core/
+COPY ephemeral_mcp/ ./ephemeral_mcp/
 COPY main_api.py ./
 
 EXPOSE 8787

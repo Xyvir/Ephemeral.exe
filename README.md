@@ -186,7 +186,22 @@ For production deployment as a sidecar (e.g., alongside Caddy + WebDAV), use the
 chmod +x install.sh && sudo ./install.sh
 ```
 
-This creates a hardened systemd service at `127.0.0.1:8787`, ready to be reverse-proxied.
+This creates a hardened systemd service at `127.0.0.1:8787`, ready to be reverse-proxied. Trusted local server builds also expose the MCP Streamable HTTP endpoint at `http://127.0.0.1:8787/mcp`.
+
+### MCP Server (trusted deployments)
+
+The local-only API exposes one MCP tool, `run_markdown`, which accepts the same human-readable Markdown document used by every other Ephemeral entry point:
+
+```json
+{
+  "markdown": "~~~python\nprint(2 + 2)\n~~~",
+  "timeout": 30
+}
+```
+
+The tool returns the existing REST `RunResponse` shape: `exit_code`, `stdout`, `stderr`, `artifact_file`, and `artifact_ext`. Local server artifact behavior is unchanged, including WebDAV routing and the single-artifact inline path.
+
+MCP is deliberately absent from the public bastion and public distributed mode. An explicitly private distributed deployment (`EPHEMERAL_PRIVATE=1`, `--private`, or explicit private seeds) includes the same `/mcp` endpoint and `run_markdown` tool, routed through its private gateway. Set `EPHEMERAL_MCP_TOKEN` when a private MCP endpoint is reachable beyond loopback; optionally set `EPHEMERAL_MCP_ALLOWED_HOSTS` and `EPHEMERAL_MCP_ALLOWED_ORIGINS` for transport security. The MCP SDK is installed from `requirements-mcp.txt` only for trusted server builds.
 
 ### Supported Languages
 
@@ -528,7 +543,7 @@ install_self_host.sh     ← curl-able self-host installer (both flavors)
 | **Tray** (default) | `main_local.py` | Clipboard (images) or `~/Downloads` (files) |
 | **One-shot** | `main_local.py script.md` | Same as tray, then exits |
 | **Headless CLI** | `ephemeral.exe --cli script.md` | Current working directory |
-| **API Server** | `uvicorn main_api:app` | `/data/ephemeral/` (WebDAV mount) |
+| **API Server** | `uvicorn main_api:app` | `/data/ephemeral/` (WebDAV mount), `/mcp` for trusted local builds |
 | **Sidecar Deploy** | `sudo ./install.sh` | systemd service on port 8787 |
 
 ### Distributed Tier & Trust Model
@@ -613,7 +628,7 @@ The CI workflow (`/.github/workflows/build.yml`) builds and attaches **seven art
 | `ephemeral-local-x86_64.AppImage` | local (Linux) | portable tray app |
 | `ephemeral-distributed-x86_64.AppImage` | distributed (Linux) | portable tray app, bundles `iroh` |
 | `ephemeral-wasm-library.tar.gz` | web (browser) | SPA + wasm glue + crate source to rebuild |
-| `ephemeral-self-host-distributed.tar.gz` | self-host (distributed server) | cluster gateway source + `Dockerfile` for Docker/Coolify |
+| `ephemeral-self-host-distributed.tar.gz` | self-host (distributed server) | cluster gateway source + optional private `/mcp` + `Dockerfile` for Docker/Coolify |
 | `ephemeral-self-host.tar.gz` | self-host (local API server) | plain REST gateway (`main_api.py`, no networking tier) + `Dockerfile.api` — the build bundled by Lithic-UK |
 
 Run an AppImage like any executable: `chmod +x ephemeral-distributed-x86_64.AppImage && ./ephemeral-distributed-x86_64.AppImage` (configure the cluster via `EPHEMERAL_SEEDS`/`EPHEMERAL_RELAY`/`EPHEMERAL_SECRET`/`EPHEMERAL_ALLOW_NETWORK` environment variables, as with the Windows build). The AppImage needs a desktop with a StatusNotifier/AppIndicator host (most GNOME/KDE setups) or an X11 session (pystray's Xorg backend); on hosts without FUSE, run it with `APPIMAGE_EXTRACT_AND_RUN=1`.
@@ -642,14 +657,17 @@ Overrides: `INSTALL_DIR` (target directory), `PORT` (default **8787** — the Li
 ### Docker
 
 ```bash
-# Distributed gateway (cluster compute node + REST)
+# Distributed gateway (cluster compute node + REST; public-safe default)
 docker build -f Dockerfile -t ephemeral-self-host-distributed .
+
+# Private distributed gateway with the trusted MCP endpoint
+docker build --build-arg INSTALL_MCP=1 -f Dockerfile -t ephemeral-self-host-distributed-private .
 
 # Local API server (no networking tier)
 docker build -f Dockerfile.api -t ephemeral-self-host .
 ```
 
-Mount the host Podman socket (`-v /run/podman/podman.sock:/run/podman/podman.sock`) so the node can execute jobs. Both images listen on port `8787`.
+Mount the host Podman socket (`-v /run/podman/podman.sock:/run/podman/podman.sock`) so the node can execute jobs. Both images listen on port `8787`. The distributed image is REST-only unless built with `--build-arg INSTALL_MCP=1`; use that opt-in only for a private deployment and set `EPHEMERAL_MCP_TOKEN` when `/mcp` is reachable beyond loopback.
 
 ### Bastion server (paper-light clients)
 
@@ -761,4 +779,5 @@ The official build pipeline (test → build → release on every push or manual 
 - **Neighborhoods:** a short, human-friendly code that selects *which network* to join (a routing/partition field on top of the seed table — not authentication). With seed-mediated auto-discovery already handling node selection within a network, a neighborhood code becomes the user-facing way to choose the right cluster, e.g. per-class topics so a professor's students share an isolated neighborhood. If a neighborhood has no reachable seeds or peers, clients **fall back to the default iroh distributed peergroup** — joining a neighborhood never strands you, worst case you land on the shared default network.
 - **Paper-Thin REST Clients:** a static-URL REST API that sends requests and responds over the ephemeral distributed network, for 'paper-thin' clients (curl-friendly, no WASM required) — with rate limiting, cached responses, and the like. This is a non-trivial service with a lot of implementation surface, so it is deliberately deferred.
 - **Image-Layer Sync:** instead of pulling images from a registry after offloading, transfer warm image layers from the neighbor node over the iroh network (content-addressed, integrity-verified) so repeat jobs start instantly.
+- **Optional Desktop MCP Server:** let the Windows tray applications optionally expose the same human-readable `run_markdown` workflow through a local Streamable HTTP MCP endpoint. Local tray mode could enable it on demand from the tray menu, bind only to loopback by default, and offer a one-click copyable MCP client configuration. The distributed tray could expose the same capability only when explicitly running in private mode and after the user enables it; public-swarm mode must remain MCP-free. Both tray flavors should reuse their existing local or distributed execution callbacks and return the canonical `RunResponse` fields rather than introducing an AI-specific result format. The MCP SDK may be bundled as an optional desktop capability, but the endpoint must never activate implicitly.
 

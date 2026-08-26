@@ -19,6 +19,9 @@
 #                 (used by CI to test the installer deterministically)
 #   EPHEMERAL_RELAY / EPHEMERAL_RELAY_FALLBACK / EPHEMERAL_SEEDS / EPHEMERAL_SECRET / EPHEMERAL_ALLOW_NETWORK
 #                 distributed-tier configuration (passed to the service/command)
+#   EPHEMERAL_MCP_TOKEN / EPHEMERAL_MCP_ALLOWED_HOSTS / EPHEMERAL_MCP_ALLOWED_ORIGINS
+#                 trusted MCP configuration; local flavor always includes MCP,
+#                 distributed flavor exposes it only in private mode
 #   EPHEMERAL_PRIVATE=1
 #                 skip the public swarm list — run a private classroom node
 #                 (distributed flavor only; prints a student-ready #seed= URL)
@@ -377,16 +380,17 @@ if [ "$USE_RELEASE" != "1" ]; then
     SRC="$TMP/Ephemeral.exe-main"
   fi
   if [ "$FLAVOR" = "distributed" ]; then
-    # main_distributed.py imports main_api (wire contract) -> ephemeral_core,
-    # and the gateway pulls in ephemeral_net — all four modules are required.
-    cp -r "$SRC/ephemeral_self_host" "$SRC/ephemeral_net" "$SRC/ephemeral_core" "$INSTALL_DIR/"
-    cp "$SRC/main_distributed.py" "$SRC/main_api.py" "$INSTALL_DIR/"
-    cp "$SRC/requirements-net.txt" "$SRC/requirements-api.txt" "$INSTALL_DIR/"
+    # main_distributed.py imports the shared API contract -> ephemeral_api,
+    # and the gateway pulls in ephemeral_net. MCP is available only when the
+    # runtime is explicitly private, but the module is harmless in the image.
+    cp -r "$SRC/ephemeral_self_host" "$SRC/ephemeral_net" "$SRC/ephemeral_api" "$SRC/ephemeral_core" "$SRC/ephemeral_mcp" "$INSTALL_DIR/"
+    cp "$SRC/main_distributed.py" "$INSTALL_DIR/"
+    cp "$SRC/requirements-net.txt" "$SRC/requirements-api.txt" "$SRC/requirements-mcp.txt" "$INSTALL_DIR/"
     cp "$SRC/Dockerfile" "$SRC/.dockerignore" "$INSTALL_DIR/" 2>/dev/null || true
   else
     cp "$SRC/main_api.py" "$INSTALL_DIR/"
-    cp -r "$SRC/ephemeral_core" "$INSTALL_DIR/"
-    cp "$SRC/requirements-api.txt" "$INSTALL_DIR/"
+    cp -r "$SRC/ephemeral_api" "$SRC/ephemeral_core" "$SRC/ephemeral_mcp" "$INSTALL_DIR/"
+    cp "$SRC/requirements-api.txt" "$SRC/requirements-mcp.txt" "$INSTALL_DIR/"
     cp "$SRC/Dockerfile.api" "$SRC/.dockerignore" "$INSTALL_DIR/" 2>/dev/null || true
   fi
 fi
@@ -528,6 +532,9 @@ fi
 ensure_venv
 "$INSTALL_DIR/.venv/bin/pip" install -q --upgrade pip
 "$INSTALL_DIR/.venv/bin/pip" install -q -r "$INSTALL_DIR/requirements-api.txt"
+if [ "$FLAVOR" = "local" ] || [ "${EPHEMERAL_PRIVATE:-0}" = "1" ] || [ -n "${EPHEMERAL_SEEDS:-}" ] || [ -n "${EPHEMERAL_SEED_NODES:-}" ]; then
+  "$INSTALL_DIR/.venv/bin/pip" install -q -r "$INSTALL_DIR/requirements-mcp.txt"
+fi
 if [ "$FLAVOR" = "distributed" ]; then
   "$INSTALL_DIR/.venv/bin/pip" install -q -r "$INSTALL_DIR/requirements-net.txt"
 fi
@@ -558,6 +565,10 @@ if [ "${SYSTEMD:-0}" = "1" ]; then
       [ -n "${EPHEMERAL_SECRET:-}" ]      && echo "Environment=EPHEMERAL_SECRET=$EPHEMERAL_SECRET"
       [ -n "${EPHEMERAL_ALLOW_NETWORK:-}" ] && echo "Environment=EPHEMERAL_ALLOW_NETWORK=$EPHEMERAL_ALLOW_NETWORK"
       [ -n "${EPHEMERAL_PRIVATE:-}" ]      && echo "Environment=EPHEMERAL_PRIVATE=$EPHEMERAL_PRIVATE"
+      [ -n "${EPHEMERAL_SEED_NODES:-}" ]   && echo "Environment=EPHEMERAL_SEED_NODES=$EPHEMERAL_SEED_NODES"
+      [ -n "${EPHEMERAL_MCP_TOKEN:-}" ]    && echo "Environment=EPHEMERAL_MCP_TOKEN=$EPHEMERAL_MCP_TOKEN"
+      [ -n "${EPHEMERAL_MCP_ALLOWED_HOSTS:-}" ] && echo "Environment=EPHEMERAL_MCP_ALLOWED_HOSTS=$EPHEMERAL_MCP_ALLOWED_HOSTS"
+      [ -n "${EPHEMERAL_MCP_ALLOWED_ORIGINS:-}" ] && echo "Environment=EPHEMERAL_MCP_ALLOWED_ORIGINS=$EPHEMERAL_MCP_ALLOWED_ORIGINS"
     fi
     [ -n "${EPHEMERAL_STORAGE_ROOT:-}" ]  && echo "Environment=EPHEMERAL_STORAGE_ROOT=$EPHEMERAL_STORAGE_ROOT"
     echo "Restart=on-failure"

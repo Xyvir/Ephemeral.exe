@@ -120,7 +120,7 @@ mkdir -p "$INSTALL_DIR"
 
 # Copy application files
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cp -r "$SCRIPT_DIR/ephemeral_core" "$INSTALL_DIR/"
+cp -r "$SCRIPT_DIR/ephemeral_api" "$SCRIPT_DIR/ephemeral_core" "$SCRIPT_DIR/ephemeral_mcp" "$INSTALL_DIR/"
 cp "$SCRIPT_DIR/main_api.py" "$INSTALL_DIR/"
 info "Installed application to $INSTALL_DIR"
 
@@ -137,7 +137,8 @@ fi
 
 "$VENV_DIR/bin/pip" install --quiet --upgrade pip
 "$VENV_DIR/bin/pip" install --quiet fastapi uvicorn[standard] pydantic
-info "Installed Python dependencies (fastapi, uvicorn, pydantic)"
+"$VENV_DIR/bin/pip" install --quiet -r "$SCRIPT_DIR/requirements-mcp.txt"
+info "Installed Python dependencies (fastapi, uvicorn, pydantic, MCP)"
 
 # --- Step 3: Create Artifact Directory ---
 mkdir -p "$WEBDAV_DIR"
@@ -255,6 +256,7 @@ echo ""
 echo "  Service:    ${APP_NAME}.service"
 echo "  Endpoint:   http://${BIND_HOST}:${SERVICE_PORT}/api/v1/run"
 echo "  Health:     http://${BIND_HOST}:${SERVICE_PORT}/health"
+echo "  MCP:        http://${BIND_HOST}:${SERVICE_PORT}/mcp"
 echo "  Artifacts:  ${WEBDAV_DIR}/"
 echo "  Logs:       journalctl -u ${APP_NAME} -f"
 echo ""

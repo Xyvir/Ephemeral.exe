@@ -53,7 +53,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from main_api import RunResponse  # same wire contract as the local API server
+from ephemeral_api import RunResponse
 
 from ephemeral_net.swarm import (
     load_or_create_secret,

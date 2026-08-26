@@ -23,7 +23,23 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from ephemeral_api import RunResponse
 import ephemeral_core
+
+try:
+    from ephemeral_mcp import (
+        MCPBearerMiddleware,
+        create_mcp_server,
+        mcp_bearer_token,
+        mcp_transport_security,
+    )
+except ImportError:  # pragma: no cover - REST-only packages omit MCP
+    MCPBearerMiddleware = None
+    create_mcp_server = None
+    mcp_bearer_token = None
+    mcp_transport_security = None
+
+_mcp_server = None
 
 # --- Configuration ---
 WEBDAV_PATH = "/data/ephemeral"
@@ -58,46 +74,37 @@ class RunRequest(BaseModel):
             raise ValueError(f"Decoded content is not valid UTF-8: {e}") from e
 
 
-class RunResponse(BaseModel):
-    """
-    Response payload from the /ephemeral/api/v1/run endpoint.
-    
-    Attributes:
-        exit_code: Overall exit code (0 = all runs succeeded).
-        stdout: Markdown-formatted execution output.
-        stderr: Aggregate stderr from all runs.
-        artifact_file: Filename of the generated artifact zip on the WebDAV share,
-                       or null if no artifacts were produced.
-        artifact_ext: File extension (e.g. '.png', '.svg', '.zip') to help the front-end
-                      understand how to present the data, or null.
-    """
-    exit_code: int
-    stdout: str
-    stderr: str
-    artifact_file: str | None = None
-    artifact_ext: str | None = None
-
-
 # --- FastAPI Application ---
+
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _mcp_context():
+    """Keep the MCP Streamable HTTP session manager alive with FastAPI."""
+    if _mcp_server is None:
+        yield
+        return
+    async with _mcp_server.session_manager.run():
+        yield
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with _mcp_context():
+        yield
+
 
 app = FastAPI(
     title="Ephemeral API",
     description="Remote code execution engine powered by Podman containers.",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 
-@app.post(
-    "/ephemeral/api/v1/run",
-    response_model=RunResponse,
-    summary="Execute code blocks from a Markdown document",
-    responses={
-        422: {"description": "Invalid base64 or non-UTF-8 content"},
-        500: {"description": "Podman infrastructure failure"},
-        504: {"description": "Execution timed out"},
-    },
-)
-async def run_code(request: RunRequest) -> RunResponse:
+async def execute_markdown(markdown_text: str, timeout: int) -> RunResponse:
     """
     Accept a base64-encoded Markdown document, execute all code blocks
     in sandboxed Podman containers, and return the results.
@@ -107,8 +114,8 @@ async def run_code(request: RunRequest) -> RunResponse:
     """
     try:
         result = await ephemeral_core.parse_and_execute(
-            markdown_text=request.document_blob,
-            timeout=request.timeout,
+            markdown_text=markdown_text,
+            timeout=timeout,
             server_mode=True,
         )
     except ValueError as e:
@@ -201,6 +208,36 @@ async def run_code(request: RunRequest) -> RunResponse:
         artifact_file=artifact_filename,
         artifact_ext='.zip' if artifact_filename else None,
     )
+
+
+# Build the optional MCP app only after the local execution callback exists.
+# The MCP server's session manager is entered by the FastAPI lifespan above.
+if create_mcp_server is not None:
+    _mcp_server = create_mcp_server(execute_markdown)
+    if mcp_bearer_token() and MCPBearerMiddleware is not None:
+        app.add_middleware(MCPBearerMiddleware, token=mcp_bearer_token())
+    app.mount(
+        "/mcp",
+        _mcp_server.streamable_http_app(
+            streamable_http_path="/",
+            transport_security=mcp_transport_security(),
+        ),
+    )
+
+
+@app.post(
+    "/ephemeral/api/v1/run",
+    response_model=RunResponse,
+    summary="Execute code blocks from a Markdown document",
+    responses={
+        422: {"description": "Invalid base64 or non-UTF-8 content"},
+        500: {"description": "Podman infrastructure failure"},
+        504: {"description": "Execution timed out"},
+    },
+)
+async def run_code(request: RunRequest) -> RunResponse:
+    """Accept a base64-encoded Markdown document and return its result."""
+    return await execute_markdown(request.document_blob, request.timeout)
 
 
 @app.get("/health")
