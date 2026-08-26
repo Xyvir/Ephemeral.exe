@@ -76,7 +76,7 @@ class OrchestrationOnlyExecutor:
         yield JobErrorEvent(
             message=(
                 "this bastion is orchestration-only (no local runner) and "
-                "no peer had the required images warm"
+                "no usable warm peer was found"
             ),
             job_id=request.job_id,
         )

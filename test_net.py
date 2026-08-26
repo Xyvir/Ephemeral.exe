@@ -403,6 +403,114 @@ def test_offload_falls_back_to_local_when_forward_fails():
     print("PASS: offload falls back to local when the neighbor forward fails")
 
 
+def test_offload_evicts_and_redials_dead_peer():
+    from ephemeral_net.offload import OffloadingExecutor
+
+    class _FlakyNode(_FakeNode):
+        """First forward fails on a dead connection; re-dial restores it."""
+
+        def __init__(self):
+            super().__init__(peer=_FakePeer(images={PY_IMG}))
+            self.dropped = []
+            self.redials = 0
+
+        def drop_peer(self, node_id):
+            self.dropped.append(node_id)
+
+        async def reestablish_peer(self, peer):
+            self.redials += 1
+            return _FakePeer(node_id="fresh", images={PY_IMG})
+
+        async def submit_job(self, peer, request):
+            if peer.node_id == "peer" and self.redials == 0:
+                raise RuntimeError("connection closed")
+            self.submitted += 1
+            yield JobLogEvent(channel="stdout", data=b"forwarded\n", job_id=request.job_id)
+            yield JobDoneEvent(exit_code=0, stdout="forwarded\n", stderr="",
+                               job_id=request.job_id)
+
+    async def run():
+        local = _FakeLocal([PY_IMG], warm=set(), events=_events)
+        node = _FlakyNode()
+        ex = OffloadingExecutor(node, local)
+        req = JobRequest(job_id="j", document_blob="")
+        events = [e async for e in ex(req)]
+        assert any(e.data == b"forwarded\n" for e in events if hasattr(e, "data"))
+        assert node.dropped == ["peer"], f"dead peer evicted, got {node.dropped}"
+        assert node.redials == 1, "re-dialed exactly once"
+        assert node.submitted == 1, "second forward carried the job"
+        await asyncio.sleep(0.05)  # let the background pull task settle
+
+    asyncio.run(run())
+    print("PASS: offload evicts a dead peer and re-dials it once")
+
+
+def test_offload_redial_failure_falls_back_to_local():
+    from ephemeral_net.offload import OffloadingExecutor
+
+    class _DeadNode(_FakeNode):
+        def __init__(self):
+            super().__init__(peer=_FakePeer(images={PY_IMG}))
+            self.dropped = []
+
+        def drop_peer(self, node_id):
+            self.dropped.append(node_id)
+
+        async def reestablish_peer(self, peer):
+            return None  # peer is truly gone
+
+        async def submit_job(self, peer, request):
+            if False:  # pragma: no cover - keep this an async generator
+                yield
+            self.submitted += 1
+            raise RuntimeError("connection closed")
+
+    async def run():
+        local = _FakeLocal([PY_IMG], warm=set(), events=_events)
+        node = _DeadNode()
+        ex = OffloadingExecutor(node, local)
+        req = JobRequest(job_id="j", document_blob="")
+        events = [e async for e in ex(req)]
+        assert any(e.data == b"local\n" for e in events if hasattr(e, "data"))
+        assert node.dropped == ["peer"]
+        assert node.submitted == 1
+        await asyncio.sleep(0.05)
+
+    asyncio.run(run())
+    print("PASS: offload falls back to local when the re-dial fails")
+
+
+def test_drop_dead_peers_sweeps_closed_connections():
+    from ephemeral_net.node import Node
+
+    class _Conn:
+        def __init__(self, reason=None, torn=False):
+            self._reason = reason
+            self._torn = torn
+
+        def close_reason(self):
+            if self._torn:
+                raise RuntimeError("connection torn")
+            return self._reason
+
+    class _P:
+        def __init__(self, conn=None):
+            self.node_id = "n"
+            self.connection = conn
+
+    # Constructed but not started — no endpoint bind, no network.
+    n = Node(secret_key=b"\x01" * 32)
+    n._peers = {
+        "open": _P(conn=_Conn(reason=None)),
+        "closed": _P(conn=_Conn(reason="ConnectionClosed(0)")),
+        "torn": _P(conn=_Conn(torn=True)),
+        "fake": _P(conn=None),
+    }
+    assert n._drop_dead_peers() == 2
+    assert set(n._peers) == {"open", "fake"}
+    print("PASS: dead-peer sweep evicts closed and torn connections only")
+
+
 # --- mesh image pull unit tests (no iroh / podman required) ------------
 
 def test_image_ref_parsing():
@@ -2203,6 +2311,10 @@ def main():
     test_offload_runs_locally_when_warm()
     test_offload_forwards_to_warm_neighbor_and_pulls()
     test_offload_runs_locally_when_no_warm_neighbor()
+    test_offload_falls_back_to_local_when_forward_fails()
+    test_offload_evicts_and_redials_dead_peer()
+    test_offload_redial_failure_falls_back_to_local()
+    test_drop_dead_peers_sweeps_closed_connections()
     test_image_ref_parsing()
     test_blob_frame_helpers()
     test_oci_layout_assembly_and_verification()

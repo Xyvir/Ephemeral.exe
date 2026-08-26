@@ -347,6 +347,19 @@ class Node:
         # One background loop handles both seed refresh and mesh healing
         # (re-dialing known peers whose connections dropped).
         self._maintenance_task = asyncio.create_task(self._maintenance_loop())
+
+        def _maintenance_done(task: asyncio.Task) -> None:
+            # A maintenance loop that exits (other than on a clean shutdown)
+            # silently strands the node: no more bootstrap dials, mesh
+            # healing, or swarm-list refreshes — while the HTTP surface
+            # keeps answering. Log it loudly so the failure is visible.
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is not None:
+                logger.error("maintenance loop exited unexpectedly: %s", exc)
+
+        self._maintenance_task.add_done_callback(_maintenance_done)
         # Let the network report settle so tickets carry usable addresses.
         await asyncio.sleep(1.0)
 
@@ -475,9 +488,20 @@ class Node:
             await asyncio.sleep(self._interval)
             if self._closed:
                 return
-            await self._bootstrap_once()
-            await self._bootstrap_list_once()
-            await self._mesh_heal_once()
+            try:
+                # Evict closed connections first so the bootstrap / heal
+                # passes below re-dial them instead of skipping them as
+                # "already connected" forever.
+                self._drop_dead_peers()
+                await self._bootstrap_once()
+                await self._bootstrap_list_once()
+                await self._mesh_heal_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # One bad pass must never kill the loop — log and continue
+                # so the node keeps re-dialing the swarm next cycle.
+                logger.exception("maintenance pass failed; continuing")
 
     async def _bootstrap_once(self) -> None:
         for ticket in self._seed_tickets:
@@ -740,6 +764,12 @@ class Node:
         finally:
             async with self._peers_lock:
                 self._peers.pop(node_id, None)
+            # Tell the remote the connection is gone (best effort) so its
+            # dial side notices and re-dials instead of holding a zombie.
+            try:
+                peer.connection.close(0, b"idle")
+            except Exception:  # pragma: no cover - best effort
+                pass
 
     async def _handle_hello(self, peer: PeerConnection, frame: dict, bs) -> None:
         peer.hello = frame
@@ -970,6 +1000,66 @@ class Node:
         advertises any of the required images.
         """
         return select_peer_for_images(self._peers.values(), images)
+
+    def drop_peer(self, node_id: str) -> None:
+        """Evict a peer from the live connection registry.
+
+        Called when a connection is known dead (the remote dropped us or
+        the connection tore). Leaving a stale entry registered makes every
+        bootstrap / heal pass skip the peer as "already connected", so it
+        is never re-dialed and jobs keep failing on the dead connection.
+        Synchronous and lock-free by convention (single event loop, no
+        awaits between read and pop).
+        """
+        self._peers.pop(node_id, None)
+
+    def _drop_dead_peers(self) -> int:
+        """Evict peers whose iroh connection is closed.
+
+        The dial side has no liveness watcher: once a hello completes, the
+        connection is held until ``close()`` — so a peer that closed the
+        connection (e.g. its accept side gave up after ``idle_timeout``)
+        stays registered forever as a zombie. Sweep them each maintenance
+        pass so the bootstrap / heal passes re-dial them.
+        """
+        dead: list[str] = []
+        for node_id, peer in list(self._peers.items()):
+            conn = getattr(peer, "connection", None)
+            if conn is None:
+                continue  # test doubles / fakes carry no connection
+            try:
+                if conn.close_reason():
+                    dead.append(node_id)
+            except Exception:
+                # Torn / half-closed connection — evict so it re-dials.
+                dead.append(node_id)
+        for node_id in dead:
+            self._peers.pop(node_id, None)
+        if dead:
+            logger.info(
+                "dropped %d closed peer connection(s): %s",
+                len(dead),
+                [d[:8] for d in dead],
+            )
+        return len(dead)
+
+    async def reestablish_peer(self, peer: PeerConnection) -> PeerConnection | None:
+        """Drop a stale/dead connection and dial the peer again by id+relay.
+
+        Returns the fresh, hello-completed :class:`PeerConnection`, or None
+        when the peer has no relay to dial by or the re-dial fails.
+        """
+        self.drop_peer(peer.node_id)
+        if not peer.relay:
+            return None
+        try:
+            return await asyncio.wait_for(
+                self.dial_node(peer.node_id, peer.relay),
+                timeout=self._dial_timeout,
+            )
+        except Exception as e:
+            logger.warning("re-dial of %s failed: %s", peer.node_id[:8], e)
+            return None
 
     # --- client-side job submission --------------------------------------
 

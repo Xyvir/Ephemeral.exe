@@ -104,36 +104,56 @@ class OffloadingExecutor:
         peer = self.node.peer_for_images(missing) if missing else None
         if peer is not None:
             # Forward to the warm neighbor; pull locally while it runs
-            # (mesh pull from this same peer when available).
-            self._start_background_pull(missing, peer=peer)
-            logger.info(
-                "offloading job %s for %s to %s (pulling %s locally)",
-                request.job_id,
-                missing,
-                peer.node_id[:8],
-                missing,
-            )
-            yielded = False
-            try:
-                async for event in self.node.submit_job(peer, request):
-                    yielded = True
-                    yield event
-                return
-            except Exception as e:
-                if yielded:
-                    # A partial stream already reached the requester — re-running
-                    # locally would duplicate it. Surface the failure instead.
-                    logger.exception(
-                        "offload of %s to %s failed mid-stream",
-                        request.job_id, peer.node_id[:8],
-                    )
-                    raise
-                logger.exception(
-                    "offload of %s to %s failed (%s); running locally",
-                    request.job_id, peer.node_id[:8], e,
+            # (mesh pull from this same peer when available). If the
+            # forward fails before anything is streamed, the connection is
+            # likely a zombie the peer's side dropped (idle timeout): evict
+            # it and re-dial the peer once — an idle-dropped peer comes
+            # back instantly and the job runs, a genuinely dead peer falls
+            # through to the local path below.
+            evict = getattr(self.node, "drop_peer", None)
+            reestablish = getattr(self.node, "reestablish_peer", None)
+            target = peer
+            attempt = 0
+            while target is not None:
+                if attempt == 0:
+                    self._start_background_pull(missing, peer=target)
+                logger.info(
+                    "offloading job %s for %s to %s (pulling %s locally)",
+                    request.job_id,
+                    missing,
+                    target.node_id[:8],
+                    missing,
                 )
+                yielded = False
+                try:
+                    async for event in self.node.submit_job(target, request):
+                        yielded = True
+                        yield event
+                    return
+                except Exception as e:
+                    if yielded:
+                        # A partial stream already reached the requester —
+                        # re-running locally would duplicate it. Surface it.
+                        logger.exception(
+                            "offload of %s to %s failed mid-stream",
+                            request.job_id, target.node_id[:8],
+                        )
+                        raise
+                    logger.warning(
+                        "offload of %s to %s failed (%s); %s",
+                        request.job_id, target.node_id[:8], e,
+                        "re-dialing the peer" if attempt == 0 else "giving up",
+                    )
+                    if evict is not None:
+                        evict(target.node_id)
+                    target = (
+                        await reestablish(target)
+                        if reestablish is not None and attempt == 0
+                        else None
+                    )
+                    attempt += 1
 
-        # No warm neighbor (or the forward failed): run locally
+        # No warm neighbor (or every forward failed): run locally
         # (server_mode background-pulls and reports the delay).
         async for event in self.local(request):
             yield event
