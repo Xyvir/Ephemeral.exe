@@ -10,7 +10,11 @@ background pull) otherwise.
 
 Configuration (environment variables):
 
-    EPHEMERAL_RELAY          "n0" (default) | "minimal" | "disabled"
+    EPHEMERAL_RELAY          "n0" (default) | "minimal" | "disabled" |
+                             comma-separated custom relay URLs (e.g.
+                             "https://relay.myorg.com")
+    EPHEMERAL_RELAY_FALLBACK "1" to ALSO use the public n0 relays when a
+                             custom EPHEMERAL_RELAY is set (default "0")
     EPHEMERAL_SEED_NODES     comma-separated node_id[@relay] for a PRIVATE
                              node-id network; unset joins the public swarm via
                              the live bootstrap list (docs/swarm.json) — no
@@ -57,6 +61,7 @@ from ephemeral_self_host import Gateway, GatewayError, RunRequest
 # --- Configuration -------------------------------------------------------
 
 EPHEMERAL_RELAY = os.getenv("EPHEMERAL_RELAY", "n0")
+EPHEMERAL_RELAY_FALLBACK = os.getenv("EPHEMERAL_RELAY_FALLBACK", "0") == "1"
 EPHEMERAL_SEED_NODES = parse_seed_nodes(os.getenv("EPHEMERAL_SEED_NODES"))
 EPHEMERAL_SEEDS = parse_seeds(os.getenv("EPHEMERAL_SEEDS"))
 if EPHEMERAL_SEEDS:
@@ -81,6 +86,7 @@ async def lifespan(app: FastAPI):
     gateway = Gateway(
         secret_key=EPHEMERAL_SECRET,
         relay=EPHEMERAL_RELAY,
+        relay_fallback=EPHEMERAL_RELAY_FALLBACK,
         seed_nodes=EPHEMERAL_SEED_NODES,
         seeds=EPHEMERAL_SEEDS,
         allow_network=EPHEMERAL_ALLOW_NETWORK,

@@ -128,6 +128,7 @@ class Gateway:
         *,
         secret_key: bytes | None = None,
         relay: str = "n0",
+        relay_fallback: bool = False,
         seeds: Sequence[str] = (),
         seed_nodes: Sequence[tuple[str, str]] = (),
         allow_network: bool = False,
@@ -139,6 +140,7 @@ class Gateway:
     ) -> None:
         self.secret_key = secret_key
         self.relay = relay
+        self.relay_fallback = relay_fallback
         self.seeds = list(seeds)
         self.seed_nodes = list(seed_nodes)
         self.allow_network = allow_network
@@ -167,6 +169,7 @@ class Gateway:
             lambda **kw: Node(
                 secret_key=kw["secret_key"],
                 relay=kw["relay"],
+                relay_fallback=kw.get("relay_fallback", False),
                 public_url=kw.get("public_url"),
                 list_images=kw.get("list_images"),
             )
@@ -182,6 +185,7 @@ class Gateway:
         node = factory(
             secret_key=self.secret_key,
             relay=self.relay,
+            relay_fallback=self.relay_fallback,
             public_url=self.public_url,
             list_images=list_images,
         )

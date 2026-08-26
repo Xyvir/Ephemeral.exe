@@ -17,7 +17,7 @@
 #   EPHEMERAL_FROM_MAIN=1
 #                 skip the released tarball and install from the main branch
 #                 (used by CI to test the installer deterministically)
-#   EPHEMERAL_RELAY / EPHEMERAL_SEEDS / EPHEMERAL_SECRET / EPHEMERAL_ALLOW_NETWORK
+#   EPHEMERAL_RELAY / EPHEMERAL_RELAY_FALLBACK / EPHEMERAL_SEEDS / EPHEMERAL_SECRET / EPHEMERAL_ALLOW_NETWORK
 #                 distributed-tier configuration (passed to the service/command)
 #   EPHEMERAL_PRIVATE=1
 #                 skip the public swarm list — run a private classroom node
@@ -553,6 +553,7 @@ if [ "${SYSTEMD:-0}" = "1" ]; then
     echo "ExecStart=$INSTALL_DIR/.venv/bin/uvicorn $APP:app --host 0.0.0.0 --port $PORT"
     if [ "$FLAVOR" = "distributed" ]; then
       [ -n "${EPHEMERAL_RELAY:-}" ]       && echo "Environment=EPHEMERAL_RELAY=$EPHEMERAL_RELAY"
+      [ -n "${EPHEMERAL_RELAY_FALLBACK:-}" ] && echo "Environment=EPHEMERAL_RELAY_FALLBACK=$EPHEMERAL_RELAY_FALLBACK"
       [ -n "${EPHEMERAL_SEEDS:-}" ]       && echo "Environment=EPHEMERAL_SEEDS=$EPHEMERAL_SEEDS"
       [ -n "${EPHEMERAL_SECRET:-}" ]      && echo "Environment=EPHEMERAL_SECRET=$EPHEMERAL_SECRET"
       [ -n "${EPHEMERAL_ALLOW_NETWORK:-}" ] && echo "Environment=EPHEMERAL_ALLOW_NETWORK=$EPHEMERAL_ALLOW_NETWORK"

@@ -58,6 +58,38 @@ from .protocol import (
 
 logger = logging.getLogger(__name__)
 
+RELAY_PRESETS = ("n0", "minimal", "disabled")
+
+
+def parse_relay_spec(relay: str, fallback: bool = False) -> list[str] | None:
+    """
+    Resolve a relay spec to custom relay URLs, or None for the presets.
+
+    ``relay`` is one of the preset names (``"n0"`` / ``"minimal"`` /
+    ``"disabled"``) or a comma-separated list of self-hosted relay URLs.
+    Returns the URL list for custom relays (``fallback=True`` appends the
+    public n0 relays so the endpoint still works when the private ones
+    are unreachable), or None when the spec is a preset.
+
+    Pure — no iroh import — so it is unit-testable without binding an
+    endpoint.
+    """
+    spec = (relay or "n0").strip()
+    if spec in RELAY_PRESETS:
+        return None
+    urls = [u.strip() for u in spec.split(",") if u.strip()]
+    if not urls:
+        raise ValueError(f"invalid relay mode: {relay!r}")
+    if fallback:
+        import iroh
+
+        try:
+            urls += iroh.RelayMode.default_mode().relay_map().urls()
+        except Exception:
+            # Never fail startup over the fallback list.
+            pass
+    return urls
+
 
 def _peer_load_factor(peer) -> float:
     """
@@ -149,6 +181,7 @@ class Node:
         *,
         secret_key: bytes | None = None,
         relay: str = "n0",
+        relay_fallback: bool = False,
         executor: JobExecutor | None = None,
         idle_timeout: float = 60.0,
         max_frame_size: int = DEFAULT_MAX_FRAME_SIZE,
@@ -166,6 +199,7 @@ class Node:
 
         self._iroh = iroh
         self.relay = relay
+        self.relay_fallback = relay_fallback
         self.executor = executor
         self.idle_timeout = idle_timeout
         self.max_frame_size = max_frame_size
@@ -204,7 +238,16 @@ class Node:
         elif relay == "minimal":
             builder.apply_minimal()
         else:
-            raise ValueError(f"unknown relay mode: {relay!r}")
+            # Custom relays — a comma-separated list of self-hosted relay
+            # URLs (org-owned infrastructure, e.g. ``EPHEMERAL_RELAY`` =
+            # ``https://relay.myorg.com``). ``apply_minimal`` first (the FFI
+            # needs a preset to install the crypto provider), then override
+            # the relay map. ``relay_fallback`` appends the public n0 relays
+            # so the endpoint still works when the private relays are down.
+            urls = parse_relay_spec(relay, fallback=relay_fallback)
+            assert urls is not None  # presets return None; handled above
+            builder.apply_minimal()
+            builder.relay_mode(iroh.RelayMode.custom_from_urls(urls))
         if secret_key is not None:
             # The Python FFI takes the raw 32 bytes (unlike the Rust API,
             # which takes a SecretKey value).

@@ -10,7 +10,11 @@ pre-hydration console.
 
 Cluster configuration (environment variables):
 
-    EPHEMERAL_RELAY          "n0" (default) | "minimal" | "disabled"
+    EPHEMERAL_RELAY          "n0" (default) | "minimal" | "disabled" |
+                             comma-separated custom relay URLs (e.g.
+                             "https://relay.myorg.com")
+    EPHEMERAL_RELAY_FALLBACK "1" to ALSO use the public n0 relays when a
+                             custom EPHEMERAL_RELAY is set (default "0")
     EPHEMERAL_SEED_NODES     comma-separated node_id[@relay] to bootstrap from;
                              unset joins the default swarm by node id
                              (see ephemeral_net.swarm) — iroh-native, no tickets
@@ -67,8 +71,10 @@ class Cluster:
     """
 
     def __init__(self, relay: str, seed_nodes: list, seeds: list,
-                 secret: bytes | None, allow_network: bool) -> None:
+                 secret: bytes | None, allow_network: bool,
+                 relay_fallback: bool = False) -> None:
         self.relay = relay
+        self.relay_fallback = relay_fallback
         self.seed_nodes = seed_nodes
         self.seeds = seeds
         self.secret = secret
@@ -121,6 +127,7 @@ class Cluster:
         node = Node(
             secret_key=self.secret or load_or_create_secret(),
             relay=self.relay,
+            relay_fallback=self.relay_fallback,
         )
         local = CoreJobExecutor(
             allow_network=self.allow_network,
@@ -249,6 +256,7 @@ class DistributedBackend(Backend):
         )
         self.cluster = Cluster(
             relay=os.getenv("EPHEMERAL_RELAY", "n0"),
+            relay_fallback=os.getenv("EPHEMERAL_RELAY_FALLBACK", "0") == "1",
             seed_nodes=_seed_nodes,
             seeds=_seeds,
             secret=self.secret,

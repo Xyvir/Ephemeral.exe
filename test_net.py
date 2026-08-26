@@ -1241,6 +1241,41 @@ def test_genesis_fallback_plan():
     print("PASS: genesis fallback plan (prev-list first, anchor only as fallback)")
 
 
+def test_relay_spec_parsing():
+    """Custom relay URLs (org-owned infrastructure) parse into a URL list;
+    the presets return None; fallback appends the public n0 relays so the
+    endpoint still works when the private relays are unreachable."""
+    from ephemeral_net.node import parse_relay_spec
+
+    # Presets are untouched.
+    for preset in ("n0", "minimal", "disabled"):
+        assert parse_relay_spec(preset) is None, preset
+        assert parse_relay_spec(preset, fallback=True) is None, preset
+    assert parse_relay_spec("") is None, "empty defaults to n0"
+
+    # A single custom URL.
+    urls = parse_relay_spec("https://relay.myorg.com")
+    assert urls == ["https://relay.myorg.com"], urls
+
+    # Comma-separated list, whitespace tolerated.
+    urls = parse_relay_spec(" https://relay-a.myorg.com , https://relay-b.myorg.com ")
+    assert urls == ["https://relay-a.myorg.com", "https://relay-b.myorg.com"], urls
+
+    # Fallback appends the live public n0 relay list (queried via the FFI).
+    urls = parse_relay_spec("https://relay.myorg.com", fallback=True)
+    assert urls[0] == "https://relay.myorg.com"
+    assert any("relay.n0.iroh.link" in u for u in urls), urls
+    assert len(urls) > 1, "fallback must add the public relays"
+
+    # Garbage that parses to no URLs is a hard error, not silent n0.
+    try:
+        parse_relay_spec(" , , ")
+        raise AssertionError("empty custom spec must raise")
+    except ValueError:
+        pass
+    print("PASS: custom relay spec parsing (URL list + opt-in n0 fallback)")
+
+
 def test_resolve_genesis_from_url():
     """A bastion URL alone bootstraps the refresh — node identity is read
     from its /health, so no node id is hard-coded in code."""
@@ -2151,6 +2186,7 @@ def main():
     test_peer_table_gossip_does_not_refresh_ttl()
     test_peer_table_gossiped_new_peer_survives_merge()
     test_genesis_fallback_plan()
+    test_relay_spec_parsing()
     test_resolve_genesis_from_url()
     test_evicted_tombstones_ttl()
     test_swarm_status_badge_payload()

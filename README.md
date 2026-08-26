@@ -95,7 +95,7 @@ That's it — no configuration. Your node fetches the live swarm list, joins the
 > [!WARNING]
 > **Please read this before donating a node.** The distributed network is a peer-to-peer network: jobs submitted by strangers execute on your machine, and communication traverses public iroh relays. Ephemeral applies best-effort security — receiver-side sandboxing, an image allowlist, `--network none`, memory/CPU/PID caps, and removal of requester-supplied image/network overrides — but **there is no guarantee of safety**. P2P networks and their communication carry inherent risk, and no warranty is made against malicious payloads, data exfiltration, or compromise.
 >
-> **Do not run a node on a critical or irreplaceable workstation, on a machine holding sensitive or personal data, or on a network you consider sensitive** (an employer's or client's network, for example, or anywhere a sandbox escape would be unacceptable). Only donate compute you can afford to lose, and treat anything submitted to the public swarm as public knowledge. If you need a private cluster instead, self-host with explicit `EPHEMERAL_SEEDS` / `EPHEMERAL_RELAY` (see [Deployment](#deployment)) so only your own nodes participate.
+> **Do not run a node on a critical or irreplaceable workstation, on a machine holding sensitive or personal data, or on a network you consider sensitive** (an employer's or client's network, for example, or anywhere a sandbox escape would be unacceptable). Only donate compute you can afford to lose, and treat anything submitted to the public swarm as public knowledge. If you need a private cluster instead, self-host with explicit `EPHEMERAL_SEEDS` / `EPHEMERAL_RELAY` (see [Deployment](#deployment)) so only your own nodes participate — and for full isolation, run your own relay server (`scripts/setup_relay.sh` — a bare `iroh-relay` systemd service, [Own the relay infrastructure](#own-the-relay-infrastructure-org-end-to-end)) so traffic never touches n0's public relays.
 
 ---
 
@@ -568,6 +568,14 @@ Every distributed binary joins the **same public swarm by default** — no confi
 - **Opt out.** Set `EPHEMERAL_SEED_NODES` / `EPHEMERAL_SEEDS` explicitly to bootstrap a private cluster instead; `EPHEMERAL_SECRET` pins an identity without touching disk.
 
 > **The browser client is iroh-native too.** The wasm SPA dials by the same stable node id + relay — no asymmetry between tiers. Tickets remain only as a fallback for legacy peers that don't report a relay.
+
+### Own the relay infrastructure (org end-to-end)
+
+By default every tier uses n0's **public relays** (`*.relay.n0.iroh.link`) as blind forwarders. An org that wants to keep relay traffic entirely in-house runs its own relay (or relays) and points every node at it:
+
+- **Deploy a relay server** — `scripts/setup_relay.sh` installs the upstream `iroh-relay` server (the protocol exists only in the Rust binary — the Python/wasm tiers are clients, so there's no in-language relay server) on a host with a public IP + DNS name, with automatic Let's Encrypt TLS, as a bare systemd service (ports 80 / 443 / 7842) — podman stays reserved for job execution (`RELAY_RUNTIME=podman` is available for container-first hosts). One line: `sudo RELAY_DOMAIN=relay.myorg.com ./scripts/setup_relay.sh`. Optional access control: `RELAY_ACCESS=allowlist` (only your node ids may use the relay) or `denylist`. (`shared_token` is supported by the server but the current iroh Python/wasm bindings can't present a token yet — prefer allowlist/denylist for org-only control.)
+- **Point nodes at it** — `EPHEMERAL_RELAY="https://relay.myorg.com"` on every Python tier (comma-separated for multiple relays); the wasm SPA takes the same URL via its Relay URL field or `BOOTSTRAP.relayUrl`. With `EPHEMERAL_RELAY_FALLBACK=1`, the public n0 relays are appended to the list so the swarm still works if your relay is unreachable — leave it unset for a fully isolated org network.
+- **It flows through automatically** — nodes advertise their relay in hello frames, the swarm refresh records it in `docs/swarm.json`, and peers dial by node id + relay, so once your nodes join through your relay the whole swarm routes through it. On a private cluster (explicit `EPHEMERAL_SEEDS` / `EPHEMERAL_SEED_NODES`) there is no public list at all — your relay is the only transport.
 
 *The full mechanism — eviction thresholds, probe bookkeeping, the DNS mirror format, and manual refresh instructions — is in [misc.md](misc.md).*
 
