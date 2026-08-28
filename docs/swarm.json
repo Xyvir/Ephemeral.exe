@@ -1,12 +1,12 @@
 {
-  "updated": "2026-08-28T10:48:00Z",
+  "updated": "2026-08-28T22:02:47Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6jpcydaeakhqdbmwlyway",
+      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6pleydaeakhqdbmx2zgay",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/clfoundation/sbcl:slim",
@@ -37,38 +37,38 @@
       "url": null,
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-28T10:48:00Z",
+      "probe_at": "2026-08-28T22:02:47Z",
       "probe_detail": "ok",
-      "probe_ms": 1075,
+      "probe_ms": 937,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 134
+      "rtt_ms": 3055
     },
     {
-      "node_id": "f7db087e4c891e548d1d7e60c087a0e247461ef18beda032bed12595f5dec1f8",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointad35wcd6jser4vendv7gbqehudreorq66gf63ibsx3islfpv33a7qbaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbabz7rmycaeaj4fytecapqaqbacwbcaab7czqe",
+      "node_id": "cbe07c5bd9a9f112d2b8bf4f440953ef58d0e5663ca451409da17b467108d146",
+      "relay": "https://usw1-1.relay.n0.iroh.link./",
+      "ticket": "endpointadf6a7c33gu7cewsxc7u6rajkpxvruhfmy6kiukatwqxwrtrbdiumbaaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbad5yrmycaeadtf4bgkapaaibacwbcaabrczqe",
       "images": [],
       "url": null,
       "probe_fails": 0,
       "misses": 1,
       "seen_alive": false,
       "probe": "unreachable",
-      "probe_at": "2026-08-28T10:48:00Z"
+      "probe_at": "2026-08-28T22:02:47Z"
     }
   ],
   "bastions": [
     {
       "node_id": "ed7106bced606bede735b4c9b215052855f9747e8cb56629759ae672ce29b9c8",
-      "relay": "https://usw1-1.relay.n0.iroh.link./",
-      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacvgkeuy3aacaeadingk4sgyaaq",
+      "relay": "https://euc1-1.relay.n0.iroh.link./",
+      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacum36bojjycaeajqn5zjhskoaq",
       "images": [],
       "url": "https://ephemeralexe-production.up.railway.app",
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-28T10:48:00Z",
+      "probe_at": "2026-08-28T22:02:47Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 354,
+      "probe_ms": 441,
       "probe_fails": 0,
       "misses": 0
     }
@@ -116,6 +116,7 @@
     "79d6837880f7aedde5d43439a2be050683984cbec73722babb2dbfe0c3e82db8": 1787819706.266514,
     "b43705c1ab0dbc5bd08f881903526d3194748d277f50d75bb7890c4c0635a234": 1787819706.266514,
     "cfbfb92a15062fd096b184d3f04e456c11fa92e61d1683391c064fdc986fd09f": 1787819706.266514,
-    "da770aaf6d9dba70d07e0f4800e932bb81575afaf465d5f57441cbb7809d80ce": 1787819706.266514
+    "da770aaf6d9dba70d07e0f4800e932bb81575afaf465d5f57441cbb7809d80ce": 1787819706.266514,
+    "f7db087e4c891e548d1d7e60c087a0e247461ef18beda032bed12595f5dec1f8": 1787954568.480081
   }
 }
