@@ -11,6 +11,7 @@ pull), so REST clients get fast turnaround without blocking on pulls.
 from __future__ import annotations
 
 import base64
+import itertools
 from dataclasses import dataclass
 from typing import Callable, Sequence
 
@@ -150,6 +151,10 @@ class Gateway:
         self.compute = compute
         self.node_factory = node_factory
         self._node = None
+        # Per-request job ids: ``id(self)`` is constant for the process, so
+        # every request used to share one id, making logs impossible to
+        # correlate. A counter keeps them unique and stable.
+        self._job_seq = itertools.count(1)
 
     # --- lifecycle -------------------------------------------------------
 
@@ -237,7 +242,7 @@ class Gateway:
             raise GatewayError("gateway node has no executor")
 
         request = JobRequest(
-            job_id=f"rest-{id(self)}",
+            job_id=f"rest-{next(self._job_seq)}",
             document_blob=document_blob,
             timeout=timeout,
         )

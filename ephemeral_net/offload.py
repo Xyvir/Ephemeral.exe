@@ -26,7 +26,7 @@ import asyncio
 import logging
 from typing import AsyncIterator
 
-from .jobs import JobEvent, JobRequest
+from .jobs import JobErrorEvent, JobEvent, JobRequest
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +41,24 @@ class OffloadingExecutor:
 
     # --- helpers ---------------------------------------------------------
 
-    def _needed_images(self, request: JobRequest) -> list[str] | None:
-        """Required images for ``request``, or None if it cannot run at all."""
+    def _needed_images(
+        self, request: JobRequest
+    ) -> tuple[list[str] | None, Exception | None]:
+        """Required images for ``request`` plus any prepare failure.
+
+        Returns ``(images, None)`` on success, ``(None, error)`` when the
+        document itself is rejected (bad payload, unknown or missing
+        language, disallowed image, ...). Callers must surface ``error``
+        directly — falling through to the local executor would mask the
+        real reason with a misleading "no warm peer" message on
+        orchestration-only bastions.
+        """
         try:
             _markdown, images = self.local.prepare(request)
-            return images
+            return images, None
         except Exception as e:
             logger.warning("offload prepare failed for %s: %s", request.job_id, e)
-            return None
+            return None, e
 
     def _start_background_pull(self, images: list[str], peer=None) -> None:
         """
@@ -88,9 +98,22 @@ class OffloadingExecutor:
     # --- JobExecutor protocol --------------------------------------------
 
     async def __call__(self, request: JobRequest) -> AsyncIterator[JobEvent]:
-        images = self._needed_images(request)
+        images, prepare_error = self._needed_images(request)
         if images is None:
-            # Let the local executor produce the rejection event.
+            if prepare_error is not None:
+                # The document itself was rejected (bad payload, unknown or
+                # missing language, disallowed image, ...). Surface the REAL
+                # reason — falling through to the local executor would
+                # produce a misleading "no warm peer" error on
+                # orchestration-only bastions and hide the actual problem
+                # from the client.
+                yield JobErrorEvent(
+                    message=f"job rejected: {prepare_error}",
+                    job_id=request.job_id,
+                )
+                return
+            # No images to route on and no failure — let the local executor
+            # produce its own outcome.
             async for event in self.local(request):
                 yield event
             return

@@ -85,6 +85,28 @@ def test_gateway_start_wires_executor_and_bootstraps():
     print("PASS: gateway start wires fan-out+offloading sandboxed executor and bootstraps")
 
 
+def test_gateway_run_job_ids_are_unique():
+    async def run():
+        fake = _FakeNode()
+        seen = []
+
+        async def _record(request):
+            seen.append(request.job_id)
+            async for e in _ok_events(request):
+                yield e
+
+        fake.executor = _record
+        gw = Gateway(node_factory=lambda **kw: fake)
+        gw._node = fake  # pretend started
+        await gw.run("blob-1", timeout=120)
+        await gw.run("blob-2", timeout=120)
+        assert len(seen) == 2
+        assert seen[0] != seen[1], f"job ids must be unique per request, got {seen}"
+
+    asyncio.run(run())
+    print("PASS: gateway assigns a unique job id per request")
+
+
 def test_gateway_run_maps_done_event():
     async def run():
         fake = _FakeNode()
@@ -159,6 +181,7 @@ def test_endpoint_maps_to_run_response():
 
 def main():
     test_gateway_start_wires_executor_and_bootstraps()
+    test_gateway_run_job_ids_are_unique()
     test_gateway_run_maps_done_event()
     test_gateway_run_surfaces_errors()
     test_run_request_validates_base64()
