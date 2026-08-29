@@ -14,16 +14,22 @@ every member was unreachable.
 
 Liveness probe: a successful dial + hello handshake proves a node speaks
 the ephemeral wire protocol, but not that it is a live compute node. So
-every node that answers is additionally sent a real job — a tiny Python
-script that prints a fresh per-node nonce — and is only recorded as
-verified when it executes the payload and echoes the nonce back.Nodes that cannot be reached keep their entry for a few runs (they may be
-temporarily offline), then age out; nodes that are reachable but never
-run the probe job (a bot that merely answers hello, a broken executor)
-are evicted after a few failed probes. The genesis anchor is exempt from
-eviction only while it is the active bootstrap source for that run (first
-run / ``--reset`` / all-previous-dead fallback); otherwise it is an
-ordinary member and ages out like any other node. See
-``ephemeral_net.probe`` for the bookkeeping.
+every node that answers is additionally sent a real job — a tiny bash
+script that echoes a fresh per-node nonce — and is only recorded as
+verified when it executes the payload and echoes the nonce back.
+
+The refresh is tiered. (1) The previous list is the primary source:
+whatever answers hello is dialed, probed, and regenerates the census
+from its own members. (2) If no previous-list member is reachable, the
+pinned genesis anchor is dialed. (3) If nothing at all is reachable —
+no previous member, no genesis anchor — the previous list is written
+back verbatim as last good state, held until a later check succeeds,
+so a temporary outage never wipes the address list to empty.
+
+The census keeps only live members: an entry that cannot be dialed, or
+that is dialed but fails its probe, is dropped from the list immediately
+— no failure counters, no tombstones. A node that comes back online is
+simply re-discovered through its live peers on the next refresh.
 
 File shape:
 
@@ -33,28 +39,22 @@ File shape:
       "nodes": [
         {"node_id": "…", "relay": "…", "ticket": "…", "images": ["…"],
          "probe": "ok", "probe_at": "…", "probe_detail": "…",
-         "probe_fails": 0, "misses": 0},
+         "probe_ms": 123},
         ...
       ],
       "bastions": [
         {"node_id": "…", "relay": "…", "ticket": "…", "images": ["…"],
          "url": "https://…",
          "probe": "ok", "probe_at": "…", "probe_detail": "…",
-         "probe_ms": 123, "probe_fails": 0, "misses": 0},
+         "probe_ms": 123},
         ...
-      ],
-      "evicted": {"<node_id>": 1787452800.0, ...}
+      ]
     }
 
 ``node_id`` + ``relay`` are the stable, iroh-native dial target; ``ticket``
 is kept as a fallback for clients that still dial by EndpointTicket. The
-``probe*``/``misses`` fields are diagnostic, written by this script, and
-ignored by all consumers. ``evicted`` is a tombstone map of node ids that
-have aged out (``{node_id: epoch_seconds}``): gossip discoveries are
-filtered against it so a dead node can't bounce back via a live peer's
-stale gossip table. Tombstones expire after :data:`EVICT_TTL_SECONDS` so a
-recovered node can rejoin, and they persist across ``--reset`` (a reset is
-a fresh census of who is alive, not a pardon for dead nodes).
+``probe*`` fields are diagnostic, written by this script, and ignored by
+all consumers.
 
 Usage:
     python scripts/update_swarm_json.py [--out docs/swarm.json]
@@ -64,8 +64,7 @@ Usage:
 ``--reset`` forgets the entire previous list and regenerates a fresh
 census from the genesis anchor alone (and whatever it reveals via
 hello). Use it when the list has gone stale and you want a clean
-regeneration instead of the incremental merge. The eviction tombstone
-set is preserved across a reset.
+regeneration instead of the incremental merge.
 """
 from __future__ import annotations
 
@@ -83,14 +82,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ephemeral_net.node import Node
-from ephemeral_net.probe import (
-    DEFAULT_PROBE_TIMEOUT,
-    PROBE_MAX_FAILS,
-    UNREACHABLE_MAX_MISSES,
-    mark_probe,
-    run_probe,
-    should_evict,
-)
+from ephemeral_net.probe import DEFAULT_PROBE_TIMEOUT, run_probe
 from ephemeral_net.swarm import DEFAULT_RELAY
 
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "docs" / "swarm.json"
@@ -108,12 +100,6 @@ DEFAULT_OUT = Path(__file__).resolve().parent.parent / "docs" / "swarm.json"
 # Alternatively SWARM_GENESIS (comma-separated node_id@relay) pins the anchor
 # directly. Unset both and a fresh/empty list cannot bootstrap.
 GENESIS_DEFAULT: list[tuple[str, str]] = []
-
-# How long an evicted node stays tombstoned before gossip may rediscover
-# it (~7 days = ~28 refresh cycles). A node that RECOVERS must be able to
-# rejoin the list once its tombstone expires; a genuinely-dead one stays
-# filtered from gossip rediscovery meanwhile.
-EVICT_TTL_SECONDS = 7 * 24 * 3600
 
 # How long each dial attempt may take (matches Node._dial_timeout).
 DIAL_TIMEOUT = 20.0
@@ -366,92 +352,54 @@ def build_status_payload(nodes: list[dict]) -> dict:
     }
 
 
-def _existing_nodes(out_path: Path) -> dict[str, dict]:
+def _load_previous(out_path: Path) -> tuple[list[dict], list[dict]]:
     """
-    Previous list entries keyed by node id.
+    Raw previous-list node and bastion entries, all fields preserved.
 
-    Carries the staleness bookkeeping (``probe_fails`` / ``misses``)
-    forward so counters survive across runs. Missing/malformed file
-    returns {}.
+    The tier-3 fallback holds these verbatim as last good state, so
+    every field (probe diagnostics included) must survive the round-
+    trip. Missing/malformed file returns ([], []).
     """
     try:
         data = json.loads(out_path.read_text(encoding="utf-8"))
     except Exception:
-        return {}
+        return [], []
+    nodes = [e for e in (data.get("nodes") or []) if e.get("node_id")]
+    bastions = [
+        e for e in (data.get("bastions") or []) if e.get("node_id") and e.get("url")
+    ]
+    return nodes, bastions
+
+
+def _existing_nodes(raw_nodes: list[dict]) -> dict[str, dict]:
+    """
+    Raw previous node entries keyed by node id — the dialable core
+    (id/relay/ticket/images) used to target this run's dials.
+    """
     nodes: dict[str, dict] = {}
-    for entry in data.get("nodes") or []:
-        node_id = entry.get("node_id")
-        if not node_id:
-            continue
-        nodes[node_id] = {
-            "node_id": node_id,
+    for entry in raw_nodes:
+        nodes[entry["node_id"]] = {
+            "node_id": entry["node_id"],
             "relay": entry.get("relay"),
             "ticket": entry.get("ticket"),
             "images": entry.get("images") or [],
-            "probe_fails": entry.get("probe_fails") or 0,
-            "misses": entry.get("misses") or 0,
-            "seen_alive": bool(entry.get("seen_alive")),
         }
     return nodes
 
 
-def _load_evicted(out_path: Path) -> dict[str, float]:
+def _existing_bastions(raw_bastions: list[dict]) -> dict[str, dict]:
     """
-    Previous eviction tombstones: ``{node_id: epoch_seconds}``.
-
-    Entries older than :data:`EVICT_TTL_SECONDS` are dropped so a node
-    that recovers can rejoin; the set is capped by the caller. Tolerates
-    the transitional plain-list format ``["<node_id>", ...]`` (treated as
-    evicted now). Missing/malformed file returns {}.
+    Raw previous bastion entries keyed by node id — same dialable core
+    plus the public HTTP URL.
     """
-    try:
-        data = json.loads(out_path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    raw = data.get("evicted") or {}
-    now = time.time()
-    out: dict[str, float] = {}
-    if isinstance(raw, dict):
-        for nid, ts in raw.items():
-            try:
-                ts = float(ts)
-            except (TypeError, ValueError):
-                continue
-            if now - ts <= EVICT_TTL_SECONDS:
-                out[nid] = ts
-    elif isinstance(raw, list):
-        for nid in raw:
-            if isinstance(nid, str) and nid:
-                out[nid] = now
-    return out
-
-
-def _existing_bastions(out_path: Path) -> dict[str, dict]:
-    """
-    Previous bastion entries keyed by node id.
-
-    Carries the staleness bookkeeping (``probe_fails`` / ``misses``) and
-    the advertised public URL forward so bastions age out and re-rank
-    across runs. Missing/malformed file returns {}.
-    """
-    try:
-        data = json.loads(out_path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
     bastions: dict[str, dict] = {}
-    for entry in data.get("bastions") or []:
-        node_id = entry.get("node_id")
-        if not node_id or not entry.get("url"):
-            continue
-        bastions[node_id] = {
-            "node_id": node_id,
+    for entry in raw_bastions:
+        bastions[entry["node_id"]] = {
+            "node_id": entry["node_id"],
             "relay": entry.get("relay"),
             "ticket": entry.get("ticket"),
             "images": entry.get("images") or [],
             "url": entry.get("url"),
-            "probe_fails": entry.get("probe_fails") or 0,
-            "misses": entry.get("misses") or 0,
-            "seen_alive": bool(entry.get("seen_alive")),
         }
     return bastions
 
@@ -502,20 +450,25 @@ async def discover(
     Candidates are whatever the previous list knew, plus any peers learned
     via hello — every entry that ends up in the list is dialed this run,
     and (with ``probe``) every node that answers is sent a real job and
-    must echo a fresh nonce to be listed as verified. The pinned genesis
-    anchor is only consulted when the previous list is empty (first run /
-    ``--reset``) or every member was unreachable. With ``reset`` the
-    previous list is forgotten entirely and the run starts from the
-    genesis anchor alone (a fresh census).
+    must echo a fresh nonce to be listed as verified.
+
+    Tiered fallback: (1) the previous list (nodes + bastions) is the
+    primary source — one reachable member regenerates the whole census
+    via hello; (2) the genesis anchor is dialed only when no previous
+    member answers (or the list is empty / ``--reset``); (3) when nothing
+    at all is reachable, the previous list is returned verbatim — last
+    good state, held until a later check succeeds — instead of an empty
+    census. With ``reset`` the previous list is forgotten entirely and
+    the run starts from the genesis anchor alone (a fresh census).
     """
     node = Node(relay="n0")
     await node.start()
     try:
-        prev = {} if reset else _existing_nodes(out_path)
-        prev_bastions = {} if reset else _existing_bastions(out_path)
-        # Tombstones persist across resets (a reset is a fresh census of
-        # who is ALIVE, not a pardon for previously-evicted dead nodes).
-        evicted: dict[str, float] = _load_evicted(out_path)
+        prev_nodes_raw, prev_bastions_raw = (
+            ([], []) if reset else _load_previous(out_path)
+        )
+        prev = {} if reset else _existing_nodes(prev_nodes_raw)
+        prev_bastions = {} if reset else _existing_bastions(prev_bastions_raw)
         if reset:
             print(
                 "reset: previous list forgotten — regenerating from the "
@@ -553,7 +506,7 @@ async def discover(
                         peer = await asyncio.wait_for(node.dial(ticket), timeout=DIAL_TIMEOUT)
                     else:
                         return
-                except Exception as e:  # unreachable — the list keeps it for a few runs
+                except Exception as e:  # unreachable — dropped at the end of this run
                     # Show the exception type: a bare TimeoutError stringifies
                     # to "" which tells nobody anything.
                     print(
@@ -571,10 +524,15 @@ async def discover(
         )
 
         # Phase 2 — genesis fallback (first run / reset / all-prev-dead).
+        # "Previous members" means nodes AND bastions: a live bastion's
+        # hello reveals the swarm just like a compute node's, so it also
+        # satisfies tier 1.
+        prev_members = dict(prev)
+        prev_members.update(prev_bastions)
         if genesis_anchor_required(
             reset=reset,
-            has_prev=bool(prev),
-            prev_reached=sum(1 for nid in prev if nid in reached),
+            has_prev=bool(prev_members),
+            prev_reached=sum(1 for nid in prev_members if nid in reached),
         ):
             # Pre-wake: the genesis anchor is a Railway-bastion that may be
             # sleeping (free-tier serverless). Railway only wakes a service
@@ -647,19 +605,13 @@ async def discover(
 
         my_id = node.node_id()
         # Everything we know about: hello-learned nodes (seed + its peers)
-        # ∪ previous list, deduped. Keeping un-reachable entries for a few
-        # runs lets the next run retry them and keeps thin clients pointed
-        # at recovering nodes — but they rank last, fill space under the
-        # cap only, and age out after UNREACHABLE_MAX_MISSES.
+        # ∪ previous list, deduped. Only entries dialed successfully this
+        # run survive to the output — anything stale is dropped now and
+        # re-learned via gossip when it comes back.
         infos: dict[str, dict] = {}
-        # Filter gossip discoveries against the persisted eviction set:
-        # prevents a dead node from bouncing back via another live peer's
-        # stale gossip table on every refresh cycle.
         pre_gossip = set()
         for info in node.table:
             if info.node_id == my_id:
-                continue
-            if info.node_id in evicted:
                 continue
             pre_gossip.add(info.node_id)
             infos[info.node_id] = {
@@ -671,21 +623,11 @@ async def discover(
             }
         for entry in prev.values():
             nid = entry["node_id"]
-            if nid in infos:
-                # Live hello data wins; carry the staleness bookkeeping over.
-                for key in ("probe_fails", "misses", "seen_alive"):
-                    if entry.get(key):
-                        infos[nid][key] = entry[key]
-            else:
+            if nid not in infos:
                 infos[nid] = dict(entry)
         for entry in prev_bastions.values():
             nid = entry["node_id"]
-            if nid in infos:
-                # Live hello data wins for identity; carry staleness over.
-                for key in ("probe_fails", "misses", "seen_alive"):
-                    if entry.get(key):
-                        infos[nid][key] = entry[key]
-            else:
+            if nid not in infos:
                 infos[nid] = dict(entry)
 
         # Dial hello-learned nodes too (they were never targets of the
@@ -724,14 +666,7 @@ async def discover(
             entry["probe_at"] = now_iso
             entry["probe_detail"] = result["detail"]
             entry["probe_ms"] = result["ms"]
-            # mark_probe returns a NEW entry carrying the counters — write it
-            # back into node_infos, or the bookkeeping is silently lost and
-            # stale nodes are never evicted.
-            node_infos[node_id] = mark_probe(
-                entry,
-                prev.get(node_id),
-                status="ok" if result["ok"] else "failed",
-            )
+            node_infos[node_id] = entry
             tag = "probe ok" if result["ok"] else "probe FAILED"
             print(f"  {tag:14} {node_id[:12]}... {result['detail']} ({result['ms']} ms)", flush=True)
 
@@ -744,50 +679,32 @@ async def discover(
                 )
             )
 
-        # Nodes we could not dial: record the miss (and that we tried).
+        # Nodes we could not dial: report them (they are dropped at the
+        # end — the list keeps only live members, so a node that comes
+        # back online is re-discovered through gossip on the next run
+        # instead of being retried for days).
         for node_id, entry in node_infos.items():
             if node_id in peers:
                 continue
-            if not (entry.get("relay") or entry.get("ticket")):
-                entry["probe"] = "skipped"  # nothing to dial — leave untouched
-                continue
-            entry = node_infos[node_id] = mark_probe(
-                entry, prev.get(node_id), status="unreachable"
-            )
-            entry["probe"] = "unreachable"
-            entry["probe_at"] = now_iso
             print(f"  unreachable    {node_id[:12]}...", flush=True)
 
-        # Evict entries that are no longer live: reachable nodes that
-        # never run the probe job (PROBE_MAX_FAILS), and silent nodes
-        # (UNREACHABLE_MAX_MISSES ≈ 36 h offline). The genesis anchor is
-        # exempt only while it is the active bootstrap source this run
-        # (first run / reset / all-prev-dead fallback); otherwise it is an
-        # ordinary member and ages out like any other node.
-        kept: list[dict] = []
-        evicted_now: list[str] = []
-        for node_id, entry in node_infos.items():
-            if should_evict(entry, seed_ids=seed_ids):
-                if (entry.get("probe_fails") or 0) >= PROBE_MAX_FAILS:
-                    reason = f"{entry.get('probe_fails')} failed probes"
-                else:
-                    reason = f"{entry.get('misses')} unreachable runs"
-                print(f"  evicting       {node_id[:12]}... ({reason})", flush=True)
-                evicted_now.append(node_id)
-                continue
-            kept.append(entry)
-        # Merge with the persisted tombstones (timestamped, TTL-expiring,
-        # genesis-exempt) and cap at 100 newest to prevent unbounded growth.
-        evict_ts = time.time()
-        for nid in evicted_now:
-            evicted[nid] = evict_ts
-        evicted = {nid: ts for nid, ts in evicted.items() if nid not in seed_ids}
-        if len(evicted) > 100:
-            evicted = dict(sorted(evicted.items(), key=lambda kv: kv[1])[-100:])
+        # Keep only live members — no counters, no tombstones. A dialed
+        # node whose probe job failed (a bot, a broken executor) is
+        # dropped immediately; with ``--no-probe`` any dialed node is
+        # kept, since nothing disproved it.
+        if probe:
+            kept: list[dict] = [
+                entry
+                for node_id, entry in node_infos.items()
+                if node_id in peers and entry.get("probe") == "ok"
+            ]
+        else:
+            kept = [
+                entry for node_id, entry in node_infos.items() if node_id in peers
+            ]
 
         # Rank: genesis anchor first, then verified nodes (fastest probe /
-        # hello RTT first), then reachable-but-unverified, then hello-
-        # learned peers, then stale entries — capped so the address list
+        # hello RTT first), then the rest — capped so the address list
         # stays small and fresh.
         known = set(node.table.known_peer_ids())
 
@@ -825,9 +742,7 @@ async def discover(
             entry["probe_at"] = now_iso
             entry["probe_detail"] = result["detail"]
             entry["probe_ms"] = result["ms"]
-            bastion_infos[node_id] = mark_probe(
-                entry, prev_bastions.get(node_id), status=status
-            )
+            bastion_infos[node_id] = entry
             tag = "bastion ok" if result["ok"] else "bastion DOWN"
             print(
                 f"  {tag:14} {url} {result['detail']} ({result['ms']} ms)",
@@ -843,22 +758,20 @@ async def discover(
             )
         else:
             for nid, entry in bastion_infos.items():
-                entry = bastion_infos[nid] = mark_probe(
-                    entry, prev_bastions.get(nid), status="reached"
-                )
                 entry["probe"] = "skipped"
                 entry["probe_at"] = now_iso
 
-        kept_bastions: list[dict] = []
-        for node_id, entry in bastion_infos.items():
-            if should_evict(entry):
-                if (entry.get("probe_fails") or 0) >= PROBE_MAX_FAILS:
-                    reason = f"{entry.get('probe_fails')} failed health checks"
-                else:
-                    reason = f"{entry.get('misses')} unreachable runs"
-                print(f"  evicting       {entry.get('url')} ({reason})", flush=True)
-                continue
-            kept_bastions.append(entry)
+        # Bastions: only healthy ones survive a probing run; a dial-only
+        # (``--no-probe``) run keeps them as-is since nothing disproved
+        # them.
+        if probe:
+            kept_bastions = [
+                entry
+                for entry in bastion_infos.values()
+                if entry.get("probe") == "ok"
+            ]
+        else:
+            kept_bastions = list(bastion_infos.values())
 
         def bastion_rank_key(nid: str) -> tuple[int, float, str]:
             status = bastion_infos[nid].get("probe")
@@ -897,15 +810,35 @@ async def discover(
                 flush=True,
             )
 
+        # Tier 3 — hold last good state. When this run could not reach a
+        # single member (no previous-list peer answered, and the genesis
+        # anchor — if configured — was unreachable too), there is no
+        # fresh census to write. An empty list would cascade: the next
+        # run would find no previous list to dial, so one temporary
+        # outage would permanently wipe the swarm's address list. Instead
+        # the previous list is written back verbatim (last good state,
+        # held indefinitely) and the next scheduled check simply retries
+        # those members.
+        if not reset and (prev_nodes_raw or prev_bastions_raw) and not reached:
+            print(
+                "  tier-3 fallback: no member reachable this run — holding the "
+                "previous list verbatim (last good state) until the next check",
+                flush=True,
+            )
+            return {
+                "updated": now_iso,
+                "relay": DEFAULT_RELAY,
+                "max_nodes": max_nodes,
+                "nodes": prev_nodes_raw[:max_nodes],
+                "bastions": prev_bastions_raw[:max_nodes],
+            }
+
         return {
             "updated": now_iso,
             "relay": DEFAULT_RELAY,
             "max_nodes": max_nodes,
             "nodes": ordered[:max_nodes],
             "bastions": ordered_bastions[:max_nodes],
-            "evicted": {
-                nid: ts for nid, ts in sorted(evicted.items(), key=lambda kv: kv[1])
-            },
         }
     finally:
         await node.close()

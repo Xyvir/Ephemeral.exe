@@ -50,7 +50,10 @@ jobs:
     # anchor directly as comma-separated node_id@relay. The list is self-
     # sustaining: each run regenerates from the previous list's members,
     # and the genesis anchor is only consulted when no member is
-    # reachable (or the list is empty — first run / manual reset).
+    # reachable (or the list is empty — first run / manual reset). If
+    # nothing at all is reachable (previous list and anchor both down),
+    # the previous list is written back verbatim as last good state —
+    # held indefinitely, never wiped to empty.
     #
     # The same URL is used to wake a sleeping bastion: Railway free tier
     # sleeps idle services, and QUIC/UDP dials can't wake them. The HTTP

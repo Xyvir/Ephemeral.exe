@@ -51,15 +51,10 @@ from .node import Node, PeerConnection
 from .offload import OffloadingExecutor
 from .probe import (
     DEFAULT_PROBE_TIMEOUT,
-    PROBE_MAX_FAILS,
-    UNREACHABLE_MAX_MISSES,
-    UNREACHABLE_MAX_MISSES_NEVER_VERIFIED,
     build_probe_document,
-    mark_probe,
     probe_nonce,
     probe_verdict,
     run_probe,
-    should_evict,
 )
 from .protocol import ALPN, PROTOCOL_VERSION, encode_frame, decode_frame
 from .sandbox import CoreJobExecutor, default_image_allowlist, sanitize_markdown
@@ -67,10 +62,7 @@ from .sandbox import CoreJobExecutor, default_image_allowlist, sanitize_markdown
 __all__ = [
     "ALPN",
     "DEFAULT_PROBE_TIMEOUT",
-    "PROBE_MAX_FAILS",
     "PROTOCOL_VERSION",
-    "UNREACHABLE_MAX_MISSES",
-    "UNREACHABLE_MAX_MISSES_NEVER_VERIFIED",
     "ConnectionClosed",
     "CoreJobExecutor",
     "FrameTooLarge",
@@ -93,11 +85,9 @@ __all__ = [
     "decode_frame",
     "default_image_allowlist",
     "encode_frame",
-    "mark_probe",
     "parse_job_frame",
     "probe_nonce",
     "probe_verdict",
     "run_probe",
     "sanitize_markdown",
-    "should_evict",
 ]

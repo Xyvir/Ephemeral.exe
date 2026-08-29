@@ -480,6 +480,30 @@ def test_offload_redial_failure_falls_back_to_local():
     print("PASS: offload falls back to local when the re-dial fails")
 
 
+def test_offload_surfaces_prepare_error():
+    from ephemeral_net.offload import OffloadingExecutor
+    from ephemeral_net.jobs import JobErrorEvent
+
+    class _BadLocal(_FakeLocal):
+        def prepare(self, request):
+            raise ValueError("Configuration failed for block with header: ''")
+
+    async def run():
+        local = _BadLocal([], warm=set(), events=_events)
+        node = _FakeNode(peer=_FakePeer(images={PY_IMG}))
+        ex = OffloadingExecutor(node, local)
+        req = JobRequest(job_id="j", document_blob="")
+        events = [e async for e in ex(req)]
+        # The real reason must reach the client — not the misleading
+        # "no warm peer" fallback of an orchestration-only bastion.
+        assert len(events) == 1 and isinstance(events[0], JobErrorEvent)
+        assert "Configuration failed for block" in events[0].message
+        assert node.submitted == 0, "no offload attempt on a rejected document"
+
+    asyncio.run(run())
+    print("PASS: offload surfaces the real prepare error instead of masking it")
+
+
 def test_drop_dead_peers_sweeps_closed_connections():
     from ephemeral_net.node import Node
 
@@ -1316,10 +1340,8 @@ def test_peer_table_gossiped_new_peer_survives_merge():
 def test_genesis_fallback_plan():
     """The previous list is the primary census source; the pinned genesis
     anchor is only consulted when the list is empty or every member is
-    unreachable — and once the swarm is self-sustaining, the anchor is not
-    exempt from eviction."""
+    unreachable."""
     import scripts.update_swarm_json as upd
-    from ephemeral_net.probe import UNREACHABLE_MAX_MISSES, should_evict
 
     genesis = [("g" * 64, "https://relay.example")]
     assert upd.genesis_anchor_required(
@@ -1334,18 +1356,6 @@ def test_genesis_fallback_plan():
     assert upd.genesis_anchor_required(
         reset=True, has_prev=True, prev_reached=3
     ) is True, "manual reset always regenerates from the genesis anchor"
-
-    # De-pinned: while the swarm regenerates from its own members the
-    # genesis node is an ordinary member and ages out like any other.
-    entry = {
-        "node_id": genesis[0][0],
-        "misses": UNREACHABLE_MAX_MISSES,
-        "seen_alive": True,
-    }
-    assert should_evict(entry, seed_ids=set()) is True, \
-        "genesis must age out when it is not the active anchor"
-    assert should_evict(entry, seed_ids={genesis[0][0]}) is False, \
-        "genesis is exempt only while it is the active anchor"
     print("PASS: genesis fallback plan (prev-list first, anchor only as fallback)")
 
 
@@ -1416,47 +1426,6 @@ def test_resolve_genesis_from_url():
         upd.fetch_genesis_from_url = real_fetch
 
     print("PASS: genesis resolved from a bastion URL (no hardcoded node id)")
-
-
-def test_evicted_tombstones_ttl():
-    """Eviction tombstones expire so a recovered node can rejoin, and the
-    loader tolerates the transitional plain-list format."""
-    import json
-    import tempfile
-    import time
-    from pathlib import Path
-
-    import scripts.update_swarm_json as upd
-
-    now = time.time()
-    with tempfile.TemporaryDirectory(prefix="ephemeral-evict-ttl-") as d:
-        out = Path(d) / "swarm.json"
-
-        # Fresh tombstone kept; expired one dropped.
-        out.write_text(
-            json.dumps(
-                {
-                    "evicted": {
-                        "a" * 64: now - 60.0,                            # fresh
-                        "b" * 64: now - upd.EVICT_TTL_SECONDS - 10.0,   # expired
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
-        loaded = upd._load_evicted(out)
-        assert "a" * 64 in loaded and "b" * 64 not in loaded, \
-            "expired tombstones must be dropped so recovered nodes can rejoin"
-
-        # Transitional plain-list format is tolerated (evicted as of now).
-        out.write_text(json.dumps({"evicted": ["c" * 64]}), encoding="utf-8")
-        loaded = upd._load_evicted(out)
-        assert "c" * 64 in loaded, "plain-list format must be accepted"
-
-        # Malformed file yields an empty set.
-        out.write_text("{not json", encoding="utf-8")
-        assert upd._load_evicted(out) == {}
-        print("PASS: evicted tombstones TTL-expire and tolerate legacy format")
 
 
 def test_swarm_status_badge_payload():
@@ -1767,16 +1736,11 @@ def test_fetch_swarm_list_dns():
 
 
 def test_probe_helpers():
-    """Liveness-probe payload, verdict, and staleness bookkeeping are pure."""
+    """Liveness-probe payload and verdict are pure."""
     from ephemeral_net.probe import (
-        PROBE_MAX_FAILS,
-        UNREACHABLE_MAX_MISSES,
-        UNREACHABLE_MAX_MISSES_NEVER_VERIFIED,
         build_probe_document,
-        mark_probe,
         probe_nonce,
         probe_verdict,
-        should_evict,
     )
     from ephemeral_net.sandbox import sanitize_markdown
 
@@ -1800,43 +1764,7 @@ def test_probe_helpers():
     assert probe_verdict(0, "", nonce)[0] is False
     assert probe_verdict(1, nonce, nonce)[0] is False
     assert probe_verdict(0, nonce, "other-nonce")[0] is False
-
-    # Bookkeeping: counters carry over from the previous list entry;
-    # any successful dial (ok / failed / reached) marks the node alive.
-    prev = {"node_id": "x", "probe_fails": 2, "misses": 3}
-    assert mark_probe({}, prev, status="ok") == {
-        "probe_fails": 0, "misses": 0, "seen_alive": True}
-    failed = mark_probe({}, prev, status="failed")
-    assert failed == {"probe_fails": 3, "misses": 0, "seen_alive": True}
-    reached = mark_probe({}, prev, status="reached")
-    assert reached["misses"] == 0 and reached["probe_fails"] == 2
-    assert reached["seen_alive"] is True
-    unreach = mark_probe({}, prev, status="unreachable")
-    assert unreach == {"probe_fails": 2, "misses": 4, "seen_alive": False}
-    assert mark_probe({}, None, status="failed")["probe_fails"] == 1
-    # seen_alive is only ever set by an actual dial, and survives misses.
-    assert mark_probe({}, None, status="unreachable") == {
-        "probe_fails": 0, "misses": 1, "seen_alive": False}
-
-    # Eviction: only when a counter crosses its threshold; never-verified
-    # entries get a short leash; the genesis anchor is always exempt.
-    assert should_evict({"node_id": "x", "probe_fails": PROBE_MAX_FAILS})
-    assert not should_evict({"node_id": "x", "probe_fails": PROBE_MAX_FAILS - 1})
-    # Never dialed once: dropped after the short leash, not the long one.
-    assert should_evict({"node_id": "x", "misses": UNREACHABLE_MAX_MISSES_NEVER_VERIFIED})
-    assert not should_evict(
-        {"node_id": "x", "misses": UNREACHABLE_MAX_MISSES_NEVER_VERIFIED - 1})
-    # Was alive once: gets the full recovery grace.
-    assert not should_evict(
-        {"node_id": "x", "seen_alive": True, "misses": UNREACHABLE_MAX_MISSES - 1})
-    assert should_evict(
-        {"node_id": "x", "seen_alive": True, "misses": UNREACHABLE_MAX_MISSES})
-    assert not should_evict({"node_id": "x"})
-    assert not should_evict(
-        {"node_id": "genesis", "probe_fails": 99, "misses": 99},
-        seed_ids={"genesis"},
-    )
-    print("PASS: probe helpers (payload, verdict, counters, eviction)")
+    print("PASS: probe helpers (payload + verdict)")
 
 
 async def _run_list_bootstrap_integration() -> bool:
@@ -2097,110 +2025,114 @@ async def _run_probe_integration() -> bool:
         await probe.close()
 
 
-async def _run_eviction_integration() -> bool:
+async def _run_liveness_integration() -> bool:
     """
-    Staleness bookkeeping across real ``discover()`` runs: unreachable
-    entries accumulate ``misses`` in the written list and are evicted
-    once they cross the threshold — the refresh script must not keep
-    dead entries forever. Regression test: mark_probe() returns a NEW
-    entry with the counters, and discover() must write that back into
-    the list (discarding it silently froze all counters at 0).
+    Tiered census refresh over real connections:
+
+    * keep-only-live: with at least one reachable member, stale
+      undialable entries are dropped from the written list immediately —
+      no failure counters, no tombstone/blacklist, no ``evicted`` set;
+    * tier-3 hold: when NOTHING is reachable (no previous-list member,
+      no genesis anchor), the previous list is written back verbatim as
+      last good state instead of an empty census;
+    * reset: forgets the previous list entirely.
     """
+    import re
+
+    from ephemeral_net.node import Node
+    from ephemeral_net.sandbox import CoreJobExecutor
     import scripts.update_swarm_json as upd  # noqa: F401
-    from ephemeral_net.probe import (
-        UNREACHABLE_MAX_MISSES,
-        UNREACHABLE_MAX_MISSES_NEVER_VERIFIED,
-    )
 
-    with tempfile.TemporaryDirectory(prefix="ephemeral-evict-") as d:
-        out = Path(d) / "swarm.json"
-        genesis_id = "g" * 64
-        never_id = "n" * 64
-        recovering_id = "r" * 64
-        out.write_text(
-            json.dumps(
-                {
-                    "updated": "2026-08-12T00:00:00Z",
-                    "nodes": [
-                        # Never answered a dial: one miss short of the short
-                        # leash — this run pushes it over and it must go.
-                        {
-                            "node_id": never_id,
-                            "relay": None,
-                            "ticket": "bogus-ticket",
-                            "probe_fails": 0,
-                            "misses": UNREACHABLE_MAX_MISSES_NEVER_VERIFIED - 1,
-                        },
-                        # Was alive once (seen_alive) and offline since:
-                        # keeps the full recovery grace, counters accumulate.
-                        {
-                            "node_id": recovering_id,
-                            "relay": None,
-                            "ticket": "bogus-ticket",
-                            "probe_fails": 0,
-                            "misses": 1,
-                            "seen_alive": True,
-                        },
-                        # The genesis anchor is operator config: exempt even
-                        # when it has been silent for a very long time.
-                        {
-                            "node_id": genesis_id,
-                            "relay": None,
-                            "ticket": "bogus-ticket",
-                            "probe_fails": 0,
-                            "misses": 99,
-                        },
-                    ],
-                }
-            ),
-            encoding="utf-8",
-        )
+    async def _echo_runner(markdown_text, timeout, server_mode):
+        """Simulate a real node: run the bash payload, echo its output."""
+        m = re.search(r"echo\s+([A-Za-z0-9_-]+)", markdown_text)
 
-        # A bogus relay + bogus tickets make every dial fail fast (no 20 s
-        # per-node timeouts); the genesis is passed as operator config.
-        genesis = [(genesis_id, "https://127.0.0.1:1")]
-        r1 = await upd.discover(out, max_nodes=50, genesis=genesis)
-        by_id = {n["node_id"]: n for n in r1["nodes"]}
-        assert never_id not in by_id, "never-verified entry must be evicted"
-        assert genesis_id in by_id and by_id[genesis_id]["misses"] == 100, \
-            "genesis is exempt from eviction"
-        assert by_id[recovering_id]["misses"] == 2, \
-            f"previously-alive entry should carry 2 misses, got {by_id[recovering_id]}"
-        # The evicted set must be written to the output so the next run
-        # can filter gossip discoveries against it.
-        evicted_out = set(r1.get("evicted") or {})
-        assert never_id in evicted_out, "evicted node must appear in evicted set"
-        assert genesis_id not in evicted_out, "genesis must never be in evicted set"
-        assert isinstance(r1["evicted"], dict), "evicted must be a timestamped map"
-        assert all(
-            isinstance(ts, (int, float)) for ts in r1["evicted"].values()
-        ), "evicted timestamps must be numeric"
-        print("  run 1: never-verified evicted; recovering kept; genesis kept")
+        class _Result:
+            stdout = (m.group(1) + "\n") if m else ""
+            stderr = ""
+            exit_code = 0
+            artifact_paths = []
 
-        # Persist run 1 the way main() does (discover() returns the list;
-        # the workflow writes it before the next run reads it back).
-        out.write_text(json.dumps(r1, indent=2) + "\n", encoding="utf-8")
+        return _Result()
 
-        # A second run reads the file back: counters survive across runs,
-        # and the recovering entry is still within its grace period.
-        r2 = await upd.discover(out, max_nodes=50, genesis=genesis)
-        by_id2 = {n["node_id"]: n for n in r2["nodes"]}
-        assert by_id2[recovering_id]["misses"] == 3, \
-            f"misses must accumulate across runs, got {by_id2[recovering_id]}"
-        # The evicted set persists across runs.
-        evicted_r2 = set(r2.get("evicted") or {})
-        assert never_id in evicted_r2, "evicted set must persist across runs"
-        print("  run 2: counters persisted; recovering entry still kept")
+    dead_id = "d" * 64
+    worker = Node(relay="disabled", idle_timeout=5.0)
+    worker.executor = CoreJobExecutor(runner=_echo_runner)
+    try:
+        await worker.start()
+        with tempfile.TemporaryDirectory(prefix="ephemeral-live-") as d:
+            out = Path(d) / "swarm.json"
+            # A bogus relay + bogus tickets make every dial fail fast (no
+            # 20 s per-node timeouts).
+            genesis = [("g" * 64, "https://127.0.0.1:1")]
 
-        # Reset: forget the whole list and regenerate from the genesis
-        # anchor alone — every previous entry is dropped regardless of
-        # its counters (nothing is reachable here, so the fresh census
-        # is empty).
-        r3 = await upd.discover(out, max_nodes=50, genesis=genesis, reset=True)
-        assert r3["nodes"] == [], "reset must drop every previous entry"
-        print("  run 3: reset regenerated from scratch (empty fresh census)")
-        print("  EVICTION INTEGRATION OK")
-        return True
+            # --- Tier 3: nothing reachable -> hold last good state ---
+            held = {
+                "node_id": dead_id,
+                "relay": None,
+                "ticket": "bogus-ticket",
+                "probe": "ok",
+                "probe_at": "2026-08-12T00:00:00Z",
+                "probe_detail": "ok",
+                "probe_ms": 42,
+            }
+            out.write_text(
+                json.dumps(
+                    {
+                        "updated": "2026-08-12T00:00:00Z",
+                        "nodes": [held],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            r1 = await upd.discover(out, max_nodes=50, genesis=genesis)
+            assert r1["nodes"] == [held], \
+                "nothing reachable must hold the previous list verbatim"
+            assert "evicted" not in r1, "no tombstone set may be written"
+            print("  run 1: nothing reachable -> previous list held verbatim")
+
+            # --- Keep-only-live: a reachable member makes the census
+            # authoritative, so the stale entry is dropped immediately ---
+            out.write_text(
+                json.dumps(
+                    {
+                        "updated": "2026-08-12T00:00:00Z",
+                        "nodes": [
+                            {
+                                "node_id": worker.node_id(),
+                                "relay": None,
+                                "ticket": worker.ticket(),
+                            },
+                            {
+                                "node_id": dead_id,
+                                "relay": None,
+                                "ticket": "bogus-ticket",
+                                "probe": "ok",
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            r2 = await upd.discover(out, max_nodes=50, genesis=genesis)
+            ids = [n["node_id"] for n in r2["nodes"]]
+            assert worker.node_id() in ids, "reachable member must be kept"
+            assert dead_id not in ids, "undialable entry dropped when any member is reachable"
+            assert all(n.get("probe") == "ok" for n in r2["nodes"]), \
+                "kept nodes must be probe-verified"
+            assert "evicted" not in r2, "no tombstone set may be written"
+            print("  run 2: reachable member kept, stale entry dropped immediately")
+
+            # Reset: forget the whole list and regenerate from the genesis
+            # anchor alone — nothing is reachable here, so the fresh census
+            # is empty (no previous list to hold).
+            r3 = await upd.discover(out, max_nodes=50, genesis=genesis, reset=True)
+            assert r3["nodes"] == [], "reset must drop every previous entry"
+            print("  run 3: reset regenerated from scratch (empty fresh census)")
+            print("  LIVENESS INTEGRATION OK")
+            return True
+    finally:
+        await worker.close()
 
 
 async def _run_mesh_blob_integration() -> bool:
@@ -2296,7 +2228,6 @@ def main():
     test_genesis_fallback_plan()
     test_relay_spec_parsing()
     test_resolve_genesis_from_url()
-    test_evicted_tombstones_ttl()
     test_swarm_status_badge_payload()
     test_private_mode_helpers()
     test_sanitize_strips_unsafe_and_overrides()
@@ -2314,6 +2245,7 @@ def main():
     test_offload_falls_back_to_local_when_forward_fails()
     test_offload_evicts_and_redials_dead_peer()
     test_offload_redial_failure_falls_back_to_local()
+    test_offload_surfaces_prepare_error()
     test_drop_dead_peers_sweeps_closed_connections()
     test_image_ref_parsing()
     test_blob_frame_helpers()
@@ -2351,10 +2283,10 @@ def main():
     if not ok:
         print("SKIP: probe integration test — no local connectivity")
 
-    print("\n--- staleness-eviction integration (discover() twice) ---")
-    ok = asyncio.run(_run_eviction_integration())
+    print("\n--- tiered census integration (keep-only-live + hold last good state) ---")
+    ok = asyncio.run(_run_liveness_integration())
     if not ok:
-        print("SKIP: eviction integration test — no local connectivity")
+        print("SKIP: liveness integration test — no local connectivity")
 
     print("\n--- mesh image-blob integration ---")
     ok = asyncio.run(_run_mesh_blob_integration())
