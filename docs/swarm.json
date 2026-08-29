@@ -1,12 +1,12 @@
 {
-  "updated": "2026-08-29T16:31:31Z",
+  "updated": "2026-08-29T20:45:35Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6onrycaeakhqdbmxtmoaq",
+      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6nrqidaeakhqdbmxmmcay",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/clfoundation/sbcl:slim",
@@ -37,12 +37,24 @@
       "url": null,
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-29T16:31:31Z",
+      "probe_at": "2026-08-29T20:45:35Z",
       "probe_detail": "ok",
-      "probe_ms": 930,
+      "probe_ms": 872,
       "probe_fails": 0,
       "misses": 0,
-      "rtt_ms": 3139
+      "rtt_ms": 6981
+    },
+    {
+      "node_id": "1205c446973609fa079deb116bf3b71941944d227b82431e5dba897ef72a245b",
+      "relay": "https://usw1-1.relay.n0.iroh.link./",
+      "ticket": "endpointaajalrcgs43at6qhtxvrc27tw4mudfcnej5yeqy6lw5is7xxfisfwbaaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqbaezm5tadaeadjgnpysqbqaiavqiqaaoozqbq",
+      "images": [],
+      "url": null,
+      "probe_fails": 0,
+      "misses": 1,
+      "seen_alive": false,
+      "probe": "unreachable",
+      "probe_at": "2026-08-29T20:45:35Z"
     }
   ],
   "bastions": [
@@ -54,33 +66,14 @@
       "url": "https://ephemeralexe-production.up.railway.app",
       "seen_alive": true,
       "probe": "ok",
-      "probe_at": "2026-08-29T16:31:31Z",
+      "probe_at": "2026-08-29T20:45:35Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 438,
+      "probe_ms": 356,
       "probe_fails": 0,
       "misses": 0
     }
   ],
   "evicted": {
-    "d6450f0028f5941210f0248ba57ea5c031225a5f0a51d00345285cfcbf3a0b51": 1787421407.1176887,
-    "d7d29c52fab487442a9115bce1f6f76a85c052da6336d09a15fa1b540ced4efe": 1787421407.1176887,
-    "86d79981a4e1c71b137950a5b0a084831ca942f9df2ed525b10ccb78deeca06d": 1787421407.1176887,
-    "c1b411d149f563725971ba6514f4a18197348908b9bbc1297a30f43b1f091884": 1787421407.1176887,
-    "267188831204048b180babab82edfa9b61238072417812c1982a8d80b4933536": 1787423910.526736,
-    "f849c40c7d0894570de5897585cb99eb872a3782bab54abc545f7632a47fb2a8": 1787423910.526736,
-    "2c6275f05e0793d8562e78c62c6a3eb3ca943780f59c5ffff277926d2264a1f8": 1787423910.526736,
-    "a62e2eea380be167ef5c33a69fb41f3987348dad351e07a858d9fbd1ff3ce00b": 1787423910.526736,
-    "3fc498dec8170cc92812f95a6507ed61236ed2a0de963f3f0e713a7fb8c6c0e9": 1787423910.526736,
-    "1c1969fbf91dc21eaa6d09d328000ab10c5025fe670c71b383808f4c81ffe14a": 1787423910.526736,
-    "4d16aee02216569e42324c80279562db2268b0d3145eed8b22b87c7f03b5068c": 1787423910.526736,
-    "d2114dae67a5faaff81d38af60bf86f9df8f37395ce22f6ca40117ce1609c2bd": 1787423910.526736,
-    "83ceea111574cd65f4447e0464800202c77e07040d6139c68fa1d3f44d27d66e": 1787423910.526736,
-    "19a5d4f810caa9c9537ac29bfa75dcb314c10913c3c5e3ec2de95ad82ecd950f": 1787423910.526736,
-    "9c8e25ff3dad0db795e84eb29452b9c1da54515ab14a659c8cec7deac4f8c1c7": 1787423910.526736,
-    "770bf2f867135df4c28056908555888c3b06b6e4bdfe3bbef536e9617c49bed1": 1787423910.526736,
-    "fbd3a21a0584a0a458c35b021cfebf0f0a0dfd8b38e802de427ea11a9f56a39a": 1787423910.526736,
-    "2c2b8c9bb06f37185b5244a151d1d53bb86345997d6ccb5174a7d1aaf9e4bd66": 1787423910.526736,
-    "5dba2759ad8d1c9a2d0404f8ede7f7211619d2efa85a7fd41e84634b56751f19": 1787423910.526736,
     "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030": 1787449460.353813,
     "fac349d19278576c930481b5f279d3b4c2f5f77330ee0aecd12dc4165d79c46a": 1787449460.353813,
     "6359053ad8d9c2b213a46d7f3270dd98fdf7798ada14e436c23103b0b8e8e10a": 1787449460.353813,
