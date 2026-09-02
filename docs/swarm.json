@@ -1,5 +1,5 @@
 {
-  "updated": "2026-09-02T10:59:35Z",
+  "updated": "2026-09-02T16:20:32Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
@@ -45,15 +45,15 @@
       ],
       "url": null,
       "probe": "ok",
-      "probe_at": "2026-09-02T10:59:35Z",
+      "probe_at": "2026-09-02T16:20:32Z",
       "probe_detail": "ok",
-      "probe_ms": 1749,
-      "rtt_ms": 460
+      "probe_ms": 1809,
+      "rtt_ms": 52
     },
     {
       "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6ptaqcaeakhqdbmx4yeaq",
+      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6m35acaeakhqdbmxg7iaq",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/clfoundation/sbcl:slim",
@@ -83,23 +83,23 @@
       ],
       "url": null,
       "probe": "ok",
-      "probe_at": "2026-09-02T10:59:35Z",
+      "probe_at": "2026-09-02T16:20:32Z",
       "probe_detail": "ok",
-      "probe_ms": 932,
-      "rtt_ms": 6129
+      "probe_ms": 912,
+      "rtt_ms": 8403
     }
   ],
   "bastions": [
     {
       "node_id": "ed7106bced606bede735b4c9b215052855f9747e8cb56629759ae672ce29b9c8",
       "relay": "https://euc1-1.relay.n0.iroh.link./",
-      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacu6tpeyxcicaeajqn5zpofysaq",
+      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3fovrtcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacvi5u3jbcqcaeanatpuvkiiuaq",
       "images": [],
       "url": "https://ephemeralexe-production.up.railway.app",
       "probe": "ok",
-      "probe_at": "2026-09-02T10:59:35Z",
+      "probe_at": "2026-09-02T16:20:32Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 339
+      "probe_ms": 284
     }
   ]
 }
