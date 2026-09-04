@@ -20,7 +20,7 @@ import threading
 import time
 
 import ephemeral_core
-from ephemeral_core.executor import run_container_group, check_image_exists
+from ephemeral_core.executor import host_arch, run_container_group, check_image_exists
 from ephemeral_core.parser import strip_shebang, resolve_runtime_config
 from ephemeral_core.space import SpaceGuardError, ensure_space_for_pull
 
@@ -100,10 +100,10 @@ class LocalBackend(Backend):
             print(f"[Ephemeral] {e}", file=sys.stderr)
             return 1
         if sys.platform == 'win32':
-            cmd_line = f'cmd /C "echo [Ephemeral] Image {image_name} not found. Downloading... && podman pull {image_name} || pause"'
+            cmd_line = f'cmd /C "echo [Ephemeral] Image {image_name} not found. Downloading... && podman pull --platform linux/{host_arch()} {image_name} || pause"'
             process = subprocess.Popen(cmd_line, creationflags=getattr(subprocess, 'CREATE_NEW_CONSOLE', 0))
         else:
-            cmd_line = ['podman', 'pull', image_name]
+            cmd_line = ['podman', 'pull', '--platform', f'linux/{host_arch()}', image_name]
             process = subprocess.Popen(cmd_line)
         return process.wait()
 

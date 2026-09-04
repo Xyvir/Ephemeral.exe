@@ -35,6 +35,7 @@ from .image_pull import (
     ImagePullError,
     MeshImagePuller,
     export_oci_dir,
+    host_arch,
 )
 from .jobs import JobErrorEvent, JobExecutor, JobRequest, parse_job_frame
 from .swarm import (
@@ -106,13 +107,49 @@ def _peer_load_factor(peer) -> float:
     return float(active)
 
 
-def select_peer_for_images(peers, images: Sequence[str]):
+def _normalized_architecture(value: object) -> str | None:
+    """Normalize common OCI/Podman architecture spellings."""
+    if not value:
+        return None
+    value = str(value).strip().lower()
+    return {
+        "x86_64": "amd64",
+        "amd64": "amd64",
+        "aarch64": "arm64",
+        "arm64": "arm64",
+    }.get(value, value)
+
+
+def _peer_supports_platform(peer, platform: dict | None) -> bool:
+    """Return whether an advertised peer can run the requested platform.
+
+    Missing platform metadata means the peer's execution platform is
+    unknown. It is eligible for ordinary routing, but not for a caller that
+    requires a known native platform.
     """
-    Best peer advertising any of ``images`` — idle-first, then RTT.
+    peer_platform = getattr(peer, "platform", None)
+    if platform is None:
+        return True
+    if not peer_platform:
+        return False
+    wanted_os = platform.get("os", "linux")
+    wanted_arch = _normalized_architecture((platform or {}).get("architecture"))
+    peer_os = peer_platform.get("os", "linux")
+    peer_arch = _normalized_architecture(peer_platform.get("architecture"))
+    return peer_os == wanted_os and peer_arch == wanted_arch
+
+
+def select_peer_for_images(
+    peers, images: Sequence[str], *, platform: dict | None = None
+):
+    """
+    Best peer advertising any of ``images`` — native platform, idle-first,
+    then RTT.
 
     Pure (no iroh) so routing is unit-testable: takes any iterable of
-    objects exposing ``images``/``rtt``/``active_jobs``/``max_jobs``.
-    Returns None when no peer advertises a required image.
+    objects exposing ``images``/``rtt``/``active_jobs``/``max_jobs`` and,
+    for upgraded nodes, ``platform``. Peers without platform metadata remain
+    eligible only when no platform constraint is requested.
     """
     wanted = set(images)
     best = None
@@ -120,6 +157,8 @@ def select_peer_for_images(peers, images: Sequence[str]):
     for peer in peers:
         if peer.images is None:
             continue  # unknown warm state treated as "not warm"
+        if not _peer_supports_platform(peer, platform):
+            continue  # known foreign CPU architecture
         if not (wanted & peer.images):
             continue
         max_jobs = getattr(peer, "max_jobs", None)
@@ -142,6 +181,7 @@ class PeerConnection:
         self.ticket: str | None = None      # dial-back ticket from hello (fallback)
         self.relay: str | None = None       # peer's relay URL — dial by id + relay
         self.url: str | None = None         # peer's public HTTP(S) endpoint (bastions)
+        self.platform: dict | None = None   # peer's native container platform
         self.hello: dict | None = None      # raw hello frame received
         self.images: set[str] | None = None  # warm images advertised in hello
         self.active_jobs: int = 0           # jobs the peer is currently running
@@ -316,8 +356,12 @@ class Node:
         """This node's current load, advertised in hello frames."""
         return {"active_jobs": self._active_jobs, "max_jobs": self._max_jobs}
 
+    def container_platform(self) -> dict:
+        """Native platform used for local container execution."""
+        return {"os": "linux", "architecture": host_arch()}
+
     def warm_images(self) -> list[str]:
-        """Locally-cached image names, refreshed at most every ``warm_cache_ttl``."""
+        """Locally-cached native image names, refreshed at most every ``warm_cache_ttl``."""
         now = time.monotonic()
         if self._warm_cache is not None and now - self._warm_cache[0] < self._warm_cache_ttl:
             return self._warm_cache[1]
@@ -411,6 +455,7 @@ class Node:
                     self._active_jobs,
                     self._max_jobs,
                     self._public_url,
+                    self.container_platform(),
                 ),
             )
             reply = await asyncio.wait_for(
@@ -428,6 +473,7 @@ class Node:
         peer.ticket = reply.get("ticket")
         peer.relay = reply.get("relay")
         peer.url = reply.get("url")
+        peer.platform = reply.get("platform")
         peer.images = set(reply.get("images") or [])
         peer.active_jobs = int(reply.get("active_jobs") or 0)
         peer.max_jobs = reply.get("max_jobs")
@@ -697,6 +743,7 @@ class Node:
                     active_jobs=int(entry.get("active_jobs") or 0),
                     max_jobs=entry.get("max_jobs"),
                     url=entry.get("url"),
+                    platform=entry.get("platform"),
                     last_seen=now if direct else 0.0,
                 )
             )
@@ -776,6 +823,7 @@ class Node:
         peer.ticket = frame.get("ticket")
         peer.relay = frame.get("relay")
         peer.url = frame.get("url")
+        peer.platform = frame.get("platform")
         peer.images = set(frame.get("images") or [])
         peer.active_jobs = int(frame.get("active_jobs") or 0)
         peer.max_jobs = frame.get("max_jobs")
@@ -793,6 +841,7 @@ class Node:
                     self._active_jobs,
                     self._max_jobs,
                     self._public_url,
+                    self.container_platform(),
                 ),
             )
         finally:
@@ -988,7 +1037,9 @@ class Node:
 
     # --- nearest-neighbor offloading -------------------------------------
 
-    def peer_for_images(self, images: Sequence[str]) -> PeerConnection | None:
+    def peer_for_images(
+        self, images: Sequence[str], *, platform: dict | None = None
+    ) -> PeerConnection | None:
         """
         The best registered peer advertising any of ``images``.
 
@@ -996,10 +1047,19 @@ class Node:
         load factor wins (active/max jobs; peers without a max are ranked
         by raw active count), then the lowest measured hello RTT. Peers
         that did not advertise an image list are never chosen (unknown
-        warm state is treated as "not warm"). Returns None when no peer
-        advertises any of the required images.
+        warm state is treated as "not warm"). A destination may have a
+        different CPU architecture from this node; its warm-image list is
+        already native-filtered. Returns None when no peer advertises any
+        of the required images.
         """
-        return select_peer_for_images(self._peers.values(), images)
+        # The destination may legitimately have a different CPU architecture
+        # from this node. Its warm-image advertisement is already filtered to
+        # images native to that destination, so do not constrain selection to
+        # our own platform unless a caller (such as the mesh puller) explicitly
+        # needs a same-platform image source.
+        return select_peer_for_images(
+            self._peers.values(), images, platform=platform
+        )
 
     def drop_peer(self, node_id: str) -> None:
         """Evict a peer from the live connection registry.

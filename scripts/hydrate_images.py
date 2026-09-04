@@ -44,6 +44,7 @@ from ephemeral_core.executor import (
     check_podman_alive,
     ensure_podman_running,
     get_startupinfo,
+    host_arch,
 )
 
 
@@ -80,7 +81,9 @@ def _resolve_langs(names: list[str]) -> list[str]:
 async def pull_with_retry(image: str, retries: int, timeout: int) -> bool:
     """Pull one image, retrying with backoff. True on success."""
     for attempt in range(1, retries + 1):
-        rc = await asyncio.to_thread(_run_podman, ["pull", image], timeout)
+        rc = await asyncio.to_thread(
+            _run_podman, ["pull", "--platform", f"linux/{host_arch()}", image], timeout
+        )
         if rc == 0:
             return True
         if attempt < retries:

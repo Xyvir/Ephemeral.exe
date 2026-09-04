@@ -14,6 +14,7 @@ import base64
 import json
 import logging
 import os
+import platform
 import re
 import shlex
 import shutil
@@ -76,15 +77,64 @@ def check_podman_alive() -> bool:
         return False
 
 
+def host_arch() -> str:
+    """Return the Linux container architecture for this host."""
+    machine = platform.machine().lower()
+    return {
+        "x86_64": "amd64",
+        "amd64": "amd64",
+        "aarch64": "arm64",
+        "arm64": "arm64",
+    }.get(machine, "amd64")
+
+
+def _normalize_architecture(value: object) -> str | None:
+    """Normalize common Podman/OCI architecture spellings."""
+    if not value:
+        return None
+    return {
+        "x86_64": "amd64",
+        "amd64": "amd64",
+        "aarch64": "arm64",
+        "arm64": "arm64",
+    }.get(str(value).strip().lower(), str(value).strip().lower())
+
+
+def image_architecture(image_name: str) -> str | None:
+    """Read a cached image's architecture, or None when it cannot be read."""
+    try:
+        output = subprocess.check_output(
+            ["podman", "image", "inspect", "--format", "{{.Architecture}}", image_name],
+            startupinfo=get_startupinfo(),
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return None
+    value = output.decode("utf-8", errors="replace").strip().splitlines()
+    return _normalize_architecture(value[-1] if value else None)
+
+
+def image_is_compatible(image_name: str) -> bool:
+    """Whether a cached image can run natively on this host.
+
+    Fail closed when Podman cannot report the image architecture. An
+    unknown image must not be advertised as warm or executed locally: a
+    cached foreign-architecture image otherwise fails later with the much
+    less useful ``Exec format error``.
+    """
+    architecture = image_architecture(image_name)
+    return architecture is not None and architecture == host_arch()
+
+
 def check_image_exists(image_name: str) -> bool:
-    """Check if a container image is already pulled locally."""
+    """Check whether a native-compatible container image is cached locally."""
     try:
         startupinfo = get_startupinfo()
         subprocess.check_call(
             ['podman', 'image', 'exists', image_name],
             startupinfo=startupinfo
         )
-        return True
+        return image_is_compatible(image_name)
     except Exception:
         return False
 
@@ -112,9 +162,17 @@ def list_local_images() -> list[str]:
         return []
     names: list[str] = []
     for entry in entries if isinstance(entries, list) else []:
+        entry_arch = _normalize_architecture(entry.get("Architecture"))
+        if entry_arch is not None and entry_arch != host_arch():
+            continue
         for name in entry.get('Names') or []:
-            if name and name not in names:
-                names.append(name)
+            if not name or name in names:
+                continue
+            # Older Podman versions omit Architecture from `images --format
+            # json`; inspect those entries before advertising them as warm.
+            if entry_arch is None and not image_is_compatible(name):
+                continue
+            names.append(name)
     return names
 
 
@@ -285,7 +343,7 @@ async def pull_image(image_name: str) -> int:
     
     def _pull():
         process = subprocess.Popen(
-            ['podman', 'pull', image_name],
+            ['podman', 'pull', '--platform', f'linux/{host_arch()}', image_name],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             startupinfo=startupinfo
         )

@@ -43,6 +43,7 @@ import time
 
 import ephemeral_core
 from ephemeral_core.config import mapped_images
+from ephemeral_core.executor import host_arch
 from ephemeral_core.space import SpaceGuardError, ensure_space_for_pull
 from ephemeral_net.jobs import JobDoneEvent, JobErrorEvent, JobRequest
 from ephemeral_net.swarm import (
@@ -682,7 +683,7 @@ class DistributedBackend(Backend):
             for attempt in range(1, 4):
                 try:
                     rc = subprocess.run(
-                        ["podman", "pull", img],
+                        ["podman", "pull", "--platform", f"linux/{host_arch()}", img],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                         startupinfo=startupinfo, timeout=900,
                     ).returncode
@@ -722,6 +723,7 @@ class DistributedBackend(Backend):
         free_txt = f"{free / 2**30:.1f}" if free else None
         cap_txt = f"{cap:.0f}" if cap is not None else None
         img_list = " ".join(f'"{i}"' for i in images)
+        native_platform = f"linux/{host_arch()}"
 
         # POSIX .sh — used by the Linux AppImage / dev tray builds.
         L = []
@@ -775,7 +777,7 @@ class DistributedBackend(Backend):
         a("    while :; do")
         a("        attempt=$((attempt + 1))")
         a('        echo "[pull] $img  -- pulling..."')
-        a('        if podman pull "$img"; then')
+        a(f'        if podman pull --platform "{native_platform}" "$img"; then')
         a('            echo "[ok] $img  -- pulled"')
         a("            pulled=$((pulled + 1))")
         a("            break")
@@ -840,6 +842,7 @@ class DistributedBackend(Backend):
         free_txt = f"{free / 2**30:.1f}" if free else None
         cap_txt = f"{cap:.0f}" if cap is not None else None
         img_list = ", ".join(f"'{ps(i)}'" for i in images)
+        native_platform = f"linux/{host_arch()}"
 
         # --- worker -----------------------------------------------------------
         wl: list[str] = []
@@ -916,7 +919,7 @@ class DistributedBackend(Backend):
         a("    $ok = $false")
         a("    for ($attempt = 1; $attempt -le 3; $attempt++) {")
         a("        Log \"[pull] $img  -- pulling... (attempt $attempt/3)\"")
-        a("        $proc = Start-Process podman -ArgumentList @('pull',$img) -WindowStyle Hidden -RedirectStandardOutput $pullOut -RedirectStandardError $pullErr -PassThru")
+        a(f"        $proc = Start-Process podman -ArgumentList @('pull','--platform','{native_platform}',$img) -WindowStyle Hidden -RedirectStandardOutput $pullOut -RedirectStandardError $pullErr -PassThru")
         a("        $waited = 0; $checked = 0; $hb = 0")
         a("        while ((-not $proc.HasExited) -and ($waited -lt 1800)) {")
         a("            Start-Sleep -Seconds 2")
@@ -1133,7 +1136,7 @@ class DistributedBackend(Backend):
                 )
             ensure_space_for_pull(PREHYDRATE_IMAGE)
             pull = subprocess.run(
-                ["podman", "pull", PREHYDRATE_IMAGE],
+                ["podman", "pull", "--platform", f"linux/{host_arch()}", PREHYDRATE_IMAGE],
                 capture_output=True, text=True,
                 startupinfo=startupinfo, timeout=timeout,
             )

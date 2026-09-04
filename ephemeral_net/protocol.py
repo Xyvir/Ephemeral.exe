@@ -99,6 +99,7 @@ def hello_frame(
     active_jobs: int = 0,
     max_jobs: int | None = None,
     url: str | None = None,
+    platform: dict | None = None,
 ) -> dict:
     """
     Build a ``hello`` frame.
@@ -113,6 +114,9 @@ def hello_frame(
     so peers can route new jobs to idle nodes first.
     ``url`` is the sender's public HTTP(S) endpoint (bastion servers),
     carried so the swarm refresh can publish it for paper-light clients.
+    ``platform`` identifies the sender's native container platform. It is
+    informational for clients and lets upgraded nodes distinguish an
+    amd64-only warm image from an arm64-capable execution node.
     """
     return {
         "type": "hello",
@@ -125,6 +129,7 @@ def hello_frame(
         "active_jobs": int(active_jobs or 0),
         "max_jobs": max_jobs,
         "url": url,
+        "platform": platform,
     }
 
 
@@ -140,6 +145,7 @@ def peer_entries_from_hello(frame: dict) -> list[dict]:
             "active_jobs": frame.get("active_jobs", 0),
             "max_jobs": frame.get("max_jobs"),
             "url": frame.get("url"),
+            "platform": frame.get("platform"),
         }
     )
     return [e for e in entries if e and e.get("node_id")]

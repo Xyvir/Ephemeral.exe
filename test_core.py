@@ -264,4 +264,35 @@ finally:
             os.environ[k] = v
 print("PASS: Container resource limits scale to host RAM (small-VPS safe)")
 
-print("\n=== ALL 27 TESTS PASSED ===")
+# --- Test 28: native image architecture checks --------------------------
+# A foreign-architecture image must not be considered warm. Multi-platform
+# tags are resolved by the registry/Podman pull for the local architecture;
+# the local cache check only accepts the architecture actually installed.
+_saved_machine = executor_mod.platform.machine
+_saved_check_call = executor_mod.subprocess.check_call
+_saved_check_output = executor_mod.subprocess.check_output
+try:
+    executor_mod.platform.machine = lambda: "aarch64"
+    assert executor_mod.host_arch() == "arm64"
+
+    executor_mod.subprocess.check_output = lambda *args, **kwargs: b"amd64\n"
+    assert not executor_mod.image_is_compatible("octave")
+    executor_mod.subprocess.check_output = lambda *args, **kwargs: b"arm64\n"
+    assert executor_mod.image_is_compatible("octave")
+
+    executor_mod.subprocess.check_call = lambda *args, **kwargs: 0
+    assert executor_mod.check_image_exists("octave")
+
+    inventory = [
+        {"Architecture": "amd64", "Names": ["amd-image"]},
+        {"Architecture": "arm64", "Names": ["arm-image"]},
+    ]
+    executor_mod.subprocess.check_output = lambda *args, **kwargs: __import__("json").dumps(inventory).encode()
+    assert executor_mod.list_local_images() == ["arm-image"]
+finally:
+    executor_mod.platform.machine = _saved_machine
+    executor_mod.subprocess.check_call = _saved_check_call
+    executor_mod.subprocess.check_output = _saved_check_output
+print("PASS: foreign cached images are excluded from native warm-image routing")
+
+print("\n=== ALL 28 TESTS PASSED ===")

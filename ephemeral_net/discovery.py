@@ -31,6 +31,7 @@ class PeerInfo:
     max_jobs: int | None = None    # peer's concurrency ceiling (None = unknown)
     url: str | None = None         # peer's public HTTP(S) endpoint (bastions)
     last_seen: float = 0.0         # time.monotonic() of last contact
+    platform: dict | None = None   # peer's native container platform
 
 
 # How long a peer entry survives without being seen (directly or via
@@ -89,6 +90,7 @@ class PeerTable:
                     active_jobs=info.active_jobs,
                     max_jobs=info.max_jobs,
                     url=info.url,
+                    platform=dict(info.platform) if info.platform else None,
                     # A NEW entry gets a real TTL window from NOW, even
                     # when it arrived via gossip (last_seen=0.0). last_seen
                     # is compared against time.monotonic() — an uptime
@@ -107,10 +109,14 @@ class PeerTable:
                     existing.ticket = info.ticket
                 if info.relay:
                     existing.relay = info.relay
-                if info.images:
+                if info.images is not None:
+                    # A fresh hello with an empty list means the node no
+                    # longer has any warm images; do not retain stale names.
                     existing.images = set(info.images)
                 if info.url:
                     existing.url = info.url
+                if info.platform:
+                    existing.platform = dict(info.platform)
                 existing.active_jobs = info.active_jobs
                 existing.max_jobs = info.max_jobs
                 # Gossip (last_seen == 0.0) must NEVER refresh a peer's
@@ -136,6 +142,7 @@ class PeerTable:
                 "active_jobs": info.active_jobs,
                 "max_jobs": info.max_jobs,
                 "url": info.url,
+                "platform": info.platform,
             }
             for info in self._peers.values()
         ]

@@ -109,6 +109,19 @@ def host_arch() -> str:
     )
 
 
+def _normalize_architecture(value: object) -> str | None:
+    """Normalize common OCI/Podman architecture spellings."""
+    if not value:
+        return None
+    value = str(value).strip().lower()
+    return {
+        "x86_64": "amd64",
+        "amd64": "amd64",
+        "aarch64": "arm64",
+        "arm64": "arm64",
+    }.get(value, value)
+
+
 # --- registry manifest (the trust anchor) --------------------------------
 
 def _registry_get(
@@ -197,15 +210,9 @@ def fetch_manifest(
                 picked = entry
                 break
         if picked is None:
-            for entry in manifest["manifests"]:
-                plat = entry.get("platform") or {}
-                if plat.get("os") == "linux" and plat.get("architecture") in (
-                    "amd64",
-                    "arm64",
-                ):
-                    picked = entry
-                    break
-        if picked is None:
+            # Never fall back to another CPU architecture. Podman may emit a
+            # warning and cache an unusable image, which later fails with
+            # `/usr/bin/sh: Exec format error` on the host.
             raise ImagePullError(
                 f"registry {registry}: no linux/{arch} manifest for {ref!r}"
             )
@@ -430,9 +437,23 @@ class MeshImagePuller:
             logger.info("mesh pull of %s: registry manifest unavailable (%s)", image, e)
             return False
 
-        peer = preferred_peer or self.node.peer_for_images([image])
+        # Mesh blobs must come from a peer running the same native platform
+        # as this node. A warm amd64 image is not a valid source for an
+        # arm64 pull (and vice versa), even when the repository/tag matches.
+        requested_platform = {"os": "linux", "architecture": host_arch()}
+        if preferred_peer is not None:
+            peer_platform = getattr(preferred_peer, "platform", None)
+            if peer_platform and (
+                peer_platform.get("os", "linux") != requested_platform["os"]
+                or _normalize_architecture(peer_platform.get("architecture"))
+                != requested_platform["architecture"]
+            ):
+                preferred_peer = None
+        peer = preferred_peer or self.node.peer_for_images(
+            [image], platform=requested_platform
+        )
         if peer is None:
-            logger.info("mesh pull of %s: no peer advertises it warm", image)
+            logger.info("mesh pull of %s: no same-platform peer advertises it warm", image)
             return False
 
         root = Path(tempfile.mkdtemp(prefix="ephemeral-mesh-layout-"))

@@ -642,7 +642,7 @@ def test_mesh_pull_orchestration():
             self.peer = _Peer() if has_peer else None
             self._tamper = False
 
-        def peer_for_images(self, images):
+        def peer_for_images(self, images, **kwargs):
             return self.peer
 
         async def fetch_blob(self, peer, image, digest, size, dest):
@@ -739,6 +739,39 @@ def test_registry_manifest_fetch_auth_and_index():
     print("PASS: registry manifest fetch (401->token dance, index->platform, 404)")
 
 
+def test_registry_manifest_rejects_foreign_fallback():
+    """A single-architecture index must never silently select another CPU."""
+    import ephemeral_net.image_pull as ip
+
+    index = {
+        "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+        "manifests": [
+            {
+                "digest": "sha256:" + "a" * 64,
+                "platform": {"os": "linux", "architecture": "amd64"},
+            }
+        ],
+    }
+    idx_bytes = json.dumps(index).encode()
+    orig_get = ip._registry_get
+
+    def fake_get(registry, path, headers, timeout=20.0):
+        if path == "example/image/manifests/latest":
+            return 200, {}, idx_bytes
+        return 404, {}, b""
+
+    ip._registry_get = fake_get
+    try:
+        try:
+            ip.fetch_manifest("example/image:latest", arch="arm64")
+            raise AssertionError("expected a foreign-platform manifest to be rejected")
+        except ip.ImagePullError as e:
+            assert "no linux/arm64 manifest" in str(e)
+    finally:
+        ip._registry_get = orig_get
+    print("PASS: registry manifest never falls back to a foreign architecture")
+
+
 def test_offload_background_pull_prefers_mesh():
     from ephemeral_net.offload import OffloadingExecutor
 
@@ -815,10 +848,23 @@ def test_select_peer_prefers_idle_then_fast():
     # Saturated peers are never chosen.
     sat = _RP("sat", images=[PY_IMG], rtt=0.01, active=4, max_jobs=4)
     assert select_peer_for_images([sat, fast], [PY_IMG]).node_id == "fast"
+    # Known platform metadata prevents an ARM node from being selected for
+    # an amd64-only execution target; legacy peers without metadata remain
+    # eligible for compatibility with older nodes.
+    arm = _RP("arm", images=[PY_IMG], rtt=0.01)
+    arm.platform = {"os": "linux", "architecture": "arm64"}
+    amd = _RP("amd", images=[PY_IMG], rtt=5.0)
+    amd.platform = {"os": "linux", "architecture": "amd64"}
+    assert select_peer_for_images(
+        [arm, amd], [PY_IMG], platform={"os": "linux", "architecture": "amd64"}
+    ).node_id == "amd"
+    assert select_peer_for_images(
+        [arm, amd], [PY_IMG], platform={"os": "linux", "architecture": "arm64"}
+    ).node_id == "arm"
     # Peers with no image list are treated as not warm.
     assert select_peer_for_images([_RP("unknown", images=None)], [PY_IMG]) is None
     assert select_peer_for_images([], [PY_IMG]) is None
-    print("PASS: idle-first peer selection (saturation, RTT, warm-only)")
+    print("PASS: idle-first peer selection (saturation, platform, RTT, warm-only)")
 
 
 # --- fan-out unit tests (no iroh required) ------------------------------
@@ -1107,6 +1153,10 @@ def test_hello_frame():
     assert f["relay"] == "https://relay.example.com."
     assert f["peers"][0]["node_id"] == "node-b"
     assert f["active_jobs"] == 0 and f["max_jobs"] is None, "load fields default"
+    f_platform = hello_frame(
+        "node-a", None, [], platform={"os": "linux", "architecture": "arm64"}
+    )
+    assert f_platform["platform"] == {"os": "linux", "architecture": "arm64"}
     f2 = hello_frame("node-a", None, [], active_jobs=3, max_jobs=4)
     assert f2["active_jobs"] == 3 and f2["max_jobs"] == 4, "load fields advertised"
     assert error_frame("boom", job_id="j1")["job_id"] == "j1"
@@ -2252,6 +2302,7 @@ def main():
     test_oci_layout_assembly_and_verification()
     test_mesh_pull_orchestration()
     test_registry_manifest_fetch_auth_and_index()
+    test_registry_manifest_rejects_foreign_fallback()
     test_offload_background_pull_prefers_mesh()
     test_offload_background_pull_falls_back_to_registry()
     test_select_peer_prefers_idle_then_fast()
