@@ -29,6 +29,9 @@ let goodNeighborCount = 0;
 // Artifacts streamed by the current run's node (one "artifact" frame per
 // file, before job_done). Cleared at the start of each run.
 let runArtifacts = [];
+// Artifacts NOT placed inline under a run result (pure-positional 1:1
+// matching) — these still get the rolled-up artifact block at the end.
+let leftoverArtifacts = [];
 // Raw (unformatted) markdown of everything appended to the Output box —
 // results keep their `## <Lang> Result` headers and fenced code blocks
 // exactly as the node emitted them, so Copy output pastes the markdown
@@ -168,11 +171,31 @@ const CHAIN_FLAGS = new Set(["chain", "pipe", "piping"]);
 const NO_CHAIN_FLAGS = new Set(["nopipe", "nopiping"]);
 const DROPPED_OVERRIDES = ["image", "cmd", "entrypoint"];
 
+// Pull literal artifact filenames from common script references such as
+// `/output/plot.png` or `png("/output/chart.png")`. Dynamic paths cannot be
+// known before execution, so callers keep the generic artifact label when
+// this returns no names.
+function artifactNamesFromScript(body) {
+  const names = [];
+  const add = (name) => {
+    const clean = name.replace(/[.?!:]+$/, "").split("/").pop();
+    if (clean && !names.includes(clean)) names.push(clean);
+  };
+  const direct = /\/output\/([^\"'`\\\s,;)}\]]+)/g;
+  let match;
+  while ((match = direct.exec(body || "")) !== null) add(match[1]);
+
+  // Also recognize Python/R-style path joins with a literal filename.
+  const joined = /(?:path\.join|os\.path\.join)\(\s*["']\/output["']\s*,\s*["']([^"']+)["']\s*\)/g;
+  while ((match = joined.exec(body || "")) !== null) add(match[1]);
+  return names;
+}
+
 // Every fence's (language, params, body) from a markdown doc — the first
 // token of each fence header is the language, the rest are ephemeral params
 // (flags like `unsafe chain`, overrides like `image=...`); `body` is the
 // code between the opening and closing fences (or the rest of the doc when
-// the fence is still unclosed, so chips keep showing while typing).
+// it is still unclosed, so chips keep showing while typing).
 function fenceInfo(markdown) {
   const out = [];
   // `[ \t]*` (not `\s*`) matters: a fence header lives on the same line
@@ -219,13 +242,16 @@ function updateLangStatus() {
     el.appendChild(chip);
     // Artifact chip: the block references /output, so the run is expected
     // to return a downloadable artifact (single images preview inline).
+    const artifactNames = artifactNamesFromScript(f.body);
     if (/(?<![\w/])\/output(?=[/'"\s]|$)/.test(f.body || "")) {
       const achip = document.createElement("span");
       achip.className = "lang-chip artifact";
-      achip.textContent = "📦 artifact";
-      achip.title =
-        "writes to /output — the result is returned as a downloadable " +
-        "artifact (images preview inline)";
+      achip.textContent = artifactNames.length
+        ? "📦 " + artifactNames.join(", ")
+        : "📦 artifact";
+      achip.title = artifactNames.length
+        ? `writes ${artifactNames.join(", ")} to /output — the result is returned as a downloadable artifact (images preview inline)`
+        : "writes to /output — the result is returned as a downloadable artifact (images preview inline)";
       el.appendChild(achip);
     }
     // Ephemeral parameter chips: ✗ for what the distributed network
@@ -619,7 +645,15 @@ function renderInterleaved() {
   box.classList.add("interleaved");
   if (!lastMarkdown) return;
   const results = splitResults(lastResultText);
+  // Pure positional 1:1 — inline each artifact under its run's result
+  // ONLY in the clean one-artifact-per-run case (the fan-out norm, where
+  // artifact frames + run envelopes both arrive in document order). Any
+  // other shape (no results, missing/extra artifacts, multi-file runs)
+  // falls back to the rolled-up artifact block at the end.
+  const inlineAll =
+    runArtifacts.length > 0 && runArtifacts.length === results.length;
   let ri = 0;
+  let ai = 0;
   for (const seg of splitMarkdown(lastMarkdown)) {
     if (seg.type === "prose") {
       box.appendChild(renderProseSeg(seg));
@@ -627,9 +661,15 @@ function renderInterleaved() {
       box.appendChild(renderCodeSeg(seg));
       if (!seg.isSeed && ri < results.length) {
         box.appendChild(resultElement(results[ri++]));
+        if (inlineAll) {
+          box.appendChild(
+            renderArtifactInline(runArtifacts[ai++], artifactLang(lastMarkdown))
+          );
+        }
       }
     }
   }
+  leftoverArtifacts = inlineAll ? [] : runArtifacts;
   addCopyButtons(box);
   appendArtifactsIfAny();
   lastStderrEl = stderrElement();
@@ -652,9 +692,12 @@ function renderNormal() {
 
 // Re-append the current run's artifacts after a view rebuild — both view
 // renderers wipe the output box, so the image previews + download/copy bar
-// must be re-added or they silently vanish on toggle.
+// must be re-added or they silently vanish on toggle. The interleaved
+// view places artifacts inline under their run's result and only rolls up
+// the leftovers; the normal view keeps the full rollup.
 function appendArtifactsIfAny() {
-  if (runArtifacts.length) renderArtifacts(runArtifacts, lastMarkdown);
+  const list = interleaved ? leftoverArtifacts : runArtifacts;
+  if (list.length) renderArtifacts(list, lastMarkdown);
 }
 
 // The interleaved document as plain Markdown: the original source with each
@@ -1120,6 +1163,7 @@ async function run() {
   localStorage.setItem("ephemeral.relay", $("relay").value.trim());
 
   runArtifacts = [];
+  leftoverArtifacts = [];
   outputRaw = "";
   lastMarkdown = markdown;
   lastResultText = "";
@@ -1335,7 +1379,7 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
   page-break-inside: avoid;
 }
 .code-block code { background: transparent; padding: 0; }
-.block-copy, .artifact-bar button { display: none; }
+.block-copy, .artifact-bar { display: none; }
 .artifact-img {
   max-width: 100%;
   max-height: 320px;
@@ -1343,7 +1387,6 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
   border-radius: 4px;
   margin: 6px 0;
 }
-.artifact-bar { display: flex; gap: 10px; margin-top: 8px; font-size: 10.5pt; color: #555; }
 .block.reminder {
   border: 1px solid #d4a72c;
   background: #fdf6e3;
@@ -1410,6 +1453,48 @@ async function copyArtifactImage(a, btn) {
     btn.classList.remove("ok");
     btn.textContent = label;
   }, 1200);
+}
+
+// Render a SINGLE artifact inline under its run's result (interleaved
+// view): image preview (or a file row for non-images) plus a Download /
+// Copy-image action bar. Used when positional 1:1 matching holds — the
+// one-artifact-per-run fan-out case.
+function renderArtifactInline(a, lang) {
+  const div = document.createElement("div");
+  div.className = "block artifacts inline";
+  if (IMAGE_MIMES[a.ext]) {
+    const img = document.createElement("img");
+    img.className = "artifact-img";
+    img.src = `data:${a.mime};base64,${a.b64}`;
+    img.alt = a.name;
+    img.title = a.name;
+    div.appendChild(img);
+  } else {
+    const row = document.createElement("div");
+    row.className = "artifact-file";
+    row.textContent = "📄 " + a.name;
+    div.appendChild(row);
+  }
+  const bar = document.createElement("div");
+  bar.className = "artifact-bar";
+  const label = document.createElement("span");
+  label.className = "artifact-count";
+  label.textContent = a.name;
+  bar.appendChild(label);
+  if (IMAGE_MIMES[a.ext]) {
+    const copy = document.createElement("button");
+    copy.className = "secondary artifact-btn";
+    copy.textContent = "Copy image";
+    copy.addEventListener("click", () => copyArtifactImage(a, copy));
+    bar.appendChild(copy);
+  }
+  const dl = document.createElement("button");
+  dl.className = "secondary artifact-btn";
+  dl.textContent = "Download";
+  dl.addEventListener("click", () => downloadArtifacts([a], lang));
+  bar.appendChild(dl);
+  div.appendChild(bar);
+  return div;
 }
 
 // Render a run's artifacts in the output: inline image previews, then an

@@ -202,6 +202,13 @@ textarea { min-height: 150px; resize: vertical; }
   margin-top: 8px;
 }
 .artifact-count { color: var(--muted); font-size: 12px; }
+/* Non-image artifact shown inline under its run result (interleaved view). */
+.artifact-file {
+  color: #6db3ff;
+  font-size: 13px;
+  font-family: ui-monospace, Consolas, monospace;
+  margin: 6px 0;
+}
 .artifact-btn { padding: 5px 12px; font-size: 12.5px; }
 .artifact-btn.ok { background: #2d5a2d; }
 
