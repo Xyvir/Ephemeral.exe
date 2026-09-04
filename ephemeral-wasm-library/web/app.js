@@ -1240,6 +1240,106 @@ function triggerDownload(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
+// Timestamped filename for the .md export (ephemeral-YYYY-MM-DD-HHMMSS.md).
+function timestampedFileName(ext) {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `ephemeral-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
+}
+
+// Print ONLY the rendered Output box, formatted for paper (white theme):
+// copies the box's HTML into a throwaway window with a light print
+// stylesheet (plus the light highlight.js theme so code blocks print
+// readable), then triggers the browser's print dialog. The temp window
+// closes after the dialog, so it never lingers.
+function printOutput() {
+  const box = $("output");
+  if (!box.textContent.trim()) return;
+  const win = window.open("", "_blank");
+  if (!win) return; // popup blocked
+  const css = `
+* { box-sizing: border-box; }
+body {
+  background: #fff;
+  color: #111;
+  font: 12pt/1.5 "Segoe UI", system-ui, sans-serif;
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 24px 28px;
+}
+pre, code { font-family: ui-monospace, Consolas, monospace; }
+.line { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.line.log-stderr, .line.stderr-muted { color: #555; }
+.line.done { color: #1a7f37; }
+.line.err, .unsafe-note { color: #b00020; }
+.unsafe-note { font-size: 11pt; margin: 6px 0 0; }
+.result-title {
+  color: #0a66c2;
+  font-size: 11pt;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin: 14px 0 6px;
+}
+.result-step { color: #555; font-size: 10.5pt; margin: 8px 0 4px; }
+.result-line { color: #111; white-space: pre-wrap; word-break: break-word; margin: 2px 0; }
+.source-head {
+  color: #555;
+  font-size: 10pt;
+  font-family: ui-monospace, Consolas, monospace;
+  margin: 10px 0 0;
+}
+.interleave-h1, .interleave-h2, .interleave-h3 { font-weight: 700; margin: 14px 0 4px; }
+.interleave-h1 { font-size: 15pt; }
+.interleave-h2 { font-size: 13pt; }
+.interleave-h3 { font-size: 11pt; color: #555; }
+.code-block {
+  background: #f6f8fa;
+  border: 1px solid #d8dee4;
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 6px 0 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  page-break-inside: avoid;
+}
+.code-block code { background: transparent; padding: 0; }
+.block-copy, .artifact-bar button { display: none; }
+.artifact-img {
+  max-width: 100%;
+  max-height: 320px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  margin: 6px 0;
+}
+.artifact-bar { display: flex; gap: 10px; margin-top: 8px; font-size: 10.5pt; color: #555; }
+.block.reminder {
+  border: 1px solid #d4a72c;
+  background: #fdf6e3;
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 8px 0;
+  page-break-inside: avoid;
+}
+.reminder-title { color: #7a5b00; font-weight: 600; margin-bottom: 4px; }
+.reminder-als { color: #555; }
+.reminder-hint { color: #555; margin-top: 4px; }
+.reminder code { background: rgba(0, 0, 0, .06); border-radius: 3px; padding: 1px 5px; }
+@media print { body { padding: 0; } }
+`;
+  win.document.write(
+    `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8" />\n` +
+    `<title>Ephemeral — Output</title>\n` +
+    `<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css" />\n` +
+    `<style>${css}</style>\n</head>\n<body>\n<div class="print-output">\n` +
+    box.innerHTML +
+    `\n</div>\n</body>\n</html>`
+  );
+  win.document.close();
+  win.addEventListener("load", () => { win.focus(); win.print(); });
+  win.onafterprint = () => win.close();
+}
+
 // Download artifacts: a single file downloads directly; multiple files
 // are zipped client-side (JSZip, CDN) into one ball so the user gets a
 // single download — no multi-file permission prompts. Falls back to
@@ -1563,8 +1663,38 @@ $("copyOutput").addEventListener("click", () => {
     : outputRaw.replace(/\n+$/, "");
   copyText(text, $("copyOutput"), "Copy output");
 });
+$("printOutput").addEventListener("click", printOutput);
 $("copyCode").addEventListener("click", () => {
   copyText(editor.getValue(), $("copyCode"), "Copy code");
+});
+// Import a .md/.txt file into the Run Code editor via the native file
+// picker — replaces whatever is currently there.
+$("importCode").addEventListener("click", () => {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".md,.markdown,.txt,text/markdown,text/plain";
+  input.addEventListener("change", () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result || "");
+      if (!text) return;
+      editor.setValue(text);
+      updateLangStatus(); // setValue doesn't fire OverType's onChange
+      highlightCodeHeaders();
+      syncCodeToUrl();
+    };
+    reader.readAsText(file);
+  });
+  input.click();
+});
+// Export the Run Code editor as a timestamped .md file download.
+$("exportCode").addEventListener("click", () => {
+  const markdown = editor.getValue();
+  if (!markdown.trim()) return;
+  const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+  triggerDownload(blob, timestampedFileName("md"));
 });
 $("clearCode").addEventListener("click", () => {
   editor.setValue("");
