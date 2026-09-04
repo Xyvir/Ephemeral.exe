@@ -73,38 +73,53 @@ const IMAGE_MIMES = {
 // is unreachable (editor = { getValue, setValue } either way).
 let editor = null;
 
+// Shared fence-body highlighter used by BOTH the OverType Run Code editor
+// and the interleaved output view, so the rendered source blocks mirror
+// the editor exactly: shebang first lines become a bright marker line,
+// declared fence languages highlight per-language, and unknown ones fall
+// back to highlight.js auto-detect. Returns the highlighted HTML (already
+// escaped) — or null when highlight.js is unavailable (the caller falls
+// back to plain text). Must never throw: OverType calls it on every
+// keystroke and must preserve every character (the invisible textarea
+// aligns with the preview).
+function highlightFenceBody(code, language) {
+  if (!window.hljs) return null;
+  try {
+    const escHtml = (s) =>
+      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const nl = code.indexOf("\n");
+    const firstLine = nl === -1 ? code : code.slice(0, nl);
+    const hasShebang = firstLine.startsWith("#!");
+    const body = hasShebang ? (nl === -1 ? "" : code.slice(nl + 1)) : code;
+    let html = "";
+    if (body) {
+      const known = language && hljs.getLanguage(language);
+      const res = known
+        ? hljs.highlight(body, { language })
+        : hljs.highlightAuto(body);
+      html = res.value;
+    }
+    return (hasShebang
+      ? `<span class="shebang">${escHtml(firstLine)}</span>${body ? "\n" : ""}`
+      : "") + html;
+  } catch (e) {
+    return hljs.util.escapeHtml(code);
+  }
+}
+
 function initEditor() {
   const el = $("editor");
   if (window.OverType) {
     if (window.hljs) {
-      // Real-time, per-language: use the fence's language when hljs knows
-      // it, otherwise auto-detect. Shebang lines are pulled out first and
-      // rendered as a bright marker line (header-ish, not code). Must
-      // never throw (OverType calls this on every keystroke) and must
-      // preserve every character (the invisible textarea aligns with it).
-      const escHtml = (s) =>
-        s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      OverType.setCodeHighlighter((code, language) => {
-        try {
-          const nl = code.indexOf("\n");
-          const firstLine = nl === -1 ? code : code.slice(0, nl);
-          const hasShebang = firstLine.startsWith("#!");
-          const body = hasShebang ? (nl === -1 ? "" : code.slice(nl + 1)) : code;
-          let html = "";
-          if (body) {
-            const known = language && hljs.getLanguage(language);
-            const res = known
-              ? hljs.highlight(body, { language })
-              : hljs.highlightAuto(body);
-            html = res.value;
-          }
-          return (hasShebang
-            ? `<span class="shebang">${escHtml(firstLine)}</span>${body ? "\n" : ""}`
-            : "") + html;
-        } catch (e) {
-          return hljs.util.escapeHtml(code);
-        }
-      });
+      // Real-time, per-language highlighting through the shared
+      // highlightFenceBody() — the SAME highlighter the interleaved
+      // output view uses, so rendered source blocks mirror the editor.
+      // Must never throw (OverType calls this on every keystroke) and
+      // must preserve every character (the invisible textarea aligns
+      // with the preview).
+      OverType.setCodeHighlighter((code, language) =>
+        highlightFenceBody(code, language) || hljs.util.escapeHtml(code)
+      );
     }
     [editor] = new OverType(el, {
       value: "",
@@ -330,13 +345,21 @@ function setDetail(text) {
 }
 
 // A `#seed=` link puts the SPA in private mode (public swarm skipped):
-// it flips the pill's mode and the disclaimer under the Run button.
-function setMode(privateMode) {
+// it flips the pill's mode and the disclaimer under the Run button. The
+// private note names the joined swarm (the seed node's id when it's a
+// `node_id@relay` link; a bare EndpointTicket carries no readable name)
+// and states plainly that jobs run on its members' machines unencrypted.
+function setMode(privateMode, swarmName) {
   modePrivate = privateMode;
   const noteEl = $("runNote");
   if (privateMode) {
     noteEl.className = "run-note private";
-    noteEl.innerHTML = "<strong class=\"caps\">Private network</strong> — jobs run only on the node(s) you connected to, not the public swarm.";
+    const joined = swarmName
+      ? `private swarm <strong>"${swarmName}"</strong>`
+      : "a private swarm";
+    noteEl.innerHTML =
+      `<strong class="caps">Private swarm</strong> — you have joined ${joined}; ` +
+      `jobs run remotely and <strong>unencrypted</strong> on its members' machines.`;
   } else {
     noteEl.className = "run-note";
     noteEl.innerHTML = "<strong class=\"caps\">Public network</strong> — anything you submit is <strong>public knowledge</strong>. No privacy guarantee. For private use, self-host.";
@@ -559,10 +582,15 @@ function renderCodeSeg(seg) {
   pre.className = "code-block";
   const code = document.createElement("code");
   code.className = "hljs language-" + (seg.lang || "text");
-  code.textContent = seg.code;
+  // Highlight with the SAME highlighter as the OverType Run Code editor,
+  // so interleaved source blocks mirror the editor: shebang markers,
+  // per-language hljs, and the auto-detect fallback for unknown
+  // languages (instead of the plain text highlightElement left behind).
+  const html = highlightFenceBody(seg.code, seg.lang);
+  if (html !== null) code.innerHTML = html;
+  else code.textContent = seg.code;
   pre.appendChild(code);
   div.appendChild(pre);
-  if (window.hljs) hljs.highlightElement(code);
   return div;
 }
 
@@ -1045,7 +1073,10 @@ async function start() {
     urlBootstrap.relay = url.relay;
     localStorage.setItem("ephemeral.relay", url.relay);
   }
-  setMode(!!url.seed);
+  // Displayable swarm name for the disclaimer: the seed node's short id
+  // when the link is `node_id@relay`, nothing for a bare EndpointTicket.
+  const nr = splitNodeAtRelay(url.seed);
+  setMode(!!url.seed, nr ? shortId(nr.node_id) : null);
   $("ticket").value = localStorage.getItem("ephemeral.ticket") || "";
   $("relay").value = localStorage.getItem("ephemeral.relay") || BOOTSTRAP.relay || "";
   setStatus("loading wasm…");
