@@ -1,12 +1,12 @@
 {
-  "updated": "2026-09-05T10:19:46Z",
+  "updated": "2026-09-05T14:55:16Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6ldlydaeakhqdbmwy26ay",
+      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6nx5qcaeakhqdbmxn7maq",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/clfoundation/sbcl:slim",
@@ -32,15 +32,15 @@
       ],
       "url": null,
       "probe": "ok",
-      "probe_at": "2026-09-05T10:19:46Z",
+      "probe_at": "2026-09-05T14:55:16Z",
       "probe_detail": "ok",
-      "probe_ms": 1679,
-      "rtt_ms": 47
+      "probe_ms": 1704,
+      "rtt_ms": 63
     },
     {
       "node_id": "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyhyb7adaeakyf2qahgnuaybadakqaaxztnag",
+      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyhz3dycaeaevjzgb6f72aqbacwbouabztnagaiaycuaaf6m3ibq",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/clfoundation/sbcl:slim",
@@ -79,23 +79,23 @@
       ],
       "url": null,
       "probe": "ok",
-      "probe_at": "2026-09-05T10:19:46Z",
+      "probe_at": "2026-09-05T14:55:16Z",
       "probe_detail": "ok",
-      "probe_ms": 1889,
-      "rtt_ms": 93
+      "probe_ms": 1751,
+      "rtt_ms": 89
     }
   ],
   "bastions": [
     {
       "node_id": "ed7106bced606bede735b4c9b215052855f9747e8cb56629759ae672ce29b9c8",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacu6rhj4fbycaeajqn5vktbioaq",
+      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacujkkg67hacaeajqn5vg7xzyaq",
       "images": [],
       "url": "https://ephemeralexe-production.up.railway.app",
       "probe": "ok",
-      "probe_at": "2026-09-05T10:19:46Z",
+      "probe_at": "2026-09-05T14:55:16Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 121
+      "probe_ms": 148
     }
   ]
 }
