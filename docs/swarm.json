@@ -1,12 +1,46 @@
 {
-  "updated": "2026-09-05T03:52:57Z",
+  "updated": "2026-09-05T10:19:46Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
+      "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
+      "relay": "https://use1-1.relay.n0.iroh.link./",
+      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6ldlydaeakhqdbmwy26ay",
+      "images": [
+        "docker.io/catthehacker/ubuntu:act-22.04",
+        "docker.io/clfoundation/sbcl:slim",
+        "docker.io/continuumio/anaconda3:latest",
+        "docker.io/crystallang/crystal:latest",
+        "docker.io/library/alpine:latest",
+        "docker.io/library/eclipse-temurin:21-jdk-alpine",
+        "docker.io/library/elixir:alpine",
+        "docker.io/library/gcc:latest",
+        "docker.io/library/golang:alpine",
+        "docker.io/library/haskell:slim",
+        "docker.io/library/node:18-alpine",
+        "docker.io/library/perl:slim",
+        "docker.io/library/php:alpine",
+        "docker.io/library/r-base:latest",
+        "docker.io/library/ruby:alpine",
+        "docker.io/library/rust:alpine",
+        "docker.io/library/swipl:latest",
+        "docker.io/nickblah/lua:5.4-alpine",
+        "docker.io/nimlang/nim:alpine",
+        "docker.io/ocaml/opam:latest",
+        "docker.io/rhysd/actionlint:latest"
+      ],
+      "url": null,
+      "probe": "ok",
+      "probe_at": "2026-09-05T10:19:46Z",
+      "probe_detail": "ok",
+      "probe_ms": 1679,
+      "rtt_ms": 47
+    },
+    {
       "node_id": "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyh6voycaeaevjzgb6f72aqbacwbouabztnagaiaycuaaf6m3ibq",
+      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvheyhyb7adaeakyf2qahgnuaybadakqaaxztnag",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/clfoundation/sbcl:slim",
@@ -45,57 +79,23 @@
       ],
       "url": null,
       "probe": "ok",
-      "probe_at": "2026-09-05T03:52:57Z",
+      "probe_at": "2026-09-05T10:19:46Z",
       "probe_detail": "ok",
-      "probe_ms": 1872,
-      "rtt_ms": 503
-    },
-    {
-      "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6oxaydaeakhqdbmxvygay",
-      "images": [
-        "docker.io/catthehacker/ubuntu:act-22.04",
-        "docker.io/clfoundation/sbcl:slim",
-        "docker.io/continuumio/anaconda3:latest",
-        "docker.io/crystallang/crystal:latest",
-        "docker.io/library/alpine:latest",
-        "docker.io/library/eclipse-temurin:21-jdk-alpine",
-        "docker.io/library/elixir:alpine",
-        "docker.io/library/gcc:latest",
-        "docker.io/library/golang:alpine",
-        "docker.io/library/haskell:slim",
-        "docker.io/library/node:18-alpine",
-        "docker.io/library/perl:slim",
-        "docker.io/library/php:alpine",
-        "docker.io/library/r-base:latest",
-        "docker.io/library/ruby:alpine",
-        "docker.io/library/rust:alpine",
-        "docker.io/library/swipl:latest",
-        "docker.io/nickblah/lua:5.4-alpine",
-        "docker.io/nimlang/nim:alpine",
-        "docker.io/ocaml/opam:latest",
-        "docker.io/rhysd/actionlint:latest"
-      ],
-      "url": null,
-      "probe": "ok",
-      "probe_at": "2026-09-05T03:52:57Z",
-      "probe_detail": "ok",
-      "probe_ms": 1730,
-      "rtt_ms": 892
+      "probe_ms": 1889,
+      "rtt_ms": 93
     }
   ],
   "bastions": [
     {
       "node_id": "ed7106bced606bede735b4c9b215052855f9747e8cb56629759ae672ce29b9c8",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacvph6h5rgycaeajqn5u4pmjwaq",
+      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacu6rhj4fbycaeajqn5vktbioaq",
       "images": [],
       "url": "https://ephemeralexe-production.up.railway.app",
       "probe": "ok",
-      "probe_at": "2026-09-05T03:52:57Z",
+      "probe_at": "2026-09-05T10:19:46Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 179
+      "probe_ms": 121
     }
   ]
 }
