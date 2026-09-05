@@ -516,7 +516,42 @@ function appendResult(text) {
   // Keep the raw markdown source so Copy output pastes the unformatted
   // version (headers + fences), not the flattened rendered text.
   outputRaw += (text.endsWith("\n") ? text : text + "\n") + "\n";
+  pruneEmptyStdoutForImages($("output"));
   $("output").scrollTop = $("output").scrollHeight;
+}
+
+// Hide the empty stdout container for runs whose real output is an image:
+// when a block writes a picture and prints nothing, the blank code box is
+// just noise in a printed report — the image IS the result. Prunes only
+// when an image artifact can be attributed 1:1 in document order to that
+// envelope (the same positional trust the inline view uses); any other
+// shape — no results, extra/missing artifacts, non-image files — keeps
+// the empty-box placeholder for genuinely silent runs.
+function pruneEmptyStdoutForImages(root) {
+  if (!root || !lastResultText) return;
+  const results = splitResults(lastResultText);
+  if (!results.length || results.length !== runArtifacts.length) return;
+  // One .result-title per envelope; bail if the DOM can't be mapped back
+  // to the parsed envelopes (a stray ## line would shift the pairing).
+  const titles = root.querySelectorAll(".result-title");
+  if (titles.length !== results.length) return;
+  let gi = -1; // envelope index, incremented at each title in order
+  for (const block of root.querySelectorAll(".block.result")) {
+    for (const el of block.children) {
+      if (el.classList.contains("result-title")) {
+        gi++;
+        continue;
+      }
+      if (
+        gi >= 0 &&
+        el.classList.contains("code-block") &&
+        !el.textContent.trim() &&
+        IMAGE_MIMES[runArtifacts[gi].ext]
+      ) {
+        el.remove();
+      }
+    }
+  }
 }
 
 // Attach a small copy button to each rendered code block (idempotent).
@@ -671,6 +706,7 @@ function renderInterleaved() {
   }
   leftoverArtifacts = inlineAll ? [] : runArtifacts;
   addCopyButtons(box);
+  pruneEmptyStdoutForImages(box);
   appendArtifactsIfAny();
   lastStderrEl = stderrElement();
   if (lastStderrEl) box.appendChild(lastStderrEl);
@@ -684,6 +720,7 @@ function renderNormal() {
   box.classList.remove("interleaved");
   if (lastOutputRaw) box.appendChild(resultElement(lastOutputRaw));
   addCopyButtons(box);
+  pruneEmptyStdoutForImages(box);
   appendArtifactsIfAny();
   lastStderrEl = stderrElement();
   if (lastStderrEl) box.appendChild(lastStderrEl);
@@ -1348,7 +1385,8 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
 .line.done { color: #1a7f37; }
 .line.err, .unsafe-note { color: #b00020; }
 .unsafe-note { font-size: 11pt; margin: 6px 0 0; }
-.result-title {
+.result-title,
+.source-head {
   color: #0a66c2;
   font-size: 11pt;
   font-weight: 600;
@@ -1358,12 +1396,6 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
 }
 .result-step { color: #555; font-size: 10.5pt; margin: 8px 0 4px; }
 .result-line { color: #111; white-space: pre-wrap; word-break: break-word; margin: 2px 0; }
-.source-head {
-  color: #555;
-  font-size: 10pt;
-  font-family: ui-monospace, Consolas, monospace;
-  margin: 10px 0 0;
-}
 .interleave-h1, .interleave-h2, .interleave-h3 { font-weight: 700; margin: 14px 0 4px; }
 .interleave-h1 { font-size: 15pt; }
 .interleave-h2 { font-size: 13pt; }
@@ -1812,10 +1844,41 @@ $("exportCode").addEventListener("click", () => {
   const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
   triggerDownload(blob, timestampedFileName("md"));
 });
+// The ✕ Clear button wipes the editor with a programmatic setValue(""),
+// which browsers never record in the textarea's native undo stack — so
+// Ctrl+Z right after clearing would normally do nothing and the code is
+// gone for good. Snapshot the pre-clear content here and restore it on
+// Ctrl+Z (document-wide: the click leaves focus on the ✕ button, not the
+// editor). The snapshot is dropped the moment the user types anything
+// new, so Ctrl+Z then falls back to the browser's native undo of those
+// keystrokes instead of resurrecting the old document.
+let clearUndoValue = null;
 $("clearCode").addEventListener("click", () => {
+  if (editor.getValue()) clearUndoValue = editor.getValue();
   editor.setValue("");
   updateLangStatus();
   highlightCodeHeaders();
+});
+// OverType's hidden textarea (or the fallback one) lives inside #editor,
+// so input events bubble here regardless of editor flavor. Only drop the
+// snapshot once real content exists — a programmatic clear leaves the
+// value empty, so that transient event can't race the click handler.
+$("editor").addEventListener("input", () => {
+  if (editor && editor.getValue()) clearUndoValue = null;
+});
+document.addEventListener("keydown", (e) => {
+  if (
+    (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey &&
+    (e.key === "z" || e.key === "Z") &&
+    clearUndoValue && editor && !editor.getValue()
+  ) {
+    e.preventDefault();
+    editor.setValue(clearUndoValue);
+    clearUndoValue = null;
+    updateLangStatus();
+    highlightCodeHeaders();
+    syncCodeToUrl();
+  }
 });
 initEditor();
 updateLangStatus();

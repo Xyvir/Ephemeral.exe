@@ -433,9 +433,12 @@ details.advanced .advanced-meta code { color: var(--accent-hi); }
 .line.err { color: var(--err); }
 
 /* Result blocks: headers + code fences as distinct, bounded panels so
-   the code blocks clearly separate from the surrounding output. */
+   the code blocks clearly separate from the surrounding output.
+   .source-head (the language tag above an interleaved source fence)
+   shares this rule so the two block headings read identically. */
 .block.result { white-space: normal; }
-.result-title {
+.result-title,
+.source-head {
   color: var(--accent-hi);
   font-size: 12px;
   font-weight: 600;
@@ -447,14 +450,8 @@ details.advanced .advanced-meta code { color: var(--accent-hi); }
 .result-line { color: var(--text); white-space: pre-wrap; word-break: break-word; margin: 2px 0; }
 
 /* Interleaved view: the original document with each block's result slotted
-   in after it. */
+   in after it. (.source-head is styled with .result-title above.) */
 .block.source { white-space: normal; }
-.source-head {
-  color: var(--muted);
-  font-size: 11px;
-  font-family: ui-monospace, Consolas, monospace;
-  margin: 8px 0 0;
-}
 .block.prose { white-space: normal; }
 .interleave-h1, .interleave-h2, .interleave-h3 {
   color: var(--text);
