@@ -1127,6 +1127,220 @@ function syncCodeToUrl() {
   }, 500);
 }
 
+// --- fan-out helpers -----------------------------------------------------
+// Best node for a single block's language: warm-image match first, then the
+// global best node from pickTarget() (probe-verified first, lowest RTT).
+// Reuses the same ranking the single-job path uses, but scoped to one block.
+function pickBlockTarget(lang) {
+  // Reuse pickTarget()'s ranking (verified-first, then RTT) so fan-out and
+  // single-job routing stay consistent.
+  const ranked = [...peers.values()].sort(
+    (a, b) => ((a.probe === "ok" ? 0 : 1) - (b.probe === "ok" ? 0 : 1)) ||
+              ((a.rtt_ms ?? 1e9) - (b.rtt_ms ?? 1e9))
+  );
+  if (!ranked.length) return null;
+  const warm = ranked.find((p) => (p.images || []).some((img) => imageMatches(img, lang)));
+  return warm || ranked[0];
+}
+
+// A per-block mini-markdown document: the fence(s) leading into this block
+// (seed + file blocks attach to the first executable block that follows them),
+// plus this block's own fence. Mirrors how the local executor groups seeds with
+// the run that follows them.
+function buildBlockDocument(allFences, blockIdx) {
+  const parts = [];
+  let i = blockIdx;
+  while (i >= 0) {
+    const f = allFences[i];
+    if (f.lang && !SUPPORTED_LANGUAGES.has(f.lang) && f.lang.includes(".")) {
+      // seed/file block: include it and keep walking backward.
+      parts.unshift(
+        ````${f.header}\n${f.body}\n````
+      );
+      i--;
+      continue;
+    }
+    break;
+  }
+  const b = allFences[blockIdx];
+  parts.push(`${b.fence}${b.header}\n${b.body}\n${b.fence}`);
+  return parts.join("\n") + "\n";
+}
+
+// Build a per-block event handler that routes incoming frames into the block's
+// state and updates its status chip in place. Each sub-job carries a distinct
+// job_id prefix; the remote node echoes it back on terminal frames, so we can
+// route `job_done` / `error` frames to the right block even when they arrive
+// out of order.
+function makeBlockEventHandler(jobId, blockIdx) {
+  return (jsonStr) => {
+    const evt = JSON.parse(jsonStr);
+    const state = blockStates.get(blockIdx);
+    if (!state) return;
+
+    if (evt.type === "job_log") {
+      const data = new TextDecoder().decode(base64_decode(evt.data));
+      state.logs.push({ channel: evt.channel, data });
+      updateBlockStatusChip(state);
+      // Also stream the log into the shared output so the existing Output panel
+      // still sees live logs as they arrive (prefixed with the block index so a
+      // multi-node run is readable when blocks stream back concurrently).
+      appendOut(`[block ${blockIdx}] ${data}`, "log-" + evt.channel);
+    } else if (evt.type === "artifact") {
+      const ext = evt.ext || "";
+      const a = {
+        name: String(evt.name || "artifact" + ext),
+        ext,
+        size: evt.size || 0,
+        b64: evt.data,
+        mime: IMAGE_MIMES[ext] || "application/octet-stream",
+      };
+      state.artifacts.push(a);
+      updateBlockStatusChip(state);
+    } else if (evt.type === "job_done") {
+      if (evt.job_id && !evt.job_id.startsWith(runId)) {
+        // Belongs to a different run — ignore (shouldn't happen, but be safe).
+        return;
+      }
+      state.stdout = evt.stdout || "";
+      state.stderr = evt.stderr || "";
+      state.exitCode = evt.exit_code ?? 0;
+      state.status = state.exitCode === 0 ? "done" : "failed";
+      updateBlockStatusChip(state);
+    } else if (evt.type === "error") {
+      state.errors.push(String(evt.message || "rejected"));
+      state.status = "failed";
+      state.exitCode = state.exitCode ?? 1;
+      updateBlockStatusChip(state);
+    }
+  };
+}
+
+// ---------- per-block live status row under the editor ---------------------
+let blockStatusEl = null;
+let lastBlockMarkdown = null;
+
+// Render (or rebuild) the per-block status row for the current editor content.
+// Called once at the start of a run (queued/running states) and once at the end
+// (final done/failed states) so the row reflects the final outcome.
+function renderBlockStatusRow(markdown) {
+  lastBlockMarkdown = markdown;
+  const fences = fenceInfo(markdown);
+  // Reuse any existing in-flight state when rebuilding the row after a view
+  // toggle; otherwise start fresh from the fences.
+  if (!blockStates.size) {
+    for (let i = 0; i < fences.length; i++) {
+      const f = fences[i];
+      const exec = SUPPORTED_LANGUAGES.has(f.lang) && !f.lang.includes(".");
+      blockStates.set(i, {
+        idx: i,
+        lang: f.lang,
+        header: f.header,
+        exec,
+        status: exec ? "queued" : "skip",
+        nodeId: null,
+        logs: [],
+        stdout: "",
+        stderr: "",
+        exitCode: null,
+        errors: [],
+        artifacts: [],
+      });
+    }
+  }
+  if (!blockStatusEl) {
+    blockStatusEl = document.createElement("div");
+    blockStatusEl.className = "block-status";
+    blockStatusEl.setAttribute("aria-live", "polite");
+    const langStatus = $("langStatus");
+    langStatus.after(blockStatusEl);
+  }
+  blockStatusEl.textContent = "";
+  if (!fences.length) {
+    blockStatusEl.hidden = true;
+    return;
+  }
+  blockStatusEl.hidden = false;
+  // Divider label so the live run chips stay visually separate from the static
+  // language chips above them.
+  const head = document.createElement("div");
+  head.className = "block-status-head";
+  head.textContent = `Running ${fences.filter((f) => SUPPORTED_LANGUAGES.has(f.lang) && !f.lang.includes(".")).length} block${fences.filter((f) => SUPPORTED_LANGUAGES.has(f.lang) && !f.lang.includes(".")).length === 1 ? "" : "s"}`;
+  blockStatusEl.appendChild(head);
+  for (const [idx, state] of blockStates) {
+    updateBlockStatusChip(state, true);
+  }
+}
+
+function blockShortId(nodeId) {
+  return nodeId == null ? "—" : shortId(nodeId);
+}
+
+function statusLabel(state) {
+  if (state.status === "queued") return "queued";
+  if (state.status === "running") return `running on ${blockShortId(state.nodeId)}`;
+  if (state.status === "done") return `ok (exit ${state.exitCode ?? 0})`;
+  if (state.status === "failed") {
+    if (state.errors.length) return state.errors[0];
+    return `failed (exit ${state.exitCode ?? 1})`;
+  }
+  if (state.status === "no-match") return state.errors[0] || "no match";
+  if (state.status === "skip") return "seed/file";
+  return state.status;
+}
+
+// Update a single block's chip in place (create it first time, then mutate).
+function updateBlockStatusChip(state, forceRender) {
+  const chip = blockStatusEl && blockStatusEl.querySelector(`[data-idx="${state.idx}"]`);
+  const rebuild = forceRender || !chip;
+  if (rebuild) {
+    const row = document.createElement("div");
+    row.className = "block-status-row";
+    row.dataset.idx = String(state.idx);
+    // Block header: language + params (mirrors the editor chip look).
+    const head = document.createElement("span");
+    head.className = "block-status-head";
+    head.innerHTML = `<code>${escHtml(state.header || state.lang || "code")}</code>`;
+    row.appendChild(head);
+    // Status chip: the live state label.
+    const status = document.createElement("span");
+    status.className = "block-status";
+    status.textContent = statusLabel(state);
+    row.appendChild(status);
+    // Collapsible live log preview (only while the block is in flight or just
+    // finished). Kept small so the row stays readable.
+    if (state.logs.length || state.status === "done" || state.status === "failed") {
+      const log = document.createElement("button");
+      log.className = "block-status-log";
+      log.type = "button";
+      log.textContent = state.logs.length ? `${state.logs.length} line(s)` : "";
+      log.title = "Show live log for this block";
+      const logBody = document.createElement("pre");
+      logBody.className = "block-status-log-body";
+      logBody.textContent = state.logs.map((l) => l.data).join("");
+      log.appendChild(logBody);
+      log.addEventListener("click", () => {
+        const shown = logBody.style.display !== "none";
+        logBody.style.display = shown ? "none" : "";
+        log.setAttribute("aria-expanded", String(!shown));
+      });
+      row.appendChild(log);
+    }
+    if (blockStatusEl) blockStatusEl.appendChild(row);
+    return;
+  }
+  chip.querySelector(".block-status").textContent = statusLabel(state);
+  const logBtn = chip.querySelector(".block-status-log");
+  if (logBtn) {
+    const body = logBtn.querySelector(".block-status-log-body");
+    if (body) body.textContent = state.logs.map((l) => l.data).join("");
+  }
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 // Convert a #seed value into a discovery candidate (dialCandidate shape).
 function urlSeedCandidate(seed) {
   const nr = splitNodeAtRelay(seed);
@@ -1186,12 +1400,13 @@ async function run() {
   }
 
   const manual = $("ticket").value.trim();
-  let target;
-  if (manual) {
-    target = { node_id: "(manual)", ticket: manual, relay: null };
-  } else {
-    target = pickTarget(markdown);
-    if (!target) {
+  // Discovery-only target: used when a block has no warm-image match that we
+  // can reach directly, so we still submit its sub-job somewhere (best global
+  // node) rather than failing the whole run.
+  let discoveryTarget = null;
+  if (!manual) {
+    discoveryTarget = pickTarget(markdown);
+    if (!discoveryTarget) {
       setStatus("no compute nodes discovered — paste a seed ticket", "err");
       return;
     }
@@ -1199,6 +1414,43 @@ async function run() {
   localStorage.setItem("ephemeral.ticket", manual);
   localStorage.setItem("ephemeral.relay", $("relay").value.trim());
 
+  // --- fan-out: one sub-job per executable codeblock ------------------------
+  // Each executable block becomes its own mini-markdown document submitted to
+  // the best node whose warm images cover that block's language. Blocks that
+  // share a language can land on the same node; the per-block status row still
+  // tracks each block independently. Artifact chaining stays off by default,
+  // so multi-block runs are independent and can run in parallel across peers.
+  const fences = fenceInfo(markdown);
+  const codeBlocks = fences.filter((f) =>
+    SUPPORTED_LANGUAGES.has(f.lang) && !f.lang.includes(".")
+  );
+  // Stable per-run id so sub-job ids are traceable in logs.
+  const runId = `wasm-${Date.now()}`;
+  const blockStates = new Map(); // idx -> { idx, lang, header, status, nodeId, logs, done, exitCode, stderr, stdout }
+
+  // Seed + file blocks are not executable; they only exist to feed the block
+  // that follows them. Keep them out of the fan-out assignment but still show
+  // them in the status row as inert chips so the row mirrors the editor.
+  for (let i = 0; i < fences.length; i++) {
+    const f = fences[i];
+    const exec = SUPPORTED_LANGUAGES.has(f.lang) && !f.lang.includes(".");
+    blockStates.set(i, {
+      idx: i,
+      lang: f.lang,
+      header: f.header,
+      exec,
+      status: exec ? "queued" : "skip",
+      nodeId: null,
+      logs: [],
+      stdout: "",
+      stderr: "",
+      exitCode: null,
+      errors: [],
+      artifacts: [],
+    });
+  }
+
+  // Clear prior output + status state, then render the live status row.
   runArtifacts = [];
   leftoverArtifacts = [];
   outputRaw = "";
@@ -1211,54 +1463,93 @@ async function run() {
   $("warnings").hidden = true;
   $("output").textContent = "";
   $("output").classList.remove("interleaved");
-  setDetail(`running on ${shortId(target.node_id)}…`);
   setBusy(true);
+  // Start every run from a fresh block-state snapshot of the current editor
+  // content, so edits between runs can't leave stale chips.
+  blockStates.clear();
+  renderBlockStatusRow(markdown);
 
-  const onEvent = (jsonStr) => {
-    const evt = JSON.parse(jsonStr);
-    if (evt.type === "job_log") {
-      const data = new TextDecoder().decode(base64_decode(evt.data));
-      appendOut(data, "log-" + evt.channel);
-    } else if (evt.type === "artifact") {
-      const ext = evt.ext || "";
-      runArtifacts.push({
-        name: String(evt.name || "artifact" + ext),
-        ext: ext,
-        size: evt.size || 0,
-        b64: evt.data,
-        mime: IMAGE_MIMES[ext] || "application/octet-stream",
-      });
-    } else if (evt.type === "job_done") {
-      if (evt.stdout) { lastResultText = evt.stdout; appendResult(evt.stdout); }
-      if (evt.stderr) appendStderr(evt.stderr, evt.exit_code);
-      else $("warnings").hidden = true;
-      if (runArtifacts.length) {
-        renderArtifacts(runArtifacts, markdown);
-      } else if (evt.artifact_file) {
-        // Legacy nodes that only report metadata, not bytes.
-        appendOut(`[artifact: ${evt.artifact_file}${evt.artifact_ext || ""}]`, "done");
-      }
-      setDetail(evt.exit_code === 0 ? "done (exit 0)" : `failed (exit ${evt.exit_code})`);
-    } else if (evt.type === "error") {
-      appendOut(evt.message, "err");
-      setDetail("rejected");
+  // Assign each executable block to a target node.
+  const submissions = [];
+  for (const [idx, f] of codeBlocks.entries()) {
+    const state = blockStates.get(idx);
+    const target = pickBlockTarget(f.lang);
+    if (!target) {
+      // No reachable node covers this language — mark and skip submit.
+      state.status = "no-match";
+      state.errors.push(`no node with a warm ${f.lang} image`);
+      continue;
     }
-  };
-  // iroh-native dial by stable node id + relay; ticket only as a
-  // fallback for legacy nodes that don't report a relay.
-  const submit = target.node_id && target.relay
-    ? () => client.submit_job_to_node(target.node_id, target.relay, b64encode(markdown), 300, onEvent)
-    : () => client.submit_job(target.ticket, b64encode(markdown), 300, onEvent);
-
-  try {
-    await submit();
-    refreshPeers(); // re-sync the peer table after each run (non-blocking)
-  } catch (e) {
-    setDetail("error");
-    appendOut(String(e), "err");
-  } finally {
-    setBusy(false);
+    const doc = buildBlockDocument(fences, idx);
+    const jobId = `${runId}-${idx}`;
+    const sub = {
+      state,
+      idx,
+      node: target,
+      submit: target.node_id && target.relay
+        ? () => client.submit_job_to_node(target.node_id, target.relay, b64encode(doc), 300, makeBlockEventHandler(jobId, idx))
+        : () => client.submit_job(target.ticket, b64encode(doc), 300, makeBlockEventHandler(jobId, idx)),
+    };
+    state.status = "queued";
+    state.nodeId = target.node_id || null;
+    submissions.push(sub);
   }
+
+  // Dispatch the status update for queued -> running as we submit.
+  for (const sub of submissions) {
+    sub.state.status = "running";
+    updateBlockStatusChip(sub.state);
+  }
+
+  // Run all submissions concurrently; the first hard failure is surfaced as a
+  // run-level error, but per-block failures are tracked individually so the run
+  // can still finish with partial results.
+  let runError = null;
+  try {
+    await Promise.allSettled(submissions.map((s) => s.submit()));
+  } catch (e) {
+    runError = e;
+  }
+
+  // --- merge per-block results into the existing output contract -------------
+  // Preserve document order for the merged result text (best-effort positional
+  // matching the existing interleaved view already relies on).
+  const stdoutParts = [];
+  const stderrParts = [];
+  let exitCode = 0;
+  const mergedArtifacts = [];
+  for (const [, state] of blockStates) {
+    if (!state.exec) continue;
+    if (state.stdout) stdoutParts.push(state.stdout);
+    if (state.stderr) stderrParts.push(state.stderr);
+    if (state.exitCode !== null && state.exitCode !== 0 && exitCode === 0) {
+      exitCode = state.exitCode;
+    }
+    for (const a of state.artifacts) mergedArtifacts.push(a);
+    for (const e of state.errors) {
+      stderrParts.push(e);
+      if (exitCode === 0) exitCode = 1;
+    }
+  }
+  lastResultText = stdoutParts.join("\n");
+  lastStderr = stderrParts.join(
+    stdoutParts.length && stderrParts.length ? "\n" : ""
+  );
+  lastExitCode = exitCode || 0;
+  runArtifacts = mergedArtifacts;
+
+  // Rebuild the merged result + stderr the same way the single-job path did.
+  if (lastResultText) appendResult(lastResultText);
+  if (lastStderr) appendStderr(lastStderr, lastExitCode);
+  else $("warnings").hidden = true;
+  if (runArtifacts.length) {
+    renderArtifacts(runArtifacts, markdown);
+  }
+  setDetail(
+    exitCode === 0
+      ? `done (exit 0)`
+      : `finished with ${blockStates.size} block(s), ${exitCode} failing`
+  );
 
   // A fence that declared an unknown language gets rejected by the node's
   // image allowlist — remind the user what the cluster actually supports.
@@ -1285,6 +1576,7 @@ async function run() {
   }
   lastOutputRaw = outputRaw;
   if (interleaved) renderInterleaved();
+  renderBlockStatusRow(markdown);
 }
 
 // Render the "unsupported language" reminder: which fences were unknown,
@@ -1752,6 +2044,10 @@ $("clearOutput").addEventListener("click", () => {
   warningsOn = false;
   lastStderrEl = null;
   $("warnings").hidden = true;
+  // Also clear the in-flight per-block status row so a cleared run doesn't
+  // leave stale final states under a blank output.
+  blockStates.clear();
+  if (blockStatusEl) blockStatusEl.hidden = true;
 });
 
 $("interleave").addEventListener("click", () => {
