@@ -1331,6 +1331,25 @@ function statusLabel(state) {
   return state.status;
 }
 
+// A bounded output preview for the pill tooltip: stdout on a clean or warning
+// run, stderr on a failed one (falling back to the rejection reason), and the
+// live log tail while still in flight. Capped so the hover text stays a big
+// tooltip without becoming a wall of output.
+function blockOutputPreview(state) {
+  const cap = 280;
+  let text = "";
+  if (state.status === "failed") {
+    text = String(state.stderr || "").trim() || (state.errors[0] || "");
+  } else if (state.status === "done") {
+    text = String(state.stdout || "").trim();
+  } else if (state.status === "running" || state.status === "queued") {
+    text = state.logs.map((l) => l.data).join("").trim();
+  }
+  if (!text) return "";
+  const clipped = text.length > cap ? text.slice(0, cap).trimEnd() + "…" : text;
+  return `\n\n${clipped}`;
+}
+
 // Reflect a block's state on its language pill (matched by fence index, which
 // aligns fenceInfo() with the updateLangStatus() pill order).
 function applyBlockStatus(state) {
@@ -1341,7 +1360,7 @@ function applyBlockStatus(state) {
   if (cls) chip.classList.add(cls);
   const ind = chip.querySelector(".chip-run");
   if (ind) ind.textContent = icon;
-  chip.title = `${chip.dataset.baseTitle || "block"} — ${statusLabel(state)}`;
+  chip.title = `${chip.dataset.baseTitle || "block"} — ${statusLabel(state)}${blockOutputPreview(state)}`;
 }
 
 // Drop every pill's run-status overlay, returning it to its idle validity
