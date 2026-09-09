@@ -177,7 +177,7 @@ textarea { min-height: 150px; resize: vertical; }
   border-radius: 4px;
   white-space: nowrap;
 }
-.block-status {
+.block-status-label {
   flex: 0 0 auto;
   padding: 2px 8px;
   border-radius: 10px;
@@ -188,9 +188,9 @@ textarea { min-height: 150px; resize: vertical; }
   text-overflow: ellipsis;
   max-width: 280px;
 }
-.block-status.ok { border-color: #2d5a2d; color: var(--ok); }
-.block-status.failed { border-color: #8a5a1e; color: #ffb86b; }
-.block-status.running { border-color: #1e4a6e; color: #6db3ff; }
+.block-status-label.ok { border-color: #2d5a2d; color: var(--ok); }
+.block-status-label.failed { border-color: #8a5a1e; color: #ffb86b; }
+.block-status-label.running { border-color: #1e4a6e; color: #6db3ff; }
 .block-status-log {
   display: inline-flex;
   align-items: flex-start;

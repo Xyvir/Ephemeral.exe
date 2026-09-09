@@ -216,7 +216,15 @@ function fenceInfo(markdown) {
     const body = closeIdx === -1
       ? markdown.slice(bodyStart)
       : markdown.slice(bodyStart, closeIdx);
-    out.push({ lang: tokens[0].toLowerCase(), params: tokens.slice(1), body });
+    out.push({
+      lang: tokens[0].toLowerCase(),
+      params: tokens.slice(1),
+      body,
+      // Raw fence + header, so per-block mini-documents can be rebuilt
+      // verbatim (seed/file blocks and exec blocks alike).
+      header: m[1].trim(),
+      fence: "```",
+    });
   }
   return out;
 }
@@ -1149,14 +1157,17 @@ function pickBlockTarget(lang) {
 // the run that follows them.
 function buildBlockDocument(allFences, blockIdx) {
   const parts = [];
-  let i = blockIdx;
+  // Seed/file blocks attach to the first executable block that follows them,
+  // so walk BACKWARD from just before this block (blockIdx itself is the
+  // executable block and must not terminate the scan).
+  let i = blockIdx - 1;
   while (i >= 0) {
     const f = allFences[i];
     if (f.lang && !SUPPORTED_LANGUAGES.has(f.lang) && f.lang.includes(".")) {
       // seed/file block: include it and keep walking backward.
-      parts.unshift(
-        ````${f.header}\n${f.body}\n````
-      );
+      // NOTE: the fence must stay 3 backticks — the node's parser strips
+      // any line starting with 4+ backticks as a markdown wrapper.
+      parts.unshift(`${f.fence}${f.header}\n${f.body}\n${f.fence}`);
       i--;
       continue;
     }
@@ -1168,11 +1179,10 @@ function buildBlockDocument(allFences, blockIdx) {
 }
 
 // Build a per-block event handler that routes incoming frames into the block's
-// state and updates its status chip in place. Each sub-job carries a distinct
-// job_id prefix; the remote node echoes it back on terminal frames, so we can
-// route `job_done` / `error` frames to the right block even when they arrive
-// out of order.
-function makeBlockEventHandler(jobId, blockIdx) {
+// state and updates its status chip in place. Routing is by construction: each
+// handler is attached to its own sub-job's stream, so frames can never land on
+// the wrong block even when they arrive out of order.
+function makeBlockEventHandler(blockIdx) {
   return (jsonStr) => {
     const evt = JSON.parse(jsonStr);
     const state = blockStates.get(blockIdx);
@@ -1198,10 +1208,10 @@ function makeBlockEventHandler(jobId, blockIdx) {
       state.artifacts.push(a);
       updateBlockStatusChip(state);
     } else if (evt.type === "job_done") {
-      if (evt.job_id && !evt.job_id.startsWith(runId)) {
-        // Belongs to a different run — ignore (shouldn't happen, but be safe).
-        return;
-      }
+      // Routing is by construction: each sub-job's handler is attached to its
+      // own stream, so never filter on evt.job_id here — the wasm client's
+      // job_request carries a client-generated id, so the echoed job_id never
+      // matches a client-side run id and every job_done would be dropped.
       state.stdout = evt.stdout || "";
       state.stderr = evt.stderr || "";
       state.exitCode = evt.exit_code ?? 0;
@@ -1219,6 +1229,10 @@ function makeBlockEventHandler(jobId, blockIdx) {
 // ---------- per-block live status row under the editor ---------------------
 let blockStatusEl = null;
 let lastBlockMarkdown = null;
+// Single-flight run state shared with the per-block event handlers and the
+// status row (the Run button is disabled while a run is in flight, so one
+// module-level snapshot is enough).
+let blockStates = new Map();
 
 // Render (or rebuild) the per-block status row for the current editor content.
 // Called once at the start of a run (queued/running states) and once at the end
@@ -1273,7 +1287,9 @@ function renderBlockStatusRow(markdown) {
 }
 
 function blockShortId(nodeId) {
-  return nodeId == null ? "—" : shortId(nodeId);
+  if (nodeId == null) return "—";
+  if (nodeId === "(manual)") return "manual";
+  return shortId(nodeId);
 }
 
 function statusLabel(state) {
@@ -1289,6 +1305,13 @@ function statusLabel(state) {
   return state.status;
 }
 
+function blockStatusClass(state) {
+  if (state.status === "done") return "ok";
+  if (state.status === "failed") return "failed";
+  if (state.status === "running") return "running";
+  return "";
+}
+
 // Update a single block's chip in place (create it first time, then mutate).
 function updateBlockStatusChip(state, forceRender) {
   const chip = blockStatusEl && blockStatusEl.querySelector(`[data-idx="${state.idx}"]`);
@@ -1302,9 +1325,9 @@ function updateBlockStatusChip(state, forceRender) {
     head.className = "block-status-head";
     head.innerHTML = `<code>${escHtml(state.header || state.lang || "code")}</code>`;
     row.appendChild(head);
-    // Status chip: the live state label.
+    // Status chip: the live state label, color-coded by state.
     const status = document.createElement("span");
-    status.className = "block-status";
+    status.className = "block-status-label " + blockStatusClass(state);
     status.textContent = statusLabel(state);
     row.appendChild(status);
     // Collapsible live log preview (only while the block is in flight or just
@@ -1329,7 +1352,11 @@ function updateBlockStatusChip(state, forceRender) {
     if (blockStatusEl) blockStatusEl.appendChild(row);
     return;
   }
-  chip.querySelector(".block-status").textContent = statusLabel(state);
+  const lbl = chip.querySelector(".block-status-label");
+  if (lbl) {
+    lbl.textContent = statusLabel(state);
+    lbl.className = "block-status-label " + blockStatusClass(state);
+  }
   const logBtn = chip.querySelector(".block-status-log");
   if (logBtn) {
     const body = logBtn.querySelector(".block-status-log-body");
@@ -1400,16 +1427,9 @@ async function run() {
   }
 
   const manual = $("ticket").value.trim();
-  // Discovery-only target: used when a block has no warm-image match that we
-  // can reach directly, so we still submit its sub-job somewhere (best global
-  // node) rather than failing the whole run.
-  let discoveryTarget = null;
-  if (!manual) {
-    discoveryTarget = pickTarget(markdown);
-    if (!discoveryTarget) {
-      setStatus("no compute nodes discovered — paste a seed ticket", "err");
-      return;
-    }
+  if (!manual && !pickTarget(markdown)) {
+    setStatus("no compute nodes discovered — paste a seed ticket", "err");
+    return;
   }
   localStorage.setItem("ephemeral.ticket", manual);
   localStorage.setItem("ephemeral.relay", $("relay").value.trim());
@@ -1421,34 +1441,18 @@ async function run() {
   // tracks each block independently. Artifact chaining stays off by default,
   // so multi-block runs are independent and can run in parallel across peers.
   const fences = fenceInfo(markdown);
-  const codeBlocks = fences.filter((f) =>
-    SUPPORTED_LANGUAGES.has(f.lang) && !f.lang.includes(".")
-  );
-  // Stable per-run id so sub-job ids are traceable in logs.
-  const runId = `wasm-${Date.now()}`;
-  const blockStates = new Map(); // idx -> { idx, lang, header, status, nodeId, logs, done, exitCode, stderr, stdout }
-
-  // Seed + file blocks are not executable; they only exist to feed the block
-  // that follows them. Keep them out of the fan-out assignment but still show
-  // them in the status row as inert chips so the row mirrors the editor.
+  // Executable blocks with their fence index — blockStates is keyed by fence
+  // index, so seed/file blocks that precede a run must not shift positions.
+  const codeBlocks = [];
   for (let i = 0; i < fences.length; i++) {
     const f = fences[i];
-    const exec = SUPPORTED_LANGUAGES.has(f.lang) && !f.lang.includes(".");
-    blockStates.set(i, {
-      idx: i,
-      lang: f.lang,
-      header: f.header,
-      exec,
-      status: exec ? "queued" : "skip",
-      nodeId: null,
-      logs: [],
-      stdout: "",
-      stderr: "",
-      exitCode: null,
-      errors: [],
-      artifacts: [],
-    });
+    if (SUPPORTED_LANGUAGES.has(f.lang) && !f.lang.includes(".")) {
+      codeBlocks.push({ idx: i, f });
+    }
   }
+  // Fresh per-run state (single-flight, so reusing one module-level Map is
+  // safe); renderBlockStatusRow() rebuilds it from the current editor content.
+  blockStates = new Map();
 
   // Clear prior output + status state, then render the live status row.
   runArtifacts = [];
@@ -1471,9 +1475,12 @@ async function run() {
 
   // Assign each executable block to a target node.
   const submissions = [];
-  for (const [idx, f] of codeBlocks.entries()) {
+  for (const { idx, f } of codeBlocks) {
     const state = blockStates.get(idx);
-    const target = pickBlockTarget(f.lang);
+    // Warm-image peer first, then the best global node, then a pasted ticket
+    // (so a manual ticket still works when discovery finds no peers).
+    let target = pickBlockTarget(f.lang);
+    if (!target && manual) target = { node_id: null, relay: null, ticket: manual };
     if (!target) {
       // No reachable node covers this language — mark and skip submit.
       state.status = "no-match";
@@ -1481,17 +1488,16 @@ async function run() {
       continue;
     }
     const doc = buildBlockDocument(fences, idx);
-    const jobId = `${runId}-${idx}`;
     const sub = {
       state,
       idx,
       node: target,
       submit: target.node_id && target.relay
-        ? () => client.submit_job_to_node(target.node_id, target.relay, b64encode(doc), 300, makeBlockEventHandler(jobId, idx))
-        : () => client.submit_job(target.ticket, b64encode(doc), 300, makeBlockEventHandler(jobId, idx)),
+        ? () => client.submit_job_to_node(target.node_id, target.relay, b64encode(doc), 300, makeBlockEventHandler(idx))
+        : () => client.submit_job(target.ticket, b64encode(doc), 300, makeBlockEventHandler(idx)),
     };
     state.status = "queued";
-    state.nodeId = target.node_id || null;
+    state.nodeId = target.node_id || (manual ? "(manual)" : null);
     submissions.push(sub);
   }
 
@@ -1501,14 +1507,24 @@ async function run() {
     updateBlockStatusChip(sub.state);
   }
 
-  // Run all submissions concurrently; the first hard failure is surfaced as a
-  // run-level error, but per-block failures are tracked individually so the run
-  // can still finish with partial results.
-  let runError = null;
-  try {
-    await Promise.allSettled(submissions.map((s) => s.submit()));
-  } catch (e) {
-    runError = e;
+  // Run all submissions concurrently. Transport-level failures (relay drop,
+  // node unreachable) surface as promise rejections with no terminal frame, so
+  // map each result back to its block and mark it failed explicitly —
+  // Promise.allSettled swallows rejections, so the per-block status must too.
+  const results = await Promise.allSettled(submissions.map((s) => s.submit()));
+  setBusy(false);
+  refreshPeers(); // re-sync the peer table after each run (non-blocking)
+  for (let i = 0; i < submissions.length; i++) {
+    const r = results[i];
+    if (r.status === "rejected") {
+      const sub = submissions[i];
+      const msg = String(r.reason || "connection failed");
+      sub.state.status = "failed";
+      sub.state.exitCode = sub.state.exitCode ?? 1;
+      sub.state.errors.push(msg);
+      updateBlockStatusChip(sub.state);
+      appendOut(`[block ${sub.idx}] ${msg}`, "err");
+    }
   }
 
   // --- merge per-block results into the existing output contract -------------
@@ -1545,10 +1561,14 @@ async function run() {
   if (runArtifacts.length) {
     renderArtifacts(runArtifacts, markdown);
   }
+  const ran = [...blockStates.values()].filter((s) => s.exec);
+  const failed = ran.filter(
+    (s) => s.status === "failed" || (s.exitCode ?? 0) !== 0
+  ).length;
   setDetail(
-    exitCode === 0
+    failed === 0
       ? `done (exit 0)`
-      : `finished with ${blockStates.size} block(s), ${exitCode} failing`
+      : `finished with ${ran.length} block(s), ${failed} failing`
   );
 
   // A fence that declared an unknown language gets rejected by the node's
