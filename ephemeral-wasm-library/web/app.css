@@ -122,6 +122,10 @@ textarea { min-height: 150px; resize: vertical; }
   color: #7cfc9a;
   font-weight: 600;
 }
+/* The language declaration mirrors the pill colors: blue when supported,
+   orange when unknown (seed/file info-strings stay green). */
+#editor .code-header.valid { color: var(--accent-hi); }
+#editor .code-header.invalid { color: #ffb86b; }
 #editor .shebang {
   display: inline;
   background: rgba(124, 252, 154, 0.08);

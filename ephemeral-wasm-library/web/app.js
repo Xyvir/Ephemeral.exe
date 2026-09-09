@@ -319,12 +319,21 @@ function highlightCodeHeaders() {
     if (!m || !m[2]) continue; // closing fence — nothing to highlight
     span.textContent = "";
     span.appendChild(document.createTextNode(m[1]));
+    let first = true; // the first token is the language declaration
     for (const part of m[2].split(/(\s+)/)) {
       if (/^\s+$/.test(part)) {
         span.appendChild(document.createTextNode(part));
       } else {
         const t = document.createElement("span");
         t.className = "code-header";
+        if (first) {
+          // Mirror the language pills: blue for a supported language, orange
+          // for an unknown one (seed/file info-strings stay neutral).
+          const lang = part.toLowerCase();
+          if (SUPPORTED_LANGUAGES.has(lang)) t.classList.add("valid");
+          else if (!lang.includes(".")) t.classList.add("invalid");
+          first = false;
+        }
         t.textContent = part;
         span.appendChild(t);
       }
