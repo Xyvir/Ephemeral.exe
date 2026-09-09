@@ -1,0 +1,72 @@
+name: Publish language images
+
+# Builds and pushes the bespoke language-map images to Docker Hub so image
+# refreshes never require a manual `podman build` + `push` on a node again.
+# One job per dockerfile; path filters mean touching e.g.
+# dockerfiles/ephemeral-python-uv.dockerfile rebuilds (only) that image.
+#
+# Required repo secrets:
+#   DOCKERHUB_USERNAME — Docker Hub account name (image namespace)
+#   DOCKERHUB_TOKEN    — a Docker Hub access token (not the account password)
+#
+# Also runs on workflow_dispatch (build everything) and PRs (build only,
+# no push) so dockerfile changes are compile-checked before merge.
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "dockerfiles/**"
+      - ".github/workflows/publish-images.yml"
+  pull_request:
+    paths:
+      - "dockerfiles/**"
+      - ".github/workflows/publish-images.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ephemeral-python-uv
+            image: tymills620/ephemeral-python-uv
+          - name: ephemeral-octave-forge
+            image: tymills620/octave-forge
+          # Work in progress, untested — built so it can be pulled and tried,
+          # but deliberately NOT wired into the language map yet.
+          - name: ephemeral-qwen-monolith
+            image: tymills620/ephemeral-qwen-monolith
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (arm64 builds)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build (and push) ${{ matrix.image }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/${{ matrix.name }}.dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            docker.io/${{ matrix.image }}:latest
+            docker.io/${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max

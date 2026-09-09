@@ -35,6 +35,8 @@ export const SUPPORTED_LANGUAGES = new Set([
   "golang",
   "golfscript",
   "haskell",
+  "htm",
+  "html",
   "java",
   "javascript",
   "js",
@@ -80,6 +82,7 @@ export const SUPPORTED_LANGUAGES = new Set([
   "sbcl",
   "science",
   "sh",
+  "svg",
   "swipl",
   "tex",
   "tiddlywiki",
@@ -107,6 +110,7 @@ export const CANONICAL_LANGUAGES = [
   "go",
   "golfscript",
   "haskell",
+  "html",
   "java",
   "julia",
   "latex",
@@ -221,6 +225,10 @@ export const ALIAS_MAP = {
     "markdown",
     "md"
   ],
+  "html": [
+    "htm",
+    "svg"
+  ],
   "gh-runner": [
     "runner",
     "ubuntu-latest"
@@ -238,6 +246,12 @@ export const IMAGE_LANGUAGES = {
   ],
   "docker.io/catthehacker/ubuntu:act-22.04:latest": [
     "gh-runner"
+  ],
+  "docker.io/chromedp/headless-shell": [
+    "html"
+  ],
+  "docker.io/chromedp/headless-shell:latest": [
+    "html"
   ],
   "docker.io/clfoundation/sbcl:slim": [
     "lisp"

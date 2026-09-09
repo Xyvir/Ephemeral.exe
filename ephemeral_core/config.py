@@ -101,6 +101,23 @@ LANG_MAP = {
     'pandoc-pdf': {'image': 'docker.io/pandoc/extra', 'entrypoint': '', 'cmd': ['sh', '-c', 'cat > /tmp/input.md && pandoc /tmp/input.md -o /output/converted.pdf']},
     'pandoc-docx': {'image': 'docker.io/pandoc/extra', 'entrypoint': '', 'cmd': ['sh', '-c', 'cat > /tmp/input.md && pandoc /tmp/input.md -o /output/converted.docx']},
 
+    # --- HTML / SVG Rendering (headless Chrome screenshot) ---
+    # Colab-style %%html magic: the block body is rendered with a headless
+    # Chromium and captured to /output/render.png, which streams back as an
+    # inline-previewable artifact. Pre-canned chromedp/headless-shell (multi-
+    # arch, fonts included) so no bespoke image to maintain. The sed strips a
+    # leading %%html line; --virtual-time-budget lets JS settle pre-capture.
+    'html': {
+        'image': 'docker.io/chromedp/headless-shell:latest',
+        'entrypoint': '',
+        'cmd': ['sh', '-c',
+                'cat > /tmp/page.html && sed -i "1{/^%%/d}" /tmp/page.html && '
+                '/headless-shell/headless-shell --no-sandbox --disable-gpu '
+                '--disable-dev-shm-usage --hide-scrollbars '
+                '--window-size=800,600 --virtual-time-budget=2000 '
+                '--screenshot=/output/render.png file:///tmp/page.html']
+    },
+
     # --- Windows-like Shells ---
     'pwsh':    {'image': 'mcr.microsoft.com/powershell', 'cmd': ['pwsh', '-NoProfile', '-NonInteractive', '-Command', '-']},
     
@@ -122,6 +139,7 @@ LANG_MAP = {
     'tw': 'tiddlywiki', 'tw5': 'tiddlywiki', 'wiki': 'tiddlywiki',
     'tex': 'latex', 'pdflatex': 'latex',
     'md': 'pandoc', 'markdown': 'pandoc',
+    'htm': 'html', 'svg': 'html',
     'runner': 'gh-runner', 'ubuntu-latest': 'gh-runner',
     'lint-action': 'actionlint'
 }
