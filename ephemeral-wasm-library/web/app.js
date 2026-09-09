@@ -235,18 +235,27 @@ function updateLangStatus() {
   const el = $("langStatus");
   el.textContent = "";
   const fences = fenceInfo(editor.getValue());
-  for (const f of fences) {
-    // Language chip (as before).
+  for (let i = 0; i < fences.length; i++) {
+    const f = fences[i];
+    // Language pill: blue for a supported language, orange for an unknown
+    // one, neutral for seed/file blocks. No validity icon — the per-block
+    // run status (spinner/check/triangle/x) is what lives inside the pill
+    // while a run is in flight, matched back to the fence via data-idx.
     const ok = SUPPORTED_LANGUAGES.has(f.lang);
     const isFile = !ok && f.lang.includes(".");
     const chip = document.createElement("span");
-    chip.className = "lang-chip " + (ok ? "ok" : isFile ? "file" : "bad");
-    chip.textContent = (ok ? "✓ " : isFile ? "" : "✗ ") + f.lang;
+    chip.className = "lang-chip " + (ok ? "valid" : isFile ? "file" : "invalid");
+    chip.dataset.idx = String(i);
     chip.title = ok
       ? "supported"
       : isFile
         ? "file/seed block — not a language"
         : "not in the language map — this block will be rejected";
+    chip.dataset.baseTitle = chip.title;
+    const runInd = document.createElement("span");
+    runInd.className = "chip-run";
+    chip.appendChild(runInd);
+    chip.appendChild(document.createTextNode(f.lang));
     el.appendChild(chip);
     // Artifact chip: the block references /output, so the run is expected
     // to return a downloadable artifact (single images preview inline).
@@ -268,16 +277,16 @@ function updateLangStatus() {
       const p = raw.toLowerCase();
       const pchip = document.createElement("span");
       if (NETWORK_FLAGS.has(p)) {
-        pchip.className = "lang-chip bad";
+        pchip.className = "lang-chip invalid";
         pchip.textContent = "✗ " + raw;
         pchip.title =
           "'unsafe' is not supported on the distributed network — jobs always run sandboxed";
       } else if (DROPPED_OVERRIDES.some((o) => p.startsWith(o + "="))) {
-        pchip.className = "lang-chip bad";
+        pchip.className = "lang-chip invalid";
         pchip.textContent = "✗ " + raw;
         pchip.title = "overrides are dropped on remote jobs — the node operator decides the image";
       } else if (CHAIN_FLAGS.has(p) || NO_CHAIN_FLAGS.has(p)) {
-        pchip.className = "lang-chip ok";
+        pchip.className = "lang-chip valid";
         pchip.textContent = "✓ " + raw;
         pchip.title = "supported execution flag";
       } else {
@@ -918,7 +927,7 @@ function renderCluster() {
           if (seen.has(name)) continue;
           seen.add(name);
           const chip = document.createElement("span");
-          chip.className = "lang-chip ok";
+          chip.className = "lang-chip valid";
           chip.textContent = name;
           chip.title = img;
           imgs.appendChild(chip);
@@ -1191,7 +1200,7 @@ function makeBlockEventHandler(blockIdx) {
     if (evt.type === "job_log") {
       const data = new TextDecoder().decode(base64_decode(evt.data));
       state.logs.push({ channel: evt.channel, data });
-      updateBlockStatusChip(state);
+      applyBlockStatus(state);
       // Also stream the log into the shared output so the existing Output panel
       // still sees live logs as they arrive (prefixed with the block index so a
       // multi-node run is readable when blocks stream back concurrently).
@@ -1206,7 +1215,7 @@ function makeBlockEventHandler(blockIdx) {
         mime: IMAGE_MIMES[ext] || "application/octet-stream",
       };
       state.artifacts.push(a);
-      updateBlockStatusChip(state);
+      applyBlockStatus(state);
     } else if (evt.type === "job_done") {
       // Routing is by construction: each sub-job's handler is attached to its
       // own stream, so never filter on evt.job_id here — the wasm client's
@@ -1216,157 +1225,116 @@ function makeBlockEventHandler(blockIdx) {
       state.stderr = evt.stderr || "";
       state.exitCode = evt.exit_code ?? 0;
       state.status = state.exitCode === 0 ? "done" : "failed";
-      updateBlockStatusChip(state);
+      // A clean exit that still wrote stderr counts as a warning — same
+      // semantics as the output panel's yellow warnings toggle.
+      state.warn = state.exitCode === 0 && String(state.stderr || "").trim().length > 0;
+      applyBlockStatus(state);
     } else if (evt.type === "error") {
       state.errors.push(String(evt.message || "rejected"));
       state.status = "failed";
       state.exitCode = state.exitCode ?? 1;
-      updateBlockStatusChip(state);
+      applyBlockStatus(state);
     }
   };
 }
 
-// ---------- per-block live status row under the editor ---------------------
-let blockStatusEl = null;
-let lastBlockMarkdown = null;
+// ---------- per-block run status inside the language pills ------------------
 // Single-flight run state shared with the per-block event handlers and the
-// status row (the Run button is disabled while a run is in flight, so one
-// module-level snapshot is enough).
+// pill status updates (the Run button is disabled while a run is in flight,
+// so one module-level snapshot is enough).
 let blockStates = new Map();
 
-// Render (or rebuild) the per-block status row for the current editor content.
-// Called once at the start of a run (queued/running states) and once at the end
-// (final done/failed states) so the row reflects the final outcome.
-function renderBlockStatusRow(markdown) {
-  lastBlockMarkdown = markdown;
-  const fences = fenceInfo(markdown);
-  // Reuse any existing in-flight state when rebuilding the row after a view
-  // toggle; otherwise start fresh from the fences.
-  if (!blockStates.size) {
-    for (let i = 0; i < fences.length; i++) {
-      const f = fences[i];
-      const exec = SUPPORTED_LANGUAGES.has(f.lang) && !f.lang.includes(".");
-      blockStates.set(i, {
-        idx: i,
-        lang: f.lang,
-        header: f.header,
-        exec,
-        status: exec ? "queued" : "skip",
-        nodeId: null,
-        logs: [],
-        stdout: "",
-        stderr: "",
-        exitCode: null,
-        errors: [],
-        artifacts: [],
-      });
-    }
-  }
-  if (!blockStatusEl) {
-    blockStatusEl = document.createElement("div");
-    blockStatusEl.className = "block-status";
-    blockStatusEl.setAttribute("aria-live", "polite");
-    const langStatus = $("langStatus");
-    langStatus.after(blockStatusEl);
-  }
-  blockStatusEl.textContent = "";
-  if (!fences.length) {
-    blockStatusEl.hidden = true;
-    return;
-  }
-  blockStatusEl.hidden = false;
-  // Divider label so the live run chips stay visually separate from the static
-  // language chips above them.
-  const head = document.createElement("div");
-  head.className = "block-status-head";
-  head.textContent = `Running ${fences.filter((f) => SUPPORTED_LANGUAGES.has(f.lang) && !f.lang.includes(".")).length} block${fences.filter((f) => SUPPORTED_LANGUAGES.has(f.lang) && !f.lang.includes(".")).length === 1 ? "" : "s"}`;
-  blockStatusEl.appendChild(head);
-  for (const [idx, state] of blockStates) {
-    updateBlockStatusChip(state, true);
+// Build the fresh per-run state snapshot for every fence in document order
+// (seed/file blocks are inert "skip" chips; only executable blocks run).
+function initBlockStates(fences) {
+  blockStates = new Map();
+  for (let i = 0; i < fences.length; i++) {
+    const f = fences[i];
+    const exec = SUPPORTED_LANGUAGES.has(f.lang) && !f.lang.includes(".");
+    blockStates.set(i, {
+      idx: i,
+      lang: f.lang,
+      header: f.header,
+      exec,
+      warn: false,
+      status: exec ? "queued" : "skip",
+      nodeId: null,
+      logs: [],
+      stdout: "",
+      stderr: "",
+      exitCode: null,
+      errors: [],
+      artifacts: [],
+    });
   }
 }
 
-function blockShortId(nodeId) {
-  if (nodeId == null) return "—";
-  if (nodeId === "(manual)") return "manual";
-  return shortId(nodeId);
+// Map a block's run state to the pill's status class + icon: grey spinner
+// while in flight, green check on success, yellow triangle when the block
+// exited 0 but wrote warnings (stderr), red x on failure or no match.
+function blockStatusVisual(state) {
+  if (state.status === "queued" || state.status === "running") {
+    return { cls: "running", icon: "" }; // spinner drawn via CSS
+  }
+  if (state.status === "done") {
+    return state.warn
+      ? { cls: "warn", icon: "⚠" }
+      : { cls: "done", icon: "✓" };
+  }
+  if (state.status === "failed" || state.status === "no-match") {
+    return { cls: "err", icon: "✕" };
+  }
+  return { cls: "", icon: "" }; // skip (seed/file)
 }
 
+// Tooltip text for a block's live state.
 function statusLabel(state) {
   if (state.status === "queued") return "queued";
-  if (state.status === "running") return `running on ${blockShortId(state.nodeId)}`;
-  if (state.status === "done") return `ok (exit ${state.exitCode ?? 0})`;
+  if (state.status === "running") {
+    const node =
+      state.nodeId == null ? "—" :
+      state.nodeId === "(manual)" ? "manual" :
+      shortId(state.nodeId);
+    return `running on ${node}`;
+  }
+  if (state.status === "done") {
+    return state.warn
+      ? `finished with warnings (exit ${state.exitCode ?? 0})`
+      : `ok (exit ${state.exitCode ?? 0})`;
+  }
   if (state.status === "failed") {
-    if (state.errors.length) return state.errors[0];
-    return `failed (exit ${state.exitCode ?? 1})`;
+    return state.errors.length ? state.errors[0] : `failed (exit ${state.exitCode ?? 1})`;
   }
   if (state.status === "no-match") return state.errors[0] || "no match";
   if (state.status === "skip") return "seed/file";
   return state.status;
 }
 
-function blockStatusClass(state) {
-  if (state.status === "done") return "ok";
-  if (state.status === "failed") return "failed";
-  if (state.status === "running") return "running";
-  return "";
+// Reflect a block's state on its language pill (matched by fence index, which
+// aligns fenceInfo() with the updateLangStatus() pill order).
+function applyBlockStatus(state) {
+  const chip = document.querySelector(`#langStatus .lang-chip[data-idx="${state.idx}"]`);
+  if (!chip) return;
+  const { cls, icon } = blockStatusVisual(state);
+  chip.classList.remove("running", "done", "warn", "err");
+  if (cls) chip.classList.add(cls);
+  const ind = chip.querySelector(".chip-run");
+  if (ind) ind.textContent = icon;
+  chip.title = `${chip.dataset.baseTitle || "block"} — ${statusLabel(state)}`;
 }
 
-// Update a single block's chip in place (create it first time, then mutate).
-function updateBlockStatusChip(state, forceRender) {
-  const chip = blockStatusEl && blockStatusEl.querySelector(`[data-idx="${state.idx}"]`);
-  const rebuild = forceRender || !chip;
-  if (rebuild) {
-    const row = document.createElement("div");
-    row.className = "block-status-row";
-    row.dataset.idx = String(state.idx);
-    // Block header: language + params (mirrors the editor chip look).
-    const head = document.createElement("span");
-    head.className = "block-status-head";
-    head.innerHTML = `<code>${escHtml(state.header || state.lang || "code")}</code>`;
-    row.appendChild(head);
-    // Status chip: the live state label, color-coded by state.
-    const status = document.createElement("span");
-    status.className = "block-status-label " + blockStatusClass(state);
-    status.textContent = statusLabel(state);
-    row.appendChild(status);
-    // Collapsible live log preview (only while the block is in flight or just
-    // finished). Kept small so the row stays readable.
-    if (state.logs.length || state.status === "done" || state.status === "failed") {
-      const log = document.createElement("button");
-      log.className = "block-status-log";
-      log.type = "button";
-      log.textContent = state.logs.length ? `${state.logs.length} line(s)` : "";
-      log.title = "Show live log for this block";
-      const logBody = document.createElement("pre");
-      logBody.className = "block-status-log-body";
-      logBody.textContent = state.logs.map((l) => l.data).join("");
-      log.appendChild(logBody);
-      log.addEventListener("click", () => {
-        const shown = logBody.style.display !== "none";
-        logBody.style.display = shown ? "none" : "";
-        log.setAttribute("aria-expanded", String(!shown));
-      });
-      row.appendChild(log);
-    }
-    if (blockStatusEl) blockStatusEl.appendChild(row);
-    return;
-  }
-  const lbl = chip.querySelector(".block-status-label");
-  if (lbl) {
-    lbl.textContent = statusLabel(state);
-    lbl.className = "block-status-label " + blockStatusClass(state);
-  }
-  const logBtn = chip.querySelector(".block-status-log");
-  if (logBtn) {
-    const body = logBtn.querySelector(".block-status-log-body");
-    if (body) body.textContent = state.logs.map((l) => l.data).join("");
+// Drop every pill's run-status overlay, returning it to its idle validity
+// colors (used when the output/run state is cleared).
+function resetPillStatuses() {
+  for (const chip of document.querySelectorAll("#langStatus .lang-chip[data-idx]")) {
+    chip.classList.remove("running", "done", "warn", "err");
+    const ind = chip.querySelector(".chip-run");
+    if (ind) ind.textContent = "";
+    chip.title = chip.dataset.baseTitle || "";
   }
 }
 
-function escHtml(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
+
 
 // Convert a #seed value into a discovery candidate (dialCandidate shape).
 function urlSeedCandidate(seed) {
@@ -1451,8 +1419,8 @@ async function run() {
     }
   }
   // Fresh per-run state (single-flight, so reusing one module-level Map is
-  // safe); renderBlockStatusRow() rebuilds it from the current editor content.
-  blockStates = new Map();
+  // safe); the language pills carry the per-block status for this run.
+  initBlockStates(fences);
 
   // Clear prior output + status state, then render the live status row.
   runArtifacts = [];
@@ -1468,10 +1436,9 @@ async function run() {
   $("output").textContent = "";
   $("output").classList.remove("interleaved");
   setBusy(true);
-  // Start every run from a fresh block-state snapshot of the current editor
-  // content, so edits between runs can't leave stale chips.
-  blockStates.clear();
-  renderBlockStatusRow(markdown);
+  // Rebuild the language pills from the current editor content so no
+  // run-status overlay from a previous run survives.
+  updateLangStatus();
 
   // Assign each executable block to a target node.
   const submissions = [];
@@ -1485,6 +1452,7 @@ async function run() {
       // No reachable node covers this language — mark and skip submit.
       state.status = "no-match";
       state.errors.push(`no node with a warm ${f.lang} image`);
+      applyBlockStatus(state);
       continue;
     }
     const doc = buildBlockDocument(fences, idx);
@@ -1504,7 +1472,7 @@ async function run() {
   // Dispatch the status update for queued -> running as we submit.
   for (const sub of submissions) {
     sub.state.status = "running";
-    updateBlockStatusChip(sub.state);
+    applyBlockStatus(sub.state);
   }
 
   // Run all submissions concurrently. Transport-level failures (relay drop,
@@ -1522,7 +1490,7 @@ async function run() {
       sub.state.status = "failed";
       sub.state.exitCode = sub.state.exitCode ?? 1;
       sub.state.errors.push(msg);
-      updateBlockStatusChip(sub.state);
+      applyBlockStatus(sub.state);
       appendOut(`[block ${sub.idx}] ${msg}`, "err");
     }
   }
@@ -1596,7 +1564,6 @@ async function run() {
   }
   lastOutputRaw = outputRaw;
   if (interleaved) renderInterleaved();
-  renderBlockStatusRow(markdown);
 }
 
 // Render the "unsupported language" reminder: which fences were unknown,
@@ -2064,10 +2031,10 @@ $("clearOutput").addEventListener("click", () => {
   warningsOn = false;
   lastStderrEl = null;
   $("warnings").hidden = true;
-  // Also clear the in-flight per-block status row so a cleared run doesn't
-  // leave stale final states under a blank output.
+  // Also clear the in-flight per-block status overlay so a cleared run
+  // doesn't leave stale final states on the language pills.
   blockStates.clear();
-  if (blockStatusEl) blockStatusEl.hidden = true;
+  resetPillStatuses();
 });
 
 $("interleave").addEventListener("click", () => {

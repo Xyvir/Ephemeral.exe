@@ -138,90 +138,11 @@ textarea { min-height: 150px; resize: vertical; }
 }
 .lang-status[hidden] { display: none; }
 
-/* Per-block run-status row, inserted below the language chips while a run is
-   in flight. One row per fence: header (language/params) + live status chip +
-   an optional collapsible live-log preview.
-   
-   The divider label + separate background keep the live run chips visually
-   distinct from the static language chips above them, so a multi-block run
-   doesn't visually merge into the editor badges.
+/* Per-block run status lives INSIDE the language pills: grey + spinner while
+   queued/running, green check on success, yellow triangle on warnings (clean
+   exit with stderr), red x on failure — see the .lang-chip.running/done/
+   warn/err rules below.
 */
-.block-status {
-  display: block;
-  margin-top: 10px;
-  padding: 8px 10px;
-  background: #1a1a1a;
-  border: 1px solid #333;
-  border-radius: 6px;
-}
-.block-status[hidden] { display: none; }
-.block-status-head {
-  font: 11px ui-monospace, Consolas, monospace;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: .06em;
-  margin-bottom: 6px;
-}
-.block-status-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 4px 0;
-  font: 12px ui-monospace, Consolas, monospace;
-}
-.block-status-row + .block-status-row { border-top: 1px dashed #333; }
-.block-status-head code {
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.05);
-  padding: 1px 5px;
-  border-radius: 4px;
-  white-space: nowrap;
-}
-.block-status-label {
-  flex: 0 0 auto;
-  padding: 2px 8px;
-  border-radius: 10px;
-  border: 1px solid #444;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 280px;
-}
-.block-status-label.ok { border-color: #2d5a2d; color: var(--ok); }
-.block-status-label.failed { border-color: #8a5a1e; color: #ffb86b; }
-.block-status-label.running { border-color: #1e4a6e; color: #6db3ff; }
-.block-status-log {
-  display: inline-flex;
-  align-items: flex-start;
-  flex: 1 1 auto;
-  gap: 6px;
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  text-align: left;
-  padding: 0;
-  font: inherit;
-  overflow: hidden;
-}
-.block-status-log:hover { color: var(--text); }
-.block-status-log-body {
-  display: none;
-  flex: 1 1 auto;
-  margin: 0;
-  padding: 4px 8px;
-  background: #111;
-  border: 1px solid #2b2b2b;
-  border-radius: 5px;
-  color: var(--muted);
-  font: 12px/1.4 ui-monospace, Consolas, monospace;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 120px;
-  overflow: auto;
-}
-.block-status-log[aria-expanded="true"] .block-status-log-body { display: block; }
 .lang-chip {
   font: 12px ui-monospace, Consolas, monospace;
   padding: 2px 8px;
@@ -230,10 +151,29 @@ textarea { min-height: 150px; resize: vertical; }
   background: #1a1a1a;
   color: var(--muted);
 }
-.lang-chip.ok { border-color: #2d5a2d; color: var(--ok); }
-.lang-chip.bad { border-color: #8a5a1e; color: #ffb86b; }
+.lang-chip.valid { border-color: #1e4a6e; color: var(--accent-hi); }
+.lang-chip.invalid { border-color: #8a5a1e; color: #ffb86b; }
 .lang-chip.file { border-color: #444; color: var(--muted); }
 .lang-chip.artifact { border-color: #1e4a6e; color: #6db3ff; }
+
+/* Run-status overlay on the language pills while a run is in flight. */
+.lang-chip.running { border-color: #555; color: var(--muted); background: #222; }
+.lang-chip.done { border-color: #2d5a2d; color: var(--ok); }
+.lang-chip.warn { border-color: #8a7a1e; color: #ffd76b; }
+.lang-chip.err { border-color: #5a2d2d; color: var(--err); }
+.chip-run { display: inline-block; margin-right: 4px; }
+.chip-run:empty { display: none; }
+.lang-chip.running .chip-run {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: var(--muted);
+  border-radius: 50%;
+  vertical-align: -1px;
+  animation: chip-spin 0.8s linear infinite;
+}
+@keyframes chip-spin { to { transform: rotate(360deg); } }
 
 /* Disclaimer directly under the Run buttons. */
 .run-note {
