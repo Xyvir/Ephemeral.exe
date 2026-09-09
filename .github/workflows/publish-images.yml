@@ -36,12 +36,20 @@ jobs:
         include:
           - name: ephemeral-python-uv
             image: tymills620/ephemeral-python-uv
+            # uv's bookworm-slim base publishes amd64+arm64.
+            platforms: linux/amd64,linux/arm64
           - name: ephemeral-octave-forge
             image: tymills620/octave-forge
+            # gnuoctave/octave is amd64-only upstream — requesting arm64
+            # fails manifest resolution at build time.
+            platforms: linux/amd64
           # Work in progress, untested — built so it can be pulled and tried,
           # but deliberately NOT wired into the language map yet.
           - name: ephemeral-qwen-monolith
             image: tymills620/ephemeral-qwen-monolith
+            platforms: linux/amd64
+            # widen to linux/amd64,linux/arm64 if the llama.cpp arm64 server
+            # image is wanted; the bundled GGUF is architecture-neutral.
     steps:
       - uses: actions/checkout@v4
 
@@ -63,7 +71,7 @@ jobs:
         with:
           context: .
           file: dockerfiles/${{ matrix.name }}.dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platforms }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
             docker.io/${{ matrix.image }}:latest
