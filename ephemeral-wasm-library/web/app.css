@@ -471,6 +471,7 @@ details.advanced .advanced-meta code { color: var(--accent-hi); }
   letter-spacing: .06em;
   margin: 10px 0 6px;
 }
+.result-title.failed { color: var(--err); }
 .result-step { color: var(--muted); font-size: 12px; margin: 6px 0 4px; }
 .result-line { color: var(--text); white-space: pre-wrap; word-break: break-word; margin: 2px 0; }
 

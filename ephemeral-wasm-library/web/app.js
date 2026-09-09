@@ -497,7 +497,11 @@ function renderResult(text) {
         fenceBuf = [];
       } else {
         inFence = false;
-        html.push(`<pre class="code-block"><code class="hljs language-${esc(fenceLang)}">${esc(fenceBuf.join("\n"))}</code></pre>`);
+        // A failed run with no stdout ships an empty fence — the blank code
+        // box is just noise next to the error text, so skip it entirely.
+        if (fenceBuf.join("\n").trim()) {
+          html.push(`<pre class="code-block"><code class="hljs language-${esc(fenceLang)}">${esc(fenceBuf.join("\n"))}</code></pre>`);
+        }
       }
       continue;
     }
@@ -506,11 +510,19 @@ function renderResult(text) {
       continue;
     }
     if (/^### /.test(line)) html.push(`<div class="result-step">${esc(line.slice(4))}</div>`);
-    else if (/^## /.test(line)) html.push(`<div class="result-title">${esc(line.slice(3))}</div>`);
+    else if (/^## /.test(line)) {
+      const title = esc(line.slice(3));
+      // Failure envelopes ("## Python Run 1 Failed", "... Timed Out",
+      // "... Failed (dependency resolution)") render the title red.
+      const failed = /\b(Failed|Timed Out)\b/i.test(title);
+      html.push(`<div class="result-title${failed ? " failed" : ""}">${title}</div>`);
+    }
     else if (line.trim()) html.push(`<div class="result-line">${esc(line)}</div>`);
   }
   if (inFence) {
-    html.push(`<pre class="code-block"><code class="hljs language-${esc(fenceLang)}">${esc(fenceBuf.join("\n"))}</code></pre>`);
+    if (fenceBuf.join("\n").trim()) {
+      html.push(`<pre class="code-block"><code class="hljs language-${esc(fenceLang)}">${esc(fenceBuf.join("\n"))}</code></pre>`);
+    }
   }
   return html.join("\n");
 }
@@ -1673,6 +1685,7 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
   letter-spacing: .06em;
   margin: 14px 0 6px;
 }
+.result-title.failed { color: #b00020; }
 .result-step { color: #555; font-size: 10.5pt; margin: 8px 0 4px; }
 .result-line { color: #111; white-space: pre-wrap; word-break: break-word; margin: 2px 0; }
 .interleave-h1, .interleave-h2, .interleave-h3 { font-weight: 700; margin: 14px 0 4px; }
