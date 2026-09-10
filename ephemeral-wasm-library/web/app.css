@@ -288,6 +288,39 @@ button.secondary:hover { background: #4a4a4a; }
   padding: 6px 12px;
 }
 .share-btn:hover { background: #4a4a4a; }
+/* Optional "Try it here" footer on the printed output: a small, muted
+   checkbox in the Run/Share row so the option exists without clutter. */
+.print-link-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.print-link-opt:hover { color: var(--text); }
+.print-link-opt input { margin: 0; accent-color: var(--accent-hi); cursor: pointer; }
+/* On-screen mirror of the print "Try it here" footer: one element pinned
+   at the end of the Output box while the checkbox is on, so the payload
+   link is visible without printing (and the print snapshot already
+   carries it). Same class as the print footer, so one set of rules
+   covers both. The URL text stays hidden on screen (just the link, with
+   the address in a hover title); the print stylesheet re-displays it,
+   because a printed link with no visible address is unusable. */
+.try-it-here {
+  margin-top: 14px;
+  padding-top: 8px;
+  border-top: 1px solid #333;
+}
+.try-it-here a {
+  color: var(--accent-hi);
+  font-weight: 600;
+  text-decoration: none;
+}
+.try-it-here a:hover { text-decoration: underline; }
+.try-it-here-url { display: none; } /* print stylesheet shows it */
 
 .cluster-list { list-style: none; margin: 0 0 10px; padding: 0; font-size: 12.5px; }
 .cluster-list li {

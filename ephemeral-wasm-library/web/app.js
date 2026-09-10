@@ -1215,8 +1215,30 @@ function syncCodeToUrl() {
       // Preserve hash (seed/relay) while updating the query string.
       const url = qs + location.hash;
       history.replaceState(null, "", url || location.pathname);
+      // Keep an on-screen "Try it here" footer current as the payload
+      // changes, so the link never points at stale code.
+      syncTryItHere();
     } catch (_) { /* quota or encoding error — skip */ }
   }, 500);
+}
+
+// Build the shareable URL for the CURRENT editor content synchronously
+// (origin + path + ?code=<base64url> + any hash), so callers never race
+// the debounced URL-bar sync above — the Share button copies this and the
+// printed "Try it here" footer links to it.
+function currentShareUrl() {
+  const val = editor ? editor.getValue() : "";
+  let url = location.origin + location.pathname;
+  if (val) {
+    try {
+      const b64 = btoa(val)
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+      url += `?code=${b64}`;
+    } catch (_) { /* quota or encoding error — share the bare page */ }
+  }
+  return url + location.hash;
 }
 
 // --- fan-out helpers -----------------------------------------------------
@@ -1665,6 +1687,9 @@ async function run() {
   // interleaved, hollow if results-only; grey stays for pre-execute).
   syncInterleaveButton();
   if (interleaved) renderInterleaved();
+  // Mirror the "Try it here" footer into the box (checkbox-gated), so
+  // the payload link is visible on screen and rides along in print.
+  syncTryItHere();
 }
 
 // Render the "unsupported language" reminder: which fences were unknown,
@@ -1737,6 +1762,44 @@ function timestampedFileName(ext) {
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
   return `ephemeral-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
+}
+
+// The on-screen mirror of the print "Try it here" footer: a single,
+// always-current element pinned at the end of the Output box while the
+// "Include share link in output" checkbox is on and the box has content.
+// Both view renderers wipe the box, so this is re-synced after every
+// rebuild (run end, interleave toggle, clear, checkbox change) and on
+// URL sync — the link then always matches the current payload, on screen
+// and in the print snapshot alike.
+function syncTryItHere() {
+  const box = $("output");
+  let el = box.querySelector(".try-it-here");
+  if (!$("printShareLink").checked || !box.textContent.trim()) {
+    if (el) el.remove();
+    return;
+  }
+  const url = currentShareUrl();
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "try-it-here";
+    const a = document.createElement("a");
+    a.target = "_blank";
+    a.rel = "noopener";
+    // The URL text is hidden on screen (print stylesheet re-shows it),
+    // so the address lives in the hover title for discoverability.
+    a.title = url;
+    const span = document.createElement("span");
+    span.className = "try-it-here-url";
+    el.appendChild(a);
+    el.appendChild(span);
+    box.appendChild(el);
+  }
+  const a = el.querySelector("a");
+  a.href = url;
+  a.title = url;
+  a.textContent = "Try it here";
+  el.querySelector(".try-it-here-url").textContent = url;
+  box.scrollTop = box.scrollHeight;
 }
 
 // Print ONLY the rendered Output box, formatted for paper (white theme):
@@ -1828,14 +1891,48 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
 .reminder-als { color: #555; }
 .reminder-hint { color: #555; margin-top: 4px; }
 .reminder code { background: rgba(0, 0, 0, .06); border-radius: 3px; padding: 1px 5px; }
+/* Optional "Try it here" footer (.try-it-here — same class as the
+   on-screen mirror, so a mirrored footer already in the output box prints
+   identically): linked title + the full payload URL in small mono text
+   (on paper the address must be visible to be usable). */
+.try-it-here {
+  margin-top: 18px;
+  padding-top: 10px;
+  border-top: 1px solid #d8dee4;
+}
+.try-it-here a { color: #0a66c2; font-weight: 600; text-decoration: none; }
+.try-it-here-url {
+  display: block;
+  margin-top: 4px;
+  color: #555;
+  font-size: 9.5pt;
+  font-family: ui-monospace, Consolas, monospace;
+  word-break: break-all;
+}
 @media print { body { padding: 0; } }
 `;
+  // Optional footer: when the "Include share link in output" checkbox is
+  // on and the on-screen mirror isn't already in the box (it normally is —
+  // syncTryItHere() pins it after every run), end the page with a
+  // "Try it here" link to this payload's share URL (built from the
+  // CURRENT editor content, like the Share button).
+  let footerHtml = "";
+  if ($("printShareLink").checked && !box.querySelector(".try-it-here")) {
+    const esc = (s) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const url = esc(currentShareUrl());
+    footerHtml =
+      `\n<div class="try-it-here">\n` +
+      `<a href="${url}" target="_blank" rel="noopener" title="${url}">Try it here</a>\n` +
+      `<span class="try-it-here-url">${url}</span>\n` +
+      `</div>`;
+  }
   win.document.write(
     `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8" />\n` +
     `<title>Ephemeral — Output</title>\n` +
     `<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css" />\n` +
     `<style>${css}</style>\n</head>\n<body>\n<div class="print-output">\n` +
     box.innerHTML +
+    footerHtml +
     `\n</div>\n</body>\n</html>`
   );
   win.document.close();
@@ -1967,11 +2064,12 @@ function renderArtifacts(artifacts, markdown) {
 }
 
 $("run").addEventListener("click", run);
-// Share URL: force-sync the current editor content into the URL and copy it.
+// Share URL: force-sync the current editor content into the URL bar and
+// copy the shareable URL — built synchronously so the copied value can't
+// lag the debounced URL-bar sync.
 $("shareBtn").addEventListener("click", () => {
-  syncCodeToUrl();  // immediate, not debounced
-  const url = location.href;
-  copyText(url, $("shareBtn"), "Share URL");
+  syncCodeToUrl();  // URL bar too (debounced)
+  copyText(currentShareUrl(), $("shareBtn"), "Share URL");
 });
 // Ctrl+Enter (Cmd+Enter on Mac) anywhere on the page runs the current
 // document — same path as the button, re-entry-guarded inside run().
@@ -2155,6 +2253,9 @@ $("clearOutput").addEventListener("click", () => {
   resetPillStatuses();
   // Back to the pre-execute state: grey pip until the next run decides.
   syncInterleaveButton();
+  // The "Try it here" footer lives inside the box, so it is gone with
+  // the wipe; syncTryItHere() re-applies the checkbox rule (nothing yet).
+  syncTryItHere();
 });
 
 // Set the current view state (interleaved or results-only). The view is
@@ -2215,6 +2316,8 @@ $("interleave").addEventListener("click", () => {
   setInterleaved(on);
   if (interleaved && lastMarkdown) renderInterleaved();
   else if (!interleaved && lastOutputRaw) renderNormal();
+  // The view renderers wiped the box, so re-pin the footer mirror.
+  syncTryItHere();
 });
 syncInterleaveButton(); // start in auto mode (title/aria for the initial state)
 
@@ -2264,6 +2367,9 @@ $("copyOutput").addEventListener("click", () => {
   copyText(text, $("copyOutput"), "Copy output");
 });
 $("printOutput").addEventListener("click", printOutput);
+// "Include share link in output": toggling the checkbox immediately
+// shows/removes the on-screen mirror (and thereby the print footer too).
+$("printShareLink").addEventListener("change", syncTryItHere);
 $("copyCode").addEventListener("click", () => {
   copyText(editor.getValue(), $("copyCode"), "Copy code");
 });
