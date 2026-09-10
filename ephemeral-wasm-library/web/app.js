@@ -875,9 +875,27 @@ function languagesIn(markdown) {
   return [...langs];
 }
 
-function imageMatches(image, lang) {
+// Canonical language for a fence lang: aliases (svg, py, js, md, ...) map to
+// their canonical name (html, python, node, pandoc, ...), which is what image
+// refs and IMAGE_LANGUAGES use. Unknown langs pass through unchanged.
+function canonicalLang(lang) {
   const l = lang.toLowerCase();
-  return image.toLowerCase().includes("/" + l + ":") || image.toLowerCase().includes(l + "-");
+  for (const [canon, als] of Object.entries(ALIAS_MAP)) {
+    if (canon.toLowerCase() === l || als.some((a) => a.toLowerCase() === l)) return canon;
+  }
+  return l;
+}
+
+function imageMatches(image, lang) {
+  const l = canonicalLang(lang);
+  if (image.toLowerCase().includes("/" + l + ":") || image.toLowerCase().includes(l + "-")) return true;
+  // Fall back to the explicit image->language map: covers images whose name
+  // doesn't echo the language (e.g. docker.io/chromedp/headless-shell -> html),
+  // so warm-image routing actually prefers the node that has them. The map
+  // keys both bare refs and their :latest forms — check both.
+  const base = image.replace(/:latest$/, "");
+  const langs = IMAGE_LANGUAGES[image] || IMAGE_LANGUAGES[base] || [];
+  return langs.some((x) => x.toLowerCase() === l);
 }
 
 // Short, human-readable name for a warm-image pill in the cluster list:
