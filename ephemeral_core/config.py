@@ -118,9 +118,9 @@ LANG_MAP = {
                 'cat > /tmp/page.html && sed -i "1{/^%%/d}" /tmp/page.html && '
                 'CHROME=$(find /ms-playwright -name chrome -type f | head -1) && '
                 '"$CHROME" --headless=new --no-sandbox --disable-gpu '
-                '--disable-dev-shm-usage --hide-scrollbars '
+                '--disable-dev-shm-usage --hide-scrollbars --log-level=3 '
                 '--window-size=800,600 --screenshot=/output/render.png '
-                'file:///tmp/page.html']
+                'file:///tmp/page.html 2>/dev/null']
     },
 
     # --- Windows-like Shells ---
