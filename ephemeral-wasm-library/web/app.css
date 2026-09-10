@@ -417,6 +417,22 @@ button.secondary:hover { background: #4a4a4a; }
 .icon-btn svg { width: 14px; height: 14px; }
 .icon-btn.ok svg { color: var(--ok); }
 .icon-btn.active { color: var(--accent-hi); background: #333; }
+/* Interleave tristate: a small corner dot marks the mode — solid gray =
+   auto (follows the document), blue = always on (with the .active
+   highlight), hollow + dimmed = always off. */
+#interleave { position: relative; }
+#interleave::after {
+  content: "";
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+#interleave.mode-off { opacity: .5; }
+#interleave.mode-off::after { background: transparent; border: 1px solid var(--muted); }
 /* The [hidden] attribute is defeated by .icon-btn's display:inline-flex,
    so re-assert it for the conditional warnings button. */
 .icon-btn[hidden] { display: none; }

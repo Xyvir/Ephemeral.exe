@@ -43,6 +43,10 @@ let outputRaw = "";
 // Captured per run; lastOutputRaw lets the results-only view be rebuilt
 // when the toggle is switched back off.
 let interleaved = false;
+// Interleave button tristate: "auto" follows the document shape after
+// each run (prose → interleaved, bare code → results), "on" always
+// interleaves, "off" always shows results-only. Cycles on click.
+let interleaveMode = "auto";
 let lastMarkdown = "";
 let lastResultText = "";
 let lastOutputRaw = "";
@@ -1653,6 +1657,13 @@ async function run() {
     box.scrollTop = box.scrollHeight;
   }
   lastOutputRaw = outputRaw;
+  // View follows the selected mode: auto keys off the document shape
+  // (prose outside the fences → interleaved, bare code → results-only),
+  // while "on"/"off" pin the view regardless of content.
+  setInterleaved(
+    interleaveMode === "on" ||
+    (interleaveMode === "auto" && docHasProse(lastMarkdown))
+  );
   if (interleaved) renderInterleaved();
 }
 
@@ -2144,17 +2155,50 @@ $("clearOutput").addEventListener("click", () => {
   resetPillStatuses();
 });
 
-$("interleave").addEventListener("click", () => {
-  interleaved = !interleaved;
+// Set the current view state (interleaved or results-only). The button's
+// affordance is keyed to the tristate MODE, not the view, so auto mode
+// can flip the view at run end without restyling the button.
+function setInterleaved(on) {
+  interleaved = on;
+}
+
+// True when the document has any non-whitespace prose outside its fenced
+// code blocks — i.e. a report-style doc that benefits from the interleaved
+// view, as opposed to a bare collection of code blocks.
+function docHasProse(md) {
+  if (!md) return false;
+  return splitMarkdown(md).some((s) => s.type === "prose" && s.text.trim());
+}
+
+// Keep the Interleave button's affordance in sync with the tristate mode:
+// solid dot = auto (blue highlight when always on, hollow + dimmed when
+// always off). The tooltip spells out the mode and the next click target.
+function syncInterleaveButton() {
   const btn = $("interleave");
-  btn.classList.toggle("active", interleaved);
-  btn.setAttribute("aria-pressed", String(interleaved));
-  btn.title = interleaved
-    ? "Interleave: on — results after each code block"
-    : "Interleave: off — results only";
+  btn.classList.toggle("active", interleaveMode === "on");
+  btn.classList.toggle("mode-off", interleaveMode === "off");
+  btn.title =
+    interleaveMode === "on"
+      ? "Interleave: always on — results after each code block (click: always off)"
+      : interleaveMode === "off"
+        ? "Interleave: always off — results only (click: auto)"
+        : "Interleave: auto — follows the document (click: always on)";
+  btn.setAttribute("aria-label", "Interleave results — mode: " + interleaveMode);
+  btn.removeAttribute("aria-pressed"); // tri-state, not a boolean toggle
+}
+
+$("interleave").addEventListener("click", () => {
+  interleaveMode =
+    interleaveMode === "auto" ? "on" : interleaveMode === "on" ? "off" : "auto";
+  syncInterleaveButton();
+  const on =
+    interleaveMode === "on" ||
+    (interleaveMode === "auto" && docHasProse(lastMarkdown));
+  setInterleaved(on);
   if (interleaved && lastMarkdown) renderInterleaved();
   else if (!interleaved && lastOutputRaw) renderNormal();
 });
+syncInterleaveButton(); // start in auto mode (title/aria for the initial state)
 
 // Warnings toggle: reveals/collapses the exit-0 stderr lines (hidden by
 // default). The button itself is the presence signal — yellow in both
