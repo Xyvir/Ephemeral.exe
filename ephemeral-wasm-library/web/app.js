@@ -1785,20 +1785,17 @@ function syncTryItHere() {
     const a = document.createElement("a");
     a.target = "_blank";
     a.rel = "noopener";
-    // The URL text is hidden on screen (print stylesheet re-shows it),
-    // so the address lives in the hover title for discoverability.
+    // No URL text is rendered anywhere — the address rides in the href
+    // (clickable in printed PDFs) and the hover title for on-screen
+    // discoverability.
     a.title = url;
-    const span = document.createElement("span");
-    span.className = "try-it-here-url";
     el.appendChild(a);
-    el.appendChild(span);
     box.appendChild(el);
   }
   const a = el.querySelector("a");
   a.href = url;
   a.title = url;
   a.textContent = "Try it here";
-  el.querySelector(".try-it-here-url").textContent = url;
   box.scrollTop = box.scrollHeight;
 }
 
@@ -1893,22 +1890,15 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
 .reminder code { background: rgba(0, 0, 0, .06); border-radius: 3px; padding: 1px 5px; }
 /* Optional "Try it here" footer (.try-it-here — same class as the
    on-screen mirror, so a mirrored footer already in the output box prints
-   identically): linked title + the full payload URL in small mono text
-   (on paper the address must be visible to be usable). */
+   identically). Just the link: the payload URL lives in the href, which
+   stays clickable in a printed PDF, and in the hover title on screen.
+   No bare URL text is rendered. */
 .try-it-here {
   margin-top: 18px;
   padding-top: 10px;
   border-top: 1px solid #d8dee4;
 }
 .try-it-here a { color: #0a66c2; font-weight: 600; text-decoration: none; }
-.try-it-here-url {
-  display: block;
-  margin-top: 4px;
-  color: #555;
-  font-size: 9.5pt;
-  font-family: ui-monospace, Consolas, monospace;
-  word-break: break-all;
-}
 @media print { body { padding: 0; } }
 `;
   // Optional footer: when the "Include share link in output" checkbox is
@@ -1923,7 +1913,6 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
     footerHtml =
       `\n<div class="try-it-here">\n` +
       `<a href="${url}" target="_blank" rel="noopener" title="${url}">Try it here</a>\n` +
-      `<span class="try-it-here-url">${url}</span>\n` +
       `</div>`;
   }
   win.document.write(

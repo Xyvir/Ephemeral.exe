@@ -306,9 +306,8 @@ button.secondary:hover { background: #4a4a4a; }
    at the end of the Output box while the checkbox is on, so the payload
    link is visible without printing (and the print snapshot already
    carries it). Same class as the print footer, so one set of rules
-   covers both. The URL text stays hidden on screen (just the link, with
-   the address in a hover title); the print stylesheet re-displays it,
-   because a printed link with no visible address is unusable. */
+   covers both. Just the link — no bare URL text; the address lives in
+   the href (clickable in printed PDFs) and the hover title. */
 .try-it-here {
   margin-top: 14px;
   padding-top: 8px;
@@ -320,7 +319,6 @@ button.secondary:hover { background: #4a4a4a; }
   text-decoration: none;
 }
 .try-it-here a:hover { text-decoration: underline; }
-.try-it-here-url { display: none; } /* print stylesheet shows it */
 
 .cluster-list { list-style: none; margin: 0 0 10px; padding: 0; font-size: 12.5px; }
 .cluster-list li {
