@@ -247,12 +247,6 @@ export const IMAGE_LANGUAGES = {
   "docker.io/catthehacker/ubuntu:act-22.04:latest": [
     "gh-runner"
   ],
-  "docker.io/chromedp/headless-shell": [
-    "html"
-  ],
-  "docker.io/chromedp/headless-shell:latest": [
-    "html"
-  ],
   "docker.io/clfoundation/sbcl:slim": [
     "lisp"
   ],
@@ -472,6 +466,12 @@ export const IMAGE_LANGUAGES = {
   ],
   "docker.io/tymills620/octave-forge:latest": [
     "octave"
+  ],
+  "mcr.microsoft.com/playwright:v1.63.0-jammy": [
+    "html"
+  ],
+  "mcr.microsoft.com/playwright:v1.63.0-jammy:latest": [
+    "html"
   ],
   "mcr.microsoft.com/powershell": [
     "pwsh"

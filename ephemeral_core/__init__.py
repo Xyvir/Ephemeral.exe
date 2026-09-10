@@ -24,7 +24,6 @@ from .executor import (
     list_local_images,
     ensure_podman_running,
     pull_image,
-    images_blocked_on_host,
 )
 from .parser import parse_codeblocks
 
@@ -36,7 +35,6 @@ __all__ = [
     "ensure_podman_running",
     "parse_codeblocks",
     "pull_image",
-    "images_blocked_on_host",
     "ExecutionResult",
     "GroupResult",
     "BlockResult",
