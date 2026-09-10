@@ -417,9 +417,10 @@ button.secondary:hover { background: #4a4a4a; }
 .icon-btn svg { width: 14px; height: 14px; }
 .icon-btn.ok svg { color: var(--ok); }
 .icon-btn.active { color: var(--accent-hi); background: #333; }
-/* Interleave tristate: a small corner dot marks the mode — solid gray =
-   auto (follows the document), blue = always on (with the .active
-   highlight), hollow + dimmed = always off. */
+/* Interleave pip: the little corner dot reflects the effective view
+   decision — grey = nothing has run yet (auto pre-execute, decision
+   pending), blue = interleaved (auto saw prose, or pinned on), hollow =
+   results-only (auto saw bare code, or pinned off). */
 #interleave { position: relative; }
 #interleave::after {
   content: "";
@@ -429,10 +430,11 @@ button.secondary:hover { background: #4a4a4a; }
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--muted);
+  background: var(--muted); /* grey: nothing run yet */
 }
+#interleave.pip-on::after { background: var(--accent-hi); } /* blue: interleaved */
+#interleave.pip-off::after { background: transparent; border: 1px solid var(--muted); } /* hollow: results-only */
 #interleave.mode-off { opacity: .5; }
-#interleave.mode-off::after { background: transparent; border: 1px solid var(--muted); }
 /* The [hidden] attribute is defeated by .icon-btn's display:inline-flex,
    so re-assert it for the conditional warnings button. */
 .icon-btn[hidden] { display: none; }

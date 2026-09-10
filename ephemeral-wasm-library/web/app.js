@@ -1660,10 +1660,10 @@ async function run() {
   // View follows the selected mode: auto keys off the document shape
   // (prose outside the fences → interleaved, bare code → results-only),
   // while "on"/"off" pin the view regardless of content.
-  setInterleaved(
-    interleaveMode === "on" ||
-    (interleaveMode === "auto" && docHasProse(lastMarkdown))
-  );
+  setInterleaved(effectiveInterleave());
+  // The pip now reflects the decision this run produced (blue if
+  // interleaved, hollow if results-only; grey stays for pre-execute).
+  syncInterleaveButton();
   if (interleaved) renderInterleaved();
 }
 
@@ -2153,11 +2153,13 @@ $("clearOutput").addEventListener("click", () => {
   // doesn't leave stale final states on the language pills.
   blockStates.clear();
   resetPillStatuses();
+  // Back to the pre-execute state: grey pip until the next run decides.
+  syncInterleaveButton();
 });
 
-// Set the current view state (interleaved or results-only). The button's
-// affordance is keyed to the tristate MODE, not the view, so auto mode
-// can flip the view at run end without restyling the button.
+// Set the current view state (interleaved or results-only). The view is
+// driven by the effectiveInterleave() decision (pinned modes or the auto
+// document-shape check); the pip on the button mirrors that decision.
 function setInterleaved(on) {
   interleaved = on;
 }
@@ -2170,11 +2172,29 @@ function docHasProse(md) {
   return splitMarkdown(md).some((s) => s.type === "prose" && s.text.trim());
 }
 
-// Keep the Interleave button's affordance in sync with the tristate mode:
-// solid dot = auto (blue highlight when always on, hollow + dimmed when
-// always off). The tooltip spells out the mode and the next click target.
+// The view decision implied by the current mode: pinned modes decide
+// outright; auto keys off the document shape (prose outside the fences →
+// interleaved, bare code → results-only).
+function effectiveInterleave() {
+  return (
+    interleaveMode === "on" ||
+    (interleaveMode === "auto" && docHasProse(lastMarkdown))
+  );
+}
+
+// Keep the Interleave button's affordance in sync with the effective
+// view decision: the corner pip is grey while nothing has run yet (auto
+// pre-execute, decision pending), blue when the view is interleaved, and
+// hollow when it is results-only. The tooltip spells out the mode and
+// the next click target.
 function syncInterleaveButton() {
   const btn = $("interleave");
+  // A run has happened once lastMarkdown holds the submitted document;
+  // before that the auto decision is still pending.
+  const decided = lastMarkdown !== "";
+  const interleaving = decided && effectiveInterleave();
+  btn.classList.toggle("pip-on", interleaving);
+  btn.classList.toggle("pip-off", decided && !interleaving);
   btn.classList.toggle("active", interleaveMode === "on");
   btn.classList.toggle("mode-off", interleaveMode === "off");
   btn.title =
@@ -2191,9 +2211,7 @@ $("interleave").addEventListener("click", () => {
   interleaveMode =
     interleaveMode === "auto" ? "on" : interleaveMode === "on" ? "off" : "auto";
   syncInterleaveButton();
-  const on =
-    interleaveMode === "on" ||
-    (interleaveMode === "auto" && docHasProse(lastMarkdown));
+  const on = effectiveInterleave();
   setInterleaved(on);
   if (interleaved && lastMarkdown) renderInterleaved();
   else if (!interleaved && lastOutputRaw) renderNormal();
