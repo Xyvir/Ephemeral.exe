@@ -1,12 +1,12 @@
 {
-  "updated": "2026-09-10T16:10:05Z",
+  "updated": "2026-09-10T20:41:43Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfi7z5zycaeaevjzkh7ioaaybacwbyqab2dqagaiaycuaafgq4abq",
+      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfi75byadaeakyhcaahioaaybadakqaau2dqag",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/catthehacker/ubuntu:act-latest",
@@ -48,15 +48,15 @@
       ],
       "url": null,
       "probe": "ok",
-      "probe_at": "2026-09-10T16:10:05Z",
+      "probe_at": "2026-09-10T20:41:43Z",
       "probe_detail": "ok",
-      "probe_ms": 2149,
-      "rtt_ms": 692
+      "probe_ms": 4636,
+      "rtt_ms": 724
     },
     {
       "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6p3oydaeakhqdbmx63way",
+      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6kruidaeakhqdbmwuncay",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/chromedp/headless-shell:138.0.7204.169",
@@ -87,10 +87,10 @@
       ],
       "url": null,
       "probe": "ok",
-      "probe_at": "2026-09-10T16:10:05Z",
+      "probe_at": "2026-09-10T20:41:43Z",
       "probe_detail": "ok",
-      "probe_ms": 744,
-      "rtt_ms": 1080
+      "probe_ms": 1830,
+      "rtt_ms": 2728
     }
   ],
   "bastions": [
@@ -101,9 +101,9 @@
       "images": [],
       "url": "https://ephemeralexe-production.up.railway.app",
       "probe": "ok",
-      "probe_at": "2026-09-10T16:10:05Z",
+      "probe_at": "2026-09-10T20:41:43Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 288
+      "probe_ms": 251
     }
   ]
 }
