@@ -1898,7 +1898,18 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
   padding-top: 10px;
   border-top: 1px solid #d8dee4;
 }
-.try-it-here a { color: #0a66c2; font-weight: 600; text-decoration: none; }
+.try-it-here a { color: #0a66c2; font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
+/* Acrobat workaround: append the full payload URL in angle brackets so
+   Acrobat's link detection treats the entire string — query string
+   included — as a single unit and keeps it clickable when the PDF is
+   opened there. The brackets are the visible cue that the whole URL is
+   one link target. */
+.try-it-here a::after {
+  content: " <" attr(href) ">";
+  color: #555;
+  font-weight: 400;
+  font-size: 10pt;
+}
 @media print { body { padding: 0; } }
 `;
   // Optional footer: when the "Include share link in output" checkbox is
