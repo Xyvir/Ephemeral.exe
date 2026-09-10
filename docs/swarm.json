@@ -1,16 +1,15 @@
 {
-  "updated": "2026-09-10T10:59:53Z",
+  "updated": "2026-09-10T16:10:05Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfi73hzqcaeakyhcaahvzuaybadakqaau5onag",
+      "ticket": "endpointaauxbl6dfnr7skcqhlviyoougs5phnwvqyyo4pcbw565tvjipaidabiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfi7z5zycaeaevjzkh7ioaaybacwbyqab2dqagaiaycuaafgq4abq",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/catthehacker/ubuntu:act-latest",
-        "docker.io/chromedp/headless-shell:latest",
         "docker.io/clfoundation/sbcl:slim",
         "docker.io/continuumio/anaconda3:latest",
         "docker.io/crystallang/crystal:latest",
@@ -44,21 +43,24 @@
         "docker.io/tobix/pywine:latest",
         "docker.io/tymills620/ephemeral-python-uv:latest",
         "docker.io/tymills620/octave-forge:latest",
+        "mcr.microsoft.com/playwright:v1.63.0-jammy",
         "mcr.microsoft.com/powershell:latest"
       ],
       "url": null,
       "probe": "ok",
-      "probe_at": "2026-09-10T10:59:53Z",
+      "probe_at": "2026-09-10T16:10:05Z",
       "probe_detail": "ok",
-      "probe_ms": 2418,
-      "rtt_ms": 318
+      "probe_ms": 2149,
+      "rtt_ms": 692
     },
     {
       "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6iroydaeakhqdbmwelway",
+      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6p3oydaeakhqdbmx63way",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
+        "docker.io/chromedp/headless-shell:138.0.7204.169",
+        "docker.io/chromedp/headless-shell:latest",
         "docker.io/clfoundation/sbcl:slim",
         "docker.io/continuumio/anaconda3:latest",
         "docker.io/crystallang/crystal:latest",
@@ -71,6 +73,7 @@
         "docker.io/library/node:18-alpine",
         "docker.io/library/perl:slim",
         "docker.io/library/php:alpine",
+        "docker.io/library/python:3.12-slim",
         "docker.io/library/r-base:latest",
         "docker.io/library/ruby:alpine",
         "docker.io/library/rust:alpine",
@@ -78,27 +81,29 @@
         "docker.io/nickblah/lua:5.4-alpine",
         "docker.io/nimlang/nim:alpine",
         "docker.io/ocaml/opam:latest",
-        "docker.io/rhysd/actionlint:latest"
+        "docker.io/rhysd/actionlint:latest",
+        "docker.io/tymills620/ephemeral-python-uv:latest",
+        "mcr.microsoft.com/playwright:v1.63.0-jammy"
       ],
       "url": null,
       "probe": "ok",
-      "probe_at": "2026-09-10T10:59:53Z",
+      "probe_at": "2026-09-10T16:10:05Z",
       "probe_detail": "ok",
-      "probe_ms": 1829,
-      "rtt_ms": 1007
+      "probe_ms": 744,
+      "rtt_ms": 1080
     }
   ],
   "bastions": [
     {
       "node_id": "ed7106bced606bede735b4c9b215052855f9747e8cb56629759ae672ce29b9c8",
       "relay": "https://usw1-1.relay.n0.iroh.link./",
-      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacvqcpu3xgicaeakfxhiwg5zsaq",
+      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacwjzpvlvaacaeakfxhie25iaaq",
       "images": [],
       "url": "https://ephemeralexe-production.up.railway.app",
       "probe": "ok",
-      "probe_at": "2026-09-10T10:59:53Z",
+      "probe_at": "2026-09-10T16:10:05Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 353
+      "probe_ms": 288
     }
   ]
 }
