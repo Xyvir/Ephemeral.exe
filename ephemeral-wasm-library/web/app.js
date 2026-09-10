@@ -1746,7 +1746,6 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
   margin: 6px 0 10px;
   white-space: pre-wrap;
   word-break: break-word;
-  page-break-inside: avoid;
 }
 .code-block code { background: transparent; padding: 0; }
 .block-copy, .artifact-bar { display: none; }
