@@ -693,9 +693,41 @@ function renderCodeSeg(seg) {
   return div;
 }
 
+// Lightweight Markdown renderer for interleaved prose — blockquotes
+// (callouts), horizontal rules, lists, tables, emphasis, links, inline
+// code. markdown-it with html:false escapes raw HTML in node output
+// instead of executing it (output is untrusted). Heading/paragraph
+// tokens are re-tagged with the classes the existing stylesheet uses so
+// the interleaved view keeps its current look.
+let proseMd = null;
+function proseRenderer() {
+  if (proseMd) return proseMd;
+  if (!window.markdownit) return null; // CDN blocked — caller falls back
+  proseMd = new window.markdownit({ html: false, linkify: true, breaks: false });
+  const defaultOpen = proseMd.renderer.rules.heading_open ||
+    ((t, i, o, e, self) => self.renderToken(t, i, o));
+  proseMd.renderer.rules.heading_open = (t, i, o, e, self) => {
+    t[i].attrJoin("class", "interleave-h" + t[i].tag.slice(1));
+    return defaultOpen(t, i, o, e, self);
+  };
+  const defaultPara = proseMd.renderer.rules.paragraph_open ||
+    ((t, i, o, e, self) => self.renderToken(t, i, o));
+  proseMd.renderer.rules.paragraph_open = (t, i, o, e, self) => {
+    t[i].attrJoin("class", "result-line");
+    return defaultPara(t, i, o, e, self);
+  };
+  return proseMd;
+}
+
 function renderProseSeg(seg) {
   const div = document.createElement("div");
   div.className = "block prose";
+  const md = proseRenderer();
+  if (md) {
+    div.innerHTML = md.render(seg.text);
+    return div;
+  }
+  // Fallback (markdown-it CDN unreachable): line-by-line headings + text.
   for (const raw of seg.text.split("\n")) {
     const line = raw.trim();
     if (!line) continue;
@@ -1738,6 +1770,23 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
 .interleave-h1 { font-size: 15pt; }
 .interleave-h2 { font-size: 13pt; }
 .interleave-h3 { font-size: 11pt; color: #555; }
+.block.prose > :first-child { margin-top: 0; }
+.block.prose p { margin: 2px 0; }
+.block.prose blockquote {
+  border-left: 3px solid #c9189e;
+  background: #faf3f8;
+  border-radius: 0 4px 4px 0;
+  margin: 8px 0;
+  padding: 8px 12px;
+}
+.block.prose hr { border: 0; border-top: 1px dashed #999; margin: 12px 0; }
+.block.prose ul, .block.prose ol { margin: 6px 0 10px; padding-left: 24px; }
+.block.prose li { margin: 2px 0; }
+.block.prose code { background: rgba(0, 0, 0, .07); border-radius: 3px; padding: 1px 5px; font-size: 10.5pt; }
+.block.prose a { color: #0a66c2; }
+.block.prose table { border-collapse: collapse; margin: 8px 0; }
+.block.prose th, .block.prose td { border: 1px solid #d8dee4; padding: 4px 10px; text-align: left; }
+.block.prose th { background: #f0f2f5; }
 .code-block {
   background: #f6f8fa;
   border: 1px solid #d8dee4;

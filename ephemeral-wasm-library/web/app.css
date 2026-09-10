@@ -492,6 +492,41 @@ details.advanced .advanced-meta code { color: var(--accent-hi); }
 .interleave-h2 { font-size: 13px; }
 .interleave-h3 { font-size: 12px; color: var(--muted); }
 
+/* Lightweight Markdown rendering inside interleaved prose: callouts,
+   rules, lists, tables, and inline spans. The callout echo of the
+   editor's magenta quote styling keeps prose segments visually distinct
+   from result panels. */
+.block.prose > :first-child { margin-top: 0; }
+.block.prose p { margin: 2px 0; }
+.block.prose blockquote {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-left: 3px solid #ff2ec4;
+  background: #2a1630;
+  border-radius: 0 6px 6px 0;
+}
+.block.prose blockquote p { margin: 2px 0; }
+.block.prose hr {
+  border: 0;
+  border-top: 1px dashed #4a4a4a;
+  margin: 12px 0;
+}
+.block.prose ul, .block.prose ol { margin: 6px 0 10px; padding-left: 24px; }
+.block.prose li { margin: 2px 0; }
+.block.prose code {
+  background: rgba(255, 255, 255, .08);
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+.block.prose a { color: var(--accent-hi); text-decoration: none; }
+.block.prose a:hover { text-decoration: underline; }
+.block.prose table { border-collapse: collapse; margin: 8px 0; }
+.block.prose th, .block.prose td { border: 1px solid #3a3a3a; padding: 4px 10px; text-align: left; }
+.block.prose th { background: #2c2c2c; }
+
 /* Result panels get the blue tint in BOTH views; source panels (interleave
    only) keep the default near-black. Result blocks indent under source. */
 .block.result .code-block { background: #131a22; border-color: #2a3644; }
