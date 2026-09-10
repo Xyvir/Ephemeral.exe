@@ -2171,17 +2171,36 @@ function langHelpPillEl() {
   // context while open.
   const positionPop = () => {
     const ed = $("editor").getBoundingClientRect();
+    // Anchor to the TOP edge of the run dock — the chip row the (i) pill
+    // lives in, which is pinned to the bottom of the viewport while the
+    // run section is in view. Anchoring to the editor box's bottom edge
+    // instead (as this used to) only worked when that edge happened to be
+    // on screen: the editor grows with its content, so at the top of a
+    // long document its bottom sits far below the viewport and the
+    // popover landed off-screen. Measuring from the dock keeps the
+    // popover always opening upward from the pill, above the hovering
+    // bottom controls rather than behind or below them.
+    const dock = document.querySelector("section.run .run-dock").getBoundingClientRect();
     pop.style.position = "fixed";
     pop.style.left = ed.left + "px";
-    // Anchor to the editor box's bottom edge (growing upward), so the
-    // popover reads as attached to the (i) pill just below the box.
-    pop.style.bottom = window.innerHeight - ed.bottom + "px";
+    pop.style.bottom = window.innerHeight - dock.top + "px";
     pop.style.width = ed.width + "px";
     // Hug the content height (no dead space at the bottom), but never
-    // extend past the editor box (that would cover the Run buttons below)
-    // — the compact, auto-column list fits the box with no scrolling.
+    // taller than the code actually visible above the dock: the floor is
+    // the sticky toolbar row (when it's floating) or the editor's top
+    // edge, whichever is lower, so the popover can't cover the header row.
     pop.style.height = ""; // natural size first, so scrollHeight is real
-    pop.style.height = Math.min(pop.scrollHeight, ed.height) + "px";
+    const head = document
+      .querySelector("section.run .section-head")
+      .getBoundingClientRect();
+    // The 0 floor keeps the popover inside the viewport when the dock has
+    // been pushed up near the top (the run section ending) — there it
+    // shrinks to the room above the dock instead of opening past the edge.
+    // When the dock itself has scrolled off the top the pill is off screen
+    // too, so a zero-height popover simply follows it out.
+    const ceiling = Math.max(0, ed.top, Math.min(head.bottom, dock.top));
+    const room = Math.max(0, dock.top - ceiling - 8);
+    pop.style.height = Math.min(pop.scrollHeight, room) + "px";
   };
   const resetPop = () => {
     pop.style.position = "";
@@ -2200,6 +2219,11 @@ function langHelpPillEl() {
   window.addEventListener("resize", () => {
     if (!pop.hidden) positionPop();
   });
+  // The dock is sticky, so its viewport position shifts as the end of the
+  // run section comes into view — keep the popover glued to it while open.
+  window.addEventListener("scroll", () => {
+    if (!pop.hidden) positionPop();
+  }, { passive: true });
   pill.addEventListener("click", (e) => {
     e.stopPropagation();
     setOpen(pop.hidden);
@@ -2455,7 +2479,13 @@ let floatTick = false;
 function syncFloating() {
   floatTick = false;
   document.querySelectorAll(".section-head").forEach((head) => {
-    head.classList.toggle("floating", head.getBoundingClientRect().top <= 1);
+    const r = head.getBoundingClientRect();
+    // Stuck = pinned at the top edge of the viewport. The `bottom > 1`
+    // guard matters once the row is pushed out by the end of its
+    // containing block (the code area's last line): top stays <= 1 while
+    // it slides away, and we don't want to keep the translucent style on
+    // a row that is no longer floating over anything.
+    head.classList.toggle("floating", r.top <= 1 && r.bottom > 1);
   });
 }
 window.addEventListener("scroll", () => {

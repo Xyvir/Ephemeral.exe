@@ -23,6 +23,10 @@
 </header>
 
 <section class="run">
+  <!-- .run-body bounds the toolbar's sticky range to the code area: the
+       floating buttons disappear with the editor's last line instead of
+       hovering over the controls below it. -->
+  <div class="run-body">
   <div class="section-head">
     <h2>Run code</h2>
     <div class="head-actions">
@@ -53,6 +57,7 @@
     </div>
   </div>
   <div id="editor" class="editor" aria-label="Markdown input with code blocks"></div>
+  </div>
   <div class="run-dock">
     <div id="editorMore" class="more-hint" hidden><span class="more-tri"></span></div>
     <div id="langStatus" class="lang-status" hidden></div>

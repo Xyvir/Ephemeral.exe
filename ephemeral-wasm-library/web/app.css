@@ -408,7 +408,11 @@ button.secondary:hover { background: #4a4a4a; }
      section label fades out and the row itself stays transparent, so the
      code shows through and the top of the card stays "open" instead of
      gaining a second header bar. JS toggles .floating when the row is
-     actually stuck. */
+     actually stuck, and a row pushed out of its containing block's end
+     (scrolled past the last line) drops the state as it leaves.
+     The containing block bounds the float: the run head sits in .run-body
+     (head + editor only), so the buttons can't outlive the code area; the
+     output head's block is the output box itself. */
   position: sticky;
   top: 0;
   z-index: 15;
