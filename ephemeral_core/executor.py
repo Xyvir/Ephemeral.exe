@@ -29,8 +29,9 @@ logger = logging.getLogger(__name__)
 from .models import ExecutionResult, GroupResult
 from .parser import (
     parse_codeblocks,
-    prepare_python_block,
+    prepare_block_for_resolution,
     resolve_runtime_config,
+    resolver_for_image,
     strip_ansi_codes,
     strip_shebang,
 )
@@ -370,12 +371,13 @@ def _run_container_sync(
     This is the core Podman orchestration logic extracted from the original
     run_container_piped_group(), with GUI dependencies removed.
     
-    Python blocks backed by `uv run` get their third-party imports turned into
-    a PEP 723 inline-script header (implicit dependency injection). When those
-    blocks declare dependencies but the user did NOT grant network access via
-    the `unsafe` keyword, the run is split into two container stages:
-    resolve the dependencies into a shared venv with the network up, then
-    execute the payload with the network removed (see _run_two_stage_python).
+    Python blocks backed by `uv run` and TeX/pandoc blocks backed by tlmgr
+    get their dependencies inferred from the block content (implicit
+    dependency injection). When those blocks declare dependencies but the
+    user did NOT grant network access via the `unsafe` keyword, the run is
+    split into two container stages: resolve the dependencies into a shared
+    volume with the network up, then execute the payload with the network
+    removed (see _run_two_stage).
     
     Args:
         config: Runtime configuration dict (image, cmd, entrypoint, flags)
@@ -391,27 +393,30 @@ def _run_container_sync(
     """
     code_blocks = [b for b in run_blocks if b['type'] == 'code']
     is_single_step = len(code_blocks) <= 1
-    uses_uv_python = config.get('cmd') == ['uv', 'run', '-']
 
-    # Implicit PEP 723 dependency injection: infer third-party imports and
-    # prepend a `# /// script` header so `uv run` knows what to resolve.
+    # Generic two-stage dependency resolution: any language whose image ships
+    # the Stage A tooling (see ephemeral_core.parser.DEP_RESOLVERS) gets its
+    # dependencies inferred (Python: imports -> PEP 723; TeX: \usepackage ->
+    # tlmgr), installed in a network-enabled container into a shared volume,
+    # and consumed by a network-disabled payload container.
+    resolver = resolver_for_image(config.get('image', ''))
     prepared_blocks = run_blocks
-    python_deps: list[str] = []
-    if uses_uv_python:
+    deps: list[str] = []
+    if resolver:
         prepared_blocks = []
         for b in run_blocks:
             if b['type'] == 'code':
-                prepared, deps = prepare_python_block(b)
+                prepared, block_deps = prepare_block_for_resolution(b, resolver)
                 prepared_blocks.append(prepared)
-                python_deps.extend(deps)
+                deps.extend(block_deps)
             else:
                 prepared_blocks.append(b)
-        python_deps = sorted(set(python_deps))
+        deps = sorted(set(deps))
 
     # Two-stage execution: dependencies need the network, the payload doesn't.
-    if uses_uv_python and python_deps and not config.get('allow_network', False):
-        return _run_two_stage_python(
-            config, prepared_blocks, python_deps, lang,
+    if resolver and deps and not config.get('allow_network', False):
+        return _run_two_stage(
+            config, prepared_blocks, deps, resolver, lang,
             run_index, total_runs, output_dir, timeout, is_single_step
         )
 
@@ -426,7 +431,8 @@ def _build_podman_cmd(
     config: dict,
     output_dir: str,
     extra_mounts: list[tuple[str, str]] | None = None,
-    network: bool | None = None
+    network: bool | None = None,
+    env: dict[str, str] | None = None,
 ) -> list[str]:
     """
     Build the `podman run` command with Ephemeral's security flags.
@@ -456,6 +462,8 @@ def _build_podman_cmd(
     podman_cmd.extend(['-v', f'{output_dir}:/output'])
     for host_path, container_path in (extra_mounts or []):
         podman_cmd.extend(['-v', f'{host_path}:{container_path}'])
+    for key, value in (env or {}).items():
+        podman_cmd.extend(['-e', f'{key}={value}'])
 
     if 'entrypoint' in config:
         podman_cmd.extend(['--entrypoint', config['entrypoint']])
@@ -679,10 +687,11 @@ def _run_single_stage(
     )
 
 
-def _run_two_stage_python(
+def _run_two_stage(
     config: dict,
     run_blocks: list[dict],
     deps: list[str],
+    resolver: dict,
     lang: str,
     run_index: int,
     total_runs: int,
@@ -691,28 +700,27 @@ def _run_two_stage_python(
     is_single_step: bool
 ) -> GroupResult:
     """
-    Run a Python payload in two stages so dependencies can be resolved without
-    permanently granting the payload network access:
+    Run a payload in two stages so dependencies can be resolved without
+    permanently granting the payload network access (see DEP_RESOLVERS):
 
-      Stage A: a network-enabled container installs `deps` into a venv created
-               on a volume shared with the next stage. This is the only stage
-               with internet access.
-      Stage C: a network-disabled container executes the payload with that
-               venv's interpreter. The payload itself never sees the network.
+      Stage A: a network-enabled container installs the resolved `deps` into
+               a volume shared with the next stage (uv pip into a venv for
+               Python, tlmgr --usermode into a TEXMF tree for TeX). This is
+               the only stage with internet access.
+      Stage C: a network-disabled container executes the payload, reading the
+               installed dependencies from that volume (venv interpreter, or
+               TEXMFHOME pointing into the mount).
 
-    The venv lives in a host temp directory mounted at /deps in both containers
-    and is removed when the run finishes.
+    The dependency tree lives in a host temp directory mounted at /deps in
+    both containers and is removed when the run finishes.
     """
     deps_dir = tempfile.mkdtemp(prefix="ephemeral_deps_")
-    tlang = _lang_title(lang)
+    tlang = _lang_title(resolver.get('payload_lang') or lang)
     try:
         # --- Stage A: resolve dependencies with network access ---
         install_script = (
             "mkdir -p /deps /output 2>/dev/null || true\n"
-            "uv venv /deps/venv || exit 1\n"
-            "uv pip install --no-cache --python /deps/venv/bin/python "
-            + " ".join(shlex.quote(d) for d in deps)
-            + "\n"
+            + resolver['stage_a'](deps)
         ).encode('utf-8')
 
         stage_a_cmd = _build_podman_cmd(
@@ -737,11 +745,13 @@ def _run_two_stage_python(
             )
 
         # --- Stage C: run the payload with the network removed ---
-        script_lines, block_markers = _build_wrapper_script(run_blocks, ['/deps/venv/bin/python', '-'])
+        run_cmd = resolver.get('run_cmd') or config['cmd']
+        script_lines, block_markers = _build_wrapper_script(run_blocks, run_cmd)
         script_code = ("\n".join(script_lines) + "\n").encode('utf-8')
 
         stage_c_cmd = _build_podman_cmd(
-            config, output_dir, extra_mounts=[(deps_dir, '/deps')], network=False
+            config, output_dir, extra_mounts=[(deps_dir, '/deps')], network=False,
+            env=resolver.get('stage_c_env') or None,
         )
         retcode, stdout, stderr = _run_podman_script(stage_c_cmd, script_code, timeout)
         if retcode is None:

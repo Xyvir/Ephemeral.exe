@@ -11,7 +11,7 @@ The codebase uses a modular, dual-entry-point design:
 ```
 ephemeral_core/          ← Platform-agnostic engine (no GUI/HTTP)
 ├── config.py            ← LANG_MAP (50+ languages), NETWORK_FLAGS, NO_CHAIN_FLAGS
-├── parser.py            ← parse_codeblocks(), resolve_runtime_config()
+├── parser.py            ← parse_codeblocks(), resolve_runtime_config(), DEP_RESOLVERS (two-stage dep resolution)
 ├── executor.py          ← async parse_and_execute(), Podman orchestration
 ├── models.py            ← ExecutionResult, GroupResult, BlockResult dataclasses
 └── __init__.py          ← Public API re-exports
@@ -42,17 +42,29 @@ result: ExecutionResult = await parse_and_execute(markdown_text, timeout=60)
 These flags must remain in `executor.py` and must not be weakened:
 
 - `podman run --rm -i --memory 2g -w /tmp --network none` — default for all containers (on hosts with ≤ 2.5 GiB RAM the memory/cpu/pids limits scale down to ~half of host RAM so a single job can't OOM a small VPS; `EPHEMERAL_MEMORY_LIMIT`/`EPHEMERAL_CPU_LIMIT`/`EPHEMERAL_PIDS_LIMIT` override)
-- `--network none` is only removed when the user explicitly writes the `unsafe` keyword in a codeblock header **or** during the dependency-resolution stage of a two-stage Python run (see below)
+- `--network none` is only removed when the user explicitly writes the `unsafe` keyword in a codeblock header **or** during the dependency-resolution stage of a two-stage run (see below)
 - Containers have no host filesystem access except the ephemeral `/output` volume mount
 
-### Python Dependency Resolution (Two-Stage Runs)
+### Dependency Resolution (Generic Two-Stage Runs)
 
-Python blocks backed by `uv run` (the `docker.io/tymills620/ephemeral-python-uv` image) get implicit PEP 723 injection: `ephemeral_core/parser.py` scans `import`/`from` statements, filters stdlib, and prepends a `# /// script` header. When inferred/declared deps exist and the user did NOT write `unsafe`, `executor.py` runs the block in two stages:
+Dependency resolution is **generic, resolver-driven, and keyed by image** — not Python-specific. `ephemeral_core/parser.py` holds `DEP_RESOLVERS`: a registry mapping image repositories (tag stripped) to a resolver dict with four hooks:
 
-1. **Stage A** — `podman run` with network (`--dns 8.8.8.8 --dns 1.1.1.1`, no `--network none`) runs `uv venv /deps/venv && uv pip install <deps>` into a host temp dir mounted at `/deps`. The payload is NOT executed here.
-2. **Stage C** — a second `podman run` with `--network none` executes the payload via `/deps/venv/bin/python -` from the same `/deps` mount.
+- `infer(block)` → `(deps, mutations)`: parse block content, return dependency specs plus block mutations (PEP 723 injection for Python; nothing for TeX).
+- `stage_a(deps)` → POSIX sh snippet run **with network** in Stage A (receives `/deps` mount).
+- `run_cmd`: Stage C payload command, or `None` to reuse the block's own `cmd`.
+- `stage_c_env`: extra env vars Stage C needs to find the deps.
 
-The `/deps` temp dir is removed after the run. Existing user PEP 723 metadata is authoritative (never overwritten). With `unsafe`, python deps resolve in the normal single-stage `uv run -` path using the injected header.
+`executor.py`'s `_run_container_sync` looks the run's image up in the registry; when a resolver exists, deps were inferred, and the user did NOT write `unsafe`, `executor.py` runs the block in two stages:
+
+1. **Stage A** — `podman run` with network (`--dns 8.8.8.8 --dns 1.1.1.1`, no `--network none`) runs the resolver's `stage_a` script into a host temp dir mounted at `/deps`. The payload is NOT executed here.
+2. **Stage C** — a second `podman run` with `--network none` executes the payload (resolver `run_cmd` or the block's own cmd, plus `stage_c_env`) from the same `/deps` mount.
+
+The `/deps` temp dir is removed after the run. With `unsafe`, deps resolve in the normal single-stage path. Registering a new language family = adding one `DEP_RESOLVERS` entry (its image must ship the Stage A tooling).
+
+**Registered resolvers:**
+
+- `docker.io/tymills620/ephemeral-python-uv` — scans `import`/`from`, filters stdlib, injects a PEP 723 `# /// script` header; Stage A runs `uv venv /deps/venv && uv pip install <deps>`; Stage C executes via `/deps/venv/bin/python -`. Existing user PEP 723 metadata is authoritative (never overwritten).
+- `docker.io/pandoc/extra` (backs `latex`, `tex`, `pandoc`, `pandoc-pdf`, `pandoc-docx`) — scans `\usepackage`/`\RequirePackage` (TeX comments stripped, kernel packages like `fontenc` skipped) in both the block body and pandoc YAML `header-includes` metadata (block scalar, list item, inline, and flow-list forms — YAML-lite harvester in `_iter_header_include_lines`, no PyYAML); Stage A runs `tlmgr init-usermode && tlmgr --usermode install <pkgs>` with `TEXMFHOME=/deps/texmf` (the image ships full TeX Live; user mode installs into the shared mount and kpathsea finds it natively — no mktexlsr); Stage C reuses the block's own `pdflatex`/`pandoc` cmd with `TEXMFHOME` set. `\documentclass` is deliberately not scanned (class→tlmgr name mapping is unreliable; those classes ship in the image).
 
 ### Artifact Routing
 

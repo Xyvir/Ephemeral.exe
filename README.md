@@ -448,14 +448,14 @@ Ephemeral intentionally does **not** have a mechanism to 'mount' or bind local d
 1. **Reproducibility**: Ephemeral codeblocks are envisioned to be entirely self-contained. By forcing data to be declared inside the markdown (via seed files), the snippet is guaranteed to run on any machine without relying on hidden external file structures.
 2. **Security**: Preventing local mounts reduces the possibility of local data-harvesting or ransomware payloads scanning your host machine's hard drive when running untrusted code with the `unsafe` network flag enabled. (see below)
 
-#### Automatic Python Dependency Resolution
+#### Automatic Dependency Resolution (Python & LaTeX)
 
-For Python blocks, Ephemeral resolves third-party packages automatically — no `unsafe` flag and no inline metadata required.
+Ephemeral resolves third-party packages automatically for **Python** and **LaTeX/pandoc** blocks — no `unsafe` flag and no inline metadata required. The same two-stage sandboxing procedure backs both (it is resolver-driven and image-keyed, so new language families plug in with one registry entry):
 
-1. **Implicit dependency injection:** Ephemeral scans your Python code for `import` statements, filters out standard-library modules, and injects a [PEP 723](https://peps.python.org/pep-0723/) `# /// script` header declaring the inferred packages before the block is sent to the container.
+1. **Implicit dependency injection:** Ephemeral scans your block and infers the dependencies — Python code is scanned for `import` statements (standard-library modules filtered out) and a [PEP 723](https://peps.python.org/pep-0723/) `# /// script` header is injected; LaTeX/pandoc content is scanned for `\usepackage`/`\RequirePackage` (comments stripped) — including packages declared in pandoc YAML `header-includes` metadata, in any common spelling (block scalar, list item, inline value, inline flow list).
 2. **Two-stage sandboxed resolution:** When inferred dependencies exist and you did *not* opt into `unsafe`, the block runs in two container stages instead of one:
-   - **Stage A** starts a container *with* network access and installs the dependencies into a virtual environment on a shared volume.
-   - **Stage C** starts a fresh container *without* network access (`--network none`) and runs your payload using that environment's interpreter.
+   - **Stage A** starts a container *with* network access and installs the dependencies onto a shared volume — `uv pip install` into a venv for Python, `tlmgr --usermode install` into a user TeX tree for LaTeX (the `pandoc/extra` image ships full TeX Live).
+   - **Stage C** starts a fresh container *without* network access (`--network none`) and runs your payload against that volume — via the venv's interpreter, or with `TEXMFHOME` pointed at the installed TeX tree.
 
 Your payload never sees the network — only the package-resolution step does. If you already wrote your own PEP 723 metadata, it is respected as-is (no re-injection), and if you do use `unsafe`, dependencies resolve in the normal single-stage mode.
 
@@ -468,7 +468,31 @@ arr = np.linspace(0, 10, 5)
 print("numpy resolved and used offline:", arr.sum())
 ```
 
-> Note the payload itself runs with `--network none` — the *resolution* stage has network, your code does not. A payload that makes a network request (e.g. `requests.get(...)`) still needs the `unsafe` flag.
+**Example (LaTeX — `tcolorbox` and `pgfplots` are fetched from CTAN automatically):**
+```latex
+\documentclass{article}
+\usepackage{tcolorbox}
+\usepackage{pgfplots}
+\begin{document}
+\begin{tcolorbox}[colback=blue!5]Hello \texttt{tlmgr}.\end{tcolorbox}
+\end{document}
+```
+
+**Example (`pandoc-pdf` — packages in YAML metadata are scanned too, whatever spelling you use):**
+```pandoc-pdf
+---
+title: Boxed Notes
+header-includes:
+  - \usepackage{tcolorbox}
+  - \usepackage{pgfplots}
+---
+
+# It works
+
+\begin{tcolorbox}[colback=blue!5]Hello \texttt{tlmgr}.\end{tcolorbox}
+```
+
+> Note the payload itself runs with `--network none` — the *resolution* stage has network, your code does not. A payload that makes a network request (e.g. `requests.get(...)`) still needs the `unsafe` flag. Packages declared in YAML `header-includes` (all common spellings) are scanned automatically; if you feed pandoc a custom template *file*, add a `\usepackage` line for its packages so the scanner can see them.
 
 #### Network Access (Unsafe Mode)
 

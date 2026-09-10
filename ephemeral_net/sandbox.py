@@ -19,8 +19,8 @@ document reaches ``ephemeral_core``, :class:`CoreJobExecutor` sanitizes it:
   doesn't delegate the cgroup controllers to rootless containers
 
 The sanitizer re-serializes the parsed blocks back to Markdown so the
-existing ``ephemeral_core`` pipeline (language grouping, dependency
-inference, PEP 723 injection, two-stage Python resolution) runs
+existing ``ephemeral_core`` pipeline (language grouping, resolver-based
+dependency inference, PEP 723 / tlmgr two-stage resolution) runs
 unchanged.
 """
 from __future__ import annotations

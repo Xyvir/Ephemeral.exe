@@ -173,6 +173,258 @@ def prepare_python_block(block: dict) -> tuple[dict, list[str]]:
     return block, []
 
 
+# --- Generic Two-Stage Dependency Resolution -------------------------------
+#
+# The Python path (uv + PEP 723) and the TeX path (tlmgr) share the same
+# shape: infer (or read declared) dependencies from block content, install
+# them in a network-enabled Stage A container into a shared volume, then run
+# the payload in a network-disabled Stage C container that reads that volume.
+# A resolver describes how a language family plugs into that procedure:
+#
+#   infer        -> (list[str], dict): parse the content and return
+#                   (dependency specs, block mutations). Empty deps mean the
+#                   block runs in the normal single-stage path.
+#   stage_a      -> str: POSIX sh snippet run with network access in Stage A
+#                   (receives $DEPS_DIR; must populate it for Stage C)
+#   run_cmd      -> list[str]: command (plus '-') Stage C uses to execute the
+#                   payload when the block's own cmd is not reusable; None to
+#                   reuse config['cmd'] unchanged
+#   stage_c_env  -> dict[str, str]: extra environment variables Stage C needs
+#                   to find the installed dependencies (e.g. TEXMFHOME)
+#   payload_lang -> display title for the Stage C output header
+
+# The TeX resolver's Stage A: tlmgr --usermode into the shared mount.
+#
+# The pandoc/extra image ships a full TeX Live under /opt/texlive with tlmgr
+# configured against CTAN (verified: the image builds TeX Live via install-tl).
+# User mode installs into $TEXMFHOME (no writes to the root-owned main tree),
+# and pointing TEXMFHOME at the shared /deps mount lets Stage C read the
+# packages with the network gone — kpathsea searches TEXMFHOME natively, so
+# no ls-R database or mktexlsr run is needed.
+
+def _build_tlmgr_stage_a(pkgs: list[str]) -> str:
+    """Build the Stage A script for the TeX resolver (one tlmgr call per package)."""
+    lines = [
+        "mkdir -p /deps/texmf/tex/latex",
+        "export TEXMFHOME=/deps/texmf",
+        # User mode must be initialized once per fresh container before
+        # `tlmgr --usermode` works; it populates the user tree's tlpkg.
+        "tlmgr init-usermode >/dev/null 2>&1 || true",
+    ]
+    for p in pkgs:
+        q = shlex.quote(p)
+        lines.append(f"tlmgr --usermode install {q} || exit 1")
+    return "\n".join(lines) + "\n"
+
+
+# LaTeX kernel components that \\usepackage accepts but that have no standalone
+# tlmgr package (they ship inside TeX Live's latex base collection; asking
+# tlmgr for them fails with "not present in repository"). Everything else is
+# installed as-is — if a name is genuinely unknown, Stage A fails naming the
+# exact package, which is a far better error than silently skipping a real
+# dependency.
+_TEX_KERNEL_PACKAGES = frozenset({"fontenc", "inputenc", "textcomp", "upquote"})
+
+# `\\usepackage[options]{name}` / `\\RequirePackage...` — the brace group may
+# hold a comma-separated package list (standard LaTeX practice).
+_USEPACKAGE_RE = re.compile(
+    r"^\s*%?\\(?:use|Require)package(?:\[[^\]]*\])?\{([^}]+)\}",
+    re.MULTILINE,
+)
+
+# --- Pandoc YAML metadata (`header-includes`) recognition --------------------
+#
+# Pandoc users declare LaTeX packages in YAML metadata, not (only) in TeX
+# source, and YAML offers several spellings of the same thing:
+#
+#   header-includes: |
+#     \usepackage{minted}            <- block scalar: one statement per line
+#   header-includes:
+#     - \usepackage{tcolorbox}       <- list item
+#   header-includes: \usepackage{xcolor}
+#   header-includes: ["\\usepackage{a}", \\usepackage{b}]   <- inline flow list
+#
+# A PyYAML dependency is deliberately avoided (the core pipeline has none and
+# only preamble *recognition* is needed, not a document tree): these regexes
+# find the `header-includes` key and the lines that belong to it. Harvested
+# lines are re-scanned by _USEPACKAGE_RE, so package-name parsing stays in
+# exactly one place.
+#
+# A top-level `header-includes:` key at column 0. (Pandoc also accepts nested
+# `include-before/includes:` forms; matching only the top-level key keeps the
+# scanner predictable without false positives in prose.)
+_HEADER_INCLUDES_KEY_RE = re.compile(r"^header-includes\s*:")
+# Everything after `header-includes:` on the same line (may be empty).
+_HEADER_INCLUDES_INLINE_RE = re.compile(r"^header-includes\s*:\s*(.*)$")
+# Continuation lines: deeper-indented block-scalar text or `- item` entries
+# (the dash may sit at any indentation, including column 0).
+_HEADER_INCLUDES_ITEM_RE = re.compile(r"^(?:\s+(?:-\s+)?|-\s+)(.*)$")
+# YAML comments start at a `#` preceded by line start or whitespace (a `#`
+# inside quotes is rare in these preamble lines and not worth the complexity).
+_YAML_COMMENT_RE = re.compile(r"(?:^|\s)#.*$")
+_BLOCK_SCALAR_INDICATORS = frozenset({"|", ">", "|-", ">-", "|+", ">+"})
+
+
+def _iter_header_include_lines(code: str):
+    """
+    Yield LaTeX source lines found inside pandoc YAML `header-includes`
+    metadata (all common YAML spellings), so they can be re-scanned by
+    _USEPACKAGE_RE alongside the block body.
+
+    Handles: block scalars (`|`/`>` with per-line statements), block-sequence
+    list items (`- \\usepackage{...}`, dash at any indentation), inline values
+    (`header-includes: \\usepackage{...}`, quotes stripped), and inline flow
+    lists (`header-includes: ["\\usepackage{a}", "\\usepackage{b}"]`, which
+    must START with `[` so package options like `[overload]` are never
+    mistaken for a flow list). YAML comments are stripped from harvested
+    lines; TeX `%` comments are stripped later by the body scan.
+    """
+    lines = (code or "").splitlines()
+    in_block = False
+    for line in lines:
+        if not in_block and _HEADER_INCLUDES_KEY_RE.match(line):
+            value = _HEADER_INCLUDES_INLINE_RE.match(line).group(1)
+            value = _YAML_COMMENT_RE.sub("", value).strip()
+            if not value or value in _BLOCK_SCALAR_INDICATORS:
+                in_block = True  # entries start on the following lines
+                continue
+            if value.startswith("[") and value.endswith("]"):
+                # Inline flow list: split on commas, drop surrounding quotes.
+                for item in value[1:-1].split(","):
+                    item = item.strip()
+                    if len(item) >= 2 and item[0] == item[-1] and item[0] in "'\"":
+                        item = item[1:-1].strip()
+                    if item:
+                        yield item
+            else:
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+                    value = value[1:-1].strip()  # quoted inline scalar
+                if value:
+                    yield value
+            continue
+        if in_block:
+            if not line.strip():
+                continue  # blank line inside a block scalar
+            if not line[0].isspace() and not line.lstrip().startswith("-"):
+                in_block = False  # back at column 0: metadata block is over
+                if _HEADER_INCLUDES_KEY_RE.match(line):
+                    in_block = True
+                    continue
+                continue
+            m = _HEADER_INCLUDES_ITEM_RE.match(line)
+            if m:
+                text = _YAML_COMMENT_RE.sub("", m.group(1)).strip()
+                if text in _BLOCK_SCALAR_INDICATORS:
+                    continue  # nested block-scalar indicator; its lines follow
+                if text:
+                    yield text
+
+
+def infer_latex_dependencies(code: str) -> tuple[list[str], dict]:
+    """
+    Infer TeX Live packages from the `\\usepackage`/`\\RequirePackage`
+    statements in LaTeX or pandoc content, including packages declared in
+    pandoc YAML `header-includes` metadata (block scalar, list item, inline,
+    and inline flow-list forms — see _iter_header_include_lines).
+
+    Returns ``(packages, mutations)``. Package names are used as-is for
+    ``tlmgr install`` (the CTAN package name usually matches the
+    `\\usepackage` name); kernel components with no tlmgr package are
+    filtered via ``_TEX_KERNEL_PACKAGES``, and TeX comments are stripped
+    first so commented-out packages are not installed.
+    ``mutations`` is empty for the TeX resolver: unlike PEP 723, tlmgr needs
+    no inline metadata — Stage A installs straight from the inferred list.
+
+    `\\documentclass` is deliberately NOT scanned: class names map to tlmgr
+    package names unreliably (article → latex-base, scrartcl → koma-script),
+    and the classes a pandoc-pdf block realistically uses ship in the image.
+    """
+    code = code or ""
+    deps: set[str] = set()
+    # Harvest LaTeX lines from pandoc YAML metadata FIRST, so the combined
+    # text gets the same TeX-comment stripping as the body below.
+    code = code + "\n" + "\n".join(_iter_header_include_lines(code))
+    # Strip TeX comments (an unescaped % kills the rest of the line).
+    code = re.sub(r"(?<!\\)%.*$", "", code, flags=re.MULTILINE)
+    for match in _USEPACKAGE_RE.finditer(code):
+        # One brace group can list several packages: \usepackage{amsmath,amssymb}
+        for name in match.group(1).split(","):
+            name = name.strip()
+            if name and name not in _TEX_KERNEL_PACKAGES:
+                deps.add(name)
+    return sorted(deps), {}
+
+
+def _python_infer(block: dict) -> tuple[list[str], dict]:
+    """Adapter so the Python resolver fits the generic ``(deps, mutations)`` shape."""
+    prepared, deps = prepare_python_block(block)
+    return deps, {"content": prepared["content"]} if deps else {}
+
+
+#: Two-stage dependency resolvers, keyed by the IMAGE REPOSITORY (tag stripped)
+#: that owns the payload. The image is the right key — not the language name —
+#: because a resolver's Stage A tooling must exist inside that exact image
+#: (uv in ephemeral-python-uv, tlmgr in pandoc/extra); every language that
+#: resolves to the same image (python:3.11 overrides, pandoc-pdf/md aliases)
+#: shares the resolver automatically, and a local `image=` override pointing
+#: elsewhere correctly falls back to the single-stage path. Languages not
+#: matched here (or matched with inference that found nothing) run in the
+#: normal single-stage path.
+DEP_RESOLVERS: dict[str, dict] = {
+    'docker.io/tymills620/ephemeral-python-uv': {
+        'infer': _python_infer,
+        'stage_a': lambda deps: (
+            "uv venv /deps/venv || exit 1\n"
+            "uv pip install --no-cache --python /deps/venv/bin/python "
+            + " ".join(shlex.quote(d) for d in deps)
+            + "\n"
+        ),
+        'run_cmd': ['/deps/venv/bin/python', '-'],
+        'stage_c_env': {},
+        'payload_lang': 'python',
+    },
+    'docker.io/pandoc/extra': {
+        'infer': lambda block: infer_latex_dependencies(block.get("content", "")),
+        'stage_a': _build_tlmgr_stage_a,
+        'run_cmd': None,  # Stage C reuses the block's own cmd (pdflatex / pandoc)
+        'stage_c_env': {'TEXMFHOME': '/deps/texmf'},
+        'payload_lang': 'latex',
+    },
+}
+
+
+def _image_registry_key(image: str) -> str:
+    """Strip the tag from a Docker/Podman image reference (keep registry ports)."""
+    head, sep, tail = image.rpartition('/')
+    if ':' in tail:
+        tail = tail.split(':')[0]
+    return head + sep + tail
+
+
+def resolver_for_image(image: str) -> dict | None:
+    """Return the two-stage resolver for the block's image, or None."""
+    return DEP_RESOLVERS.get(_image_registry_key(image or ""))
+
+
+def prepare_block_for_resolution(block: dict, resolver: dict) -> tuple[dict, list[str]]:
+    """
+    Prepare one code block for two-stage dependency resolution.
+
+    The resolver's ``infer`` hook produces ``(deps, mutations)``; the returned
+    block is a copy with ``mutations`` applied (e.g. PEP 723 header injection
+    for Python). When inference finds nothing, the block is returned untouched
+    with an empty dep list and the caller keeps the single-stage path.
+
+    Returns ``(prepared_block, deps)``.
+    """
+    deps, mutations = resolver["infer"](block)
+    if not deps:
+        return block, []
+    prepared = dict(block)
+    prepared.update(mutations)
+    return prepared, deps
+
+
 def strip_ansi_codes(text: str) -> str:
     """Remove ANSI escape sequences from text."""
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')

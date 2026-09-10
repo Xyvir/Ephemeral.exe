@@ -295,4 +295,171 @@ finally:
     executor_mod.subprocess.check_output = _saved_check_output
 print("PASS: foreign cached images are excluded from native warm-image routing")
 
-print("\n=== ALL 28 TESTS PASSED ===")
+# --- Test 29: LaTeX dependency inference ---
+from ephemeral_core.parser import infer_latex_dependencies
+
+tex29 = r"""
+\documentclass{article}
+\usepackage{amsmath,amssymb}   % both ship — kernel/collection names
+\usepackage[margin=1in]{geometry}
+\usepackage{pgfplots}
+% \usepackage{commentedout}  — must be ignored (comment)
+\usepackage{minted}
+\begin{document}
+50\% of \$10 \usepackage{notarealpkg} inside prose must be skipped
+\end{document}
+"""
+deps29, mutations29 = infer_latex_dependencies(tex29)
+assert mutations29 == {}, mutations29
+# commented-out ignored; prose occurrence NOT matched (no ^ anchor);
+# escaped \% / \$ don't kill the line mid-scan. Core/collection names like
+# amsmath/geometry are kept as-is — tlmgr no-ops on already-present packages.
+assert deps29 == ["amsmath", "amssymb", "geometry", "minted", "pgfplots"], deps29
+print("PASS: LaTeX dependency inference")
+
+# --- Test 30: generic resolver registry keys off the image ---
+from ephemeral_core.parser import DEP_RESOLVERS, resolver_for_image, prepare_block_for_resolution
+from ephemeral_core.config import LANG_MAP
+
+# every TeX-family language (aliases included) routes to the tlmgr resolver
+# via its image, and the uv image routes python
+for lang30, img30 in (("latex", None), ("tex", None), ("pandoc-pdf", None), ("md", None)):
+    cfg30 = resolve_runtime_config(lang30)
+    assert resolver_for_image(cfg30["image"]) is DEP_RESOLVERS["docker.io/pandoc/extra"], lang30
+cfg30 = resolve_runtime_config("python")
+assert resolver_for_image(cfg30["image"]) is DEP_RESOLVERS["docker.io/tymills620/ephemeral-python-uv"]
+# version-tagged images keep the resolver (same repo)
+assert resolver_for_image("docker.io/tymills620/ephemeral-python-uv:3.11") is not None
+# foreign images get none (single-stage fallback)
+assert resolver_for_image("docker.io/library/node:18-alpine") is None
+assert resolver_for_image("") is None
+print("PASS: resolver registry keyed by image")
+
+# --- Test 31: generic prepare (python path unchanged, tex path passes through) ---
+blk31a = {'type': 'code', 'header': 'python', 'content': 'import numpy\n', 'config': {}}
+pyres = DEP_RESOLVERS["docker.io/tymills620/ephemeral-python-uv"]
+prepared31a, deps31a = prepare_block_for_resolution(blk31a, pyres)
+assert deps31a == ["numpy"]
+assert prepared31a["content"].startswith("# /// script")  # PEP 723 still injected
+assert blk31a["content"] == "import numpy\n"  # original untouched
+
+texres = DEP_RESOLVERS["docker.io/pandoc/extra"]
+blk31b = {'type': 'code', 'header': 'pandoc-pdf', 'content': r"\usepackage{minted}", 'config': {}}
+prepared31b, deps31b = prepare_block_for_resolution(blk31b, texres)
+assert deps31b == ["minted"]
+assert prepared31b["content"] == r"\usepackage{minted}"  # no metadata injection for TeX
+print("PASS: generic prepare_block_for_resolution")
+
+# --- Test 32: TeX Stage A script shape (usermode init + TEXMFHOME + quoting) ---
+from ephemeral_core.parser import _build_tlmgr_stage_a
+
+stage_a32 = _build_tlmgr_stage_a(["minted", "weird pkg"])
+assert "export TEXMFHOME=/deps/texmf" in stage_a32
+assert "tlmgr init-usermode" in stage_a32
+assert "tlmgr --usermode install minted" in stage_a32
+assert "'weird pkg'" in stage_a32  # shell-quoted
+print("PASS: TeX Stage A script shape")
+
+# --- Test 33: executor routes via resolver (behavioral parity check) ---
+# Same monkeypatched sync core as the Python two-stage test above would do:
+# verify _run_container_sync picks the two-stage path for a TeX block and the
+# single-stage path when inference finds nothing.
+from ephemeral_core import executor as executor_mod33
+
+calls33 = []
+orig33a = executor_mod33._run_two_stage
+orig33s = executor_mod33._run_single_stage
+class _G33:
+    stdout_formatted = "x"; stderr = ""; exit_code = 0
+    artifact_paths = []; chained_files = []; image_copied = False
+executor_mod33._run_two_stage = lambda *a, **k: calls33.append("two") or _G33()
+executor_mod33._run_single_stage = lambda *a, **k: calls33.append("single") or _G33()
+try:
+    run33 = [{'type': 'code', 'header': 'pandoc-pdf',
+              'content': r"\usepackage{minted}\\nHello",
+              'config': resolve_runtime_config("pandoc-pdf")}]
+    executor_mod33._run_container_sync(resolve_runtime_config("pandoc-pdf"), run33, "pandoc-pdf", 1, 1, "/tmp/nope", 30)
+    assert calls33 == ["two"], calls33
+
+    calls33.clear()
+    run33[0]['content'] = "plain markdown, no packages"
+    executor_mod33._run_container_sync(resolve_runtime_config("pandoc-pdf"), run33, "pandoc-pdf", 1, 1, "/tmp/nope", 30)
+    assert calls33 == ["single"], calls33
+finally:
+    executor_mod33._run_two_stage = orig33a
+    executor_mod33._run_single_stage = orig33s
+print("PASS: executor routes TeX runs through the resolver")
+
+# --- Test 34: pandoc YAML header-includes forms are all scanned ---
+# The resolver must see packages declared in pandoc metadata, whatever YAML
+# spelling the author used — so a pandoc-pdf block never needs a second,
+# scanner-visible copy of its \usepackage lines.
+from ephemeral_core.parser import _iter_header_include_lines
+
+yaml34 = {
+    "block scalar": (r"""---
+header-includes: |
+  \usepackage{minted}
+  \usepackage{tcolorbox}
+---
+
+Hello""", ["minted", "tcolorbox"]),
+    "list items": (r"""---
+header-includes:
+  - \usepackage{minted}
+---""", ["minted"]),
+    "col-0 dash": (r"""---
+header-includes:
+- \usepackage{minted}
+---""", ["minted"]),
+    "nested list block scalar": (r"""---
+header-includes:
+  - |
+    \usepackage{minted}
+---""", ["minted"]),
+    "inline value": (r"""---
+header-includes: \usepackage{minted}
+---""", ["minted"]),
+    "quoted inline value": (r"""---
+header-includes: '\usepackage{minted}'
+---""", ["minted"]),
+    "inline flow list": (r"""---
+header-includes: ["\usepackage{minted}", "\usepackage{tcolorbox}"]
+---""", ["minted", "tcolorbox"]),
+    # [overload] is package OPTIONS, not a flow list — must parse as xcolor
+    "options are not a flow list": (r"""---
+header-includes: |
+  \usepackage[overload]{xcolor}
+---""", ["xcolor"]),
+    # YAML comments stripped by the harvester, TeX % comments by the body scan
+    "yaml + tex comments": (r"""---
+header-includes: |   # preamble
+  \usepackage{minted} % real
+  % \usepackage{ghost}
+---""", ["minted"]),
+    # packages in OTHER yaml keys or prose must not be matched
+    "no false positives": (r"""---
+other-key: \usepackage{nope}
+---
+
+A paragraph mentioning header-includes: but not as a key.
+""", []),
+}
+for name34, (code34, want34) in yaml34.items():
+    deps34, _ = infer_latex_dependencies(code34)
+    assert deps34 == want34, (name34, deps34)
+# body + metadata merge into one deduplicated list
+mixed34 = r"""---
+header-includes: |
+  \usepackage{pgfplots}
+---
+
+\usepackage{geometry}
+"""
+deps34, _ = infer_latex_dependencies(mixed34)
+assert deps34 == ["geometry", "pgfplots"], deps34
+# harvester yields raw lines (quote/comment handling covered above via deps)
+assert list(_iter_header_include_lines("header-includes: |\n  \\usepackage{x}")) == [r"\usepackage{x}"]
+print("PASS: pandoc YAML header-includes forms all scanned")
+
+print("\n=== ALL 34 TESTS PASSED ===")
