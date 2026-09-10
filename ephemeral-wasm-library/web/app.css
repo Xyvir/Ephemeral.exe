@@ -434,6 +434,14 @@ button.secondary:hover { background: #4a4a4a; }
   gap: 2px;
   margin-bottom: 6px;
   align-items: center;
+  /* Pull the cluster in from the card's padding edge so the toolbars sit
+     inside the code panel's own block background. OverType insets its
+     rendered code block by 16px (wrapper padding) behind the editor's 1px
+     border, so 17px lands the buttons on that block's right edge — in
+     both the static and the floating state (sticky keeps the static
+     horizontal alignment). Same offset on the Output head, which shares
+     this rule. */
+  margin-right: 17px;
 }
 
 /* Trailing (i) help pill in the language-chip row: lists every supported
