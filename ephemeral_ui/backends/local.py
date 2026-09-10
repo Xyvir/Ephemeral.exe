@@ -92,6 +92,19 @@ class LocalBackend(Backend):
 
     def _perform_visible_pull(self, image_name):
         """Pull a container image with a visible console window on Windows."""
+        # Platform blocklist: never pull an image this host cannot run (e.g.
+        # headless Chromium under WSL2 Podman) — a cached copy would be
+        # advertised warm and attract jobs that hang.
+        from ephemeral_core.executor import images_blocked_on_host
+
+        if image_name in images_blocked_on_host():
+            print(
+                f"[Ephemeral] Image {image_name} is blocked on this platform: "
+                "headless Chromium cannot run under Podman's WSL2 machine. "
+                "Use a native Linux node for html/svg blocks.",
+                file=sys.stderr,
+            )
+            return 1
         # Disk-space guardrail: refuse when the drive can't hold the image even
         # after evicting the coldest cached images (see ephemeral_core.space).
         try:
@@ -262,6 +275,16 @@ class LocalBackend(Backend):
                 image_name = config['image']
                 is_cached = check_image_exists(image_name)
                 if not is_cached:
+                    from ephemeral_core.executor import images_blocked_on_host
+
+                    if image_name in images_blocked_on_host():
+                        icon.notify(
+                            "This language is not supported on your platform "
+                            "(headless Chromium cannot run under Podman's WSL2 "
+                            "machine) — use a native Linux node.",
+                            title="Ephemeral Error",
+                        )
+                        return
                     exit_code = self._perform_visible_pull(image_name)
                     if exit_code != 0:
                         icon.notify("Image download failed.", title="Ephemeral Error")

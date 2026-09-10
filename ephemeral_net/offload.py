@@ -72,7 +72,13 @@ class OffloadingExecutor:
         """
         if not self.background_pull:
             return
+        from ephemeral_core.executor import images_blocked_on_host
+
+        blocked = images_blocked_on_host()
         for image in images:
+            if image in blocked:
+                logger.info("skipping background pull of %s (blocked on this platform)", image)
+                continue
             pull = getattr(self.local, "pull", None)
             if pull is None:
                 import ephemeral_core

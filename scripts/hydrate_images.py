@@ -128,10 +128,17 @@ async def main() -> int:
     )
     args = parser.parse_args()
 
+    from ephemeral_core.executor import images_blocked_on_host
+
+    blocked = images_blocked_on_host()
     if args.only:
         images = _resolve_langs(args.only.split(","))
     else:
         images = mapped_images()
+    if blocked:
+        images = [i for i in images if i not in blocked]
+        if images:
+            print(f"(skipping {len(blocked)} image(s) blocked on this platform)")
     if not images:
         print("No images to hydrate — nothing to do.")
         return 0

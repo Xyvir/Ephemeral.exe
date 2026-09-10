@@ -43,6 +43,40 @@ _active_pulls = set()
 MAX_PARALLEL_RUNS = 4
 
 
+# --- Platform image blocklist -------------------------------------------
+#
+# Some language-map images cannot run in every environment. Headless
+# Chromium (the html/svg renderer) hangs under Podman's WSL2 machine
+# backend, so Windows/WSL2 hosts must never pull, run, or advertise it
+# warm: a cached copy would be advertised to the swarm and turn the node
+# into a "stopping point" (jobs routed there hang until the node-side
+# timeout).
+
+
+def _running_under_wsl2() -> bool:
+    """True on Windows hosts or WSL2 Linux (Podman runs via the WSL2 VM)."""
+    if os.name == "nt":
+        return True
+    try:
+        with open("/proc/sys/kernel/osrelease", "r", encoding="utf-8") as f:
+            return "microsoft" in f.read().lower()
+    except Exception:
+        return False
+
+
+def images_blocked_on_host() -> frozenset[str]:
+    """Image refs this host must not pull, run, or advertise warm.
+
+    Returns the blocklist for the current platform (empty on native
+    Linux, where every language-map image works).
+    """
+    if not _running_under_wsl2():
+        return frozenset()
+    html_cfg = LANG_MAP.get("html")
+    image = html_cfg.get("image") if isinstance(html_cfg, dict) else None
+    return frozenset({image}) if image else frozenset()
+
+
 # --- Subprocess Helpers ---
 
 def get_startupinfo():
@@ -128,6 +162,8 @@ def image_is_compatible(image_name: str) -> bool:
 
 def check_image_exists(image_name: str) -> bool:
     """Check whether a native-compatible container image is cached locally."""
+    if image_name in images_blocked_on_host():
+        return False
     try:
         startupinfo = get_startupinfo()
         subprocess.check_call(
@@ -161,12 +197,18 @@ def list_local_images() -> list[str]:
     except Exception:
         return []
     names: list[str] = []
+    blocked = images_blocked_on_host()
     for entry in entries if isinstance(entries, list) else []:
         entry_arch = _normalize_architecture(entry.get("Architecture"))
         if entry_arch is not None and entry_arch != host_arch():
             continue
         for name in entry.get('Names') or []:
             if not name or name in names:
+                continue
+            # Never advertise an image this host cannot run (see
+            # images_blocked_on_host) — a blocked image must not attract
+            # jobs it would only hang on.
+            if name in blocked:
                 continue
             # Older Podman versions omit Architecture from `images --format
             # json`; inspect those entries before advertising them as warm.
@@ -335,6 +377,16 @@ async def pull_image(image_name: str) -> int:
 
     Returns the exit code of the pull command (0 = success).
     """
+    # Platform blocklist: never pull an image this host cannot run (e.g.
+    # headless Chromium under WSL2 Podman) — a cached copy would be
+    # advertised warm and attract jobs that hang.
+    if image_name in images_blocked_on_host():
+        raise RuntimeError(
+            f"Image {image_name} is blocked on this platform: headless "
+            "Chromium cannot run under Podman's WSL2 machine. Use a native "
+            "Linux node for html/svg blocks."
+        )
+
     # Disk-space guardrail (best-effort): probe + evict coldest images
     # before pulling so a tight drive never hits "no space left on device".
     await asyncio.to_thread(ensure_space_for_pull, image_name)
@@ -389,6 +441,16 @@ def _run_container_sync(
     Returns:
         GroupResult with formatted stdout, stderr, exit code, and artifact paths.
     """
+    # Platform blocklist: never run an image this host cannot execute (e.g.
+    # headless Chromium under WSL2 Podman) — the run would hang to timeout.
+    image_name = config.get('image', '')
+    if image_name in images_blocked_on_host():
+        raise RuntimeError(
+            f"Image {image_name} is blocked on this platform: headless "
+            "Chromium cannot run under Podman's WSL2 machine. Use a native "
+            "Linux node for html/svg blocks."
+        )
+
     code_blocks = [b for b in run_blocks if b['type'] == 'code']
     is_single_step = len(code_blocks) <= 1
     uses_uv_python = config.get('cmd') == ['uv', 'run', '-']
