@@ -135,7 +135,8 @@ textarea { min-height: 150px; resize: vertical; }
    re-asserted like .icon-btn. */
 .more-hint {
   position: absolute;
-  bottom: 100%;
+  /* Ride just above the dock's top edge with a little breathing room. */
+  bottom: calc(100% + 6px);
   left: 0;
   right: 0;
   text-align: center;
@@ -148,10 +149,10 @@ textarea { min-height: 150px; resize: vertical; }
   display: inline-block;
   width: 0;
   height: 0;
-  border-left: 8px solid transparent;
-  border-right: 8px solid transparent;
-  border-top: 9px solid var(--muted);
-  opacity: .85;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid var(--accent-hi);
+  opacity: 1;
 }
 /* Placeholder: OverType's own div collapses newlines (white-space:normal)
    and the fenced-python hint needs them — force pre + monospace. */
