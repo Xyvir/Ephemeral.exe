@@ -151,6 +151,7 @@ function initEditor() {
       // fires synchronously after every replacement — no race.
       onRender: () => {
         highlightCodeHeaders();
+        syncMoreHint(); // content grew/shrunk — re-check the fold indicator
       },
     });
   } else {
@@ -305,6 +306,9 @@ function updateLangStatus() {
   // so it's a static affordance, not tied to whatever the doc declares.
   el.appendChild(langHelpPillEl());
   el.hidden = false;
+  // Chips appearing/disappearing changes how tall the dock is — re-check
+  // the "more below" indicator against the dock's new top edge.
+  syncMoreHint();
 }
 
 // Bright-highlight fence header info-strings (the language declaration +
@@ -2438,6 +2442,61 @@ document.addEventListener("keydown", (e) => {
     syncCodeToUrl();
   }
 });
+/* --- Layout sync: floating toolbars + floating run-area dock ---
+   The Run Code / Output toolbar rows float (sticky) over long content;
+   .floating is toggled while a row is stuck so it renders translucent
+   instead of reading as a second real header. The run area's bottom
+   controls live in a sticky dock pinned to the bottom of the viewport, so
+   they are always available; the editor grows with its content and the
+   page keeps ONE universal scroll — the dock simply floats over the
+   document and covers the code beneath it. A small down-triangle at the
+   dock's top edge shows while more code is still hidden below the fold. */
+let floatTick = false;
+function syncFloating() {
+  floatTick = false;
+  document.querySelectorAll(".section-head").forEach((head) => {
+    head.classList.toggle("floating", head.getBoundingClientRect().top <= 1);
+  });
+}
+window.addEventListener("scroll", () => {
+  if (!floatTick) {
+    floatTick = true;
+    requestAnimationFrame(() => {
+      syncFloating();
+      syncMoreHint();
+    });
+  }
+}, { passive: true });
+// Cheap timer poll as a universal fallback — some embedded webviews never
+// deliver scroll / rAF / IntersectionObserver callbacks, so the floating
+// state and the "more below" triangle are re-checked on a light interval
+// as well (two rect reads per tick; no layout thrash).
+setInterval(() => {
+  syncFloating();
+  syncMoreHint();
+}, 250);
+
+function syncMoreHint() {
+  const editor = $("editor");
+  const hint = $("editorMore");
+  const dock = document.querySelector("section.run .run-dock");
+  if (!editor || !hint || !dock) return;
+  // More code hides below the fold whenever the editor's bottom edge is
+  // still below the dock's top edge — i.e. the page hasn't been scrolled
+  // far enough to expose the whole expanded document above the dock. The
+  // small epsilon keeps the triangle from flickering when the two edges
+  // are flush (last line just above the dock).
+  const moreBelow =
+    editor.getBoundingClientRect().bottom >
+    dock.getBoundingClientRect().top + 2;
+  hint.hidden = !moreBelow;
+}
+
+window.addEventListener("resize", () => {
+  syncMoreHint();
+  syncFloating();
+});
+
 initEditor();
 updateLangStatus();
 highlightCodeHeaders();

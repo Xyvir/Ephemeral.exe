@@ -108,6 +108,51 @@ textarea { min-height: 150px; resize: vertical; }
 /* Beat OverType's auto-resize floor (60px) so the empty editor still
    presents as a proper panel. */
 #editor .overtype-wrapper { height: auto; min-height: 220px !important; }
+/* Floating bottom dock: the language chips, Run/Share row and
+   public-network note stick to the bottom of the viewport while the run
+   section is in view, so the controls are always available — no matter
+   where the code is scrolled. The editor itself grows with its content
+   (OverType autoResize, no inner scrollbar), so there is ONE universal
+   page scroll: the dock simply floats over the document and covers the
+   code that scrolls beneath it. Negative margins stretch the dock over
+   the section's padding so it reads as a solid, edge-to-edge bar. */
+.run-dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 12;
+  margin: 0 -16px -12px;
+  padding: 8px 16px 12px;
+  background: var(--panel);
+  border-top: 1px solid #333;
+  /* Match the card's rounded bottom corners (the dock is stretched to the
+     card's edges by the negative margins above). */
+  border-radius: 0 0 8px 8px;
+}
+/* "More code below" triangle: sits at the dock's top edge (bottom: 100%
+   rides along with the floating dock) and shows while the editor still
+   has content hidden beneath the fold (JS toggles it). Pure decoration —
+   pointer-events: none so it never intercepts clicks, and [hidden] is
+   re-asserted like .icon-btn. */
+.more-hint {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  pointer-events: none;
+  z-index: 9;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .6));
+}
+.more-hint[hidden] { display: none; }
+.more-hint .more-tri {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 9px solid var(--muted);
+  opacity: .85;
+}
 /* Placeholder: OverType's own div collapses newlines (white-space:normal)
    and the fenced-python hint needs them — force pre + monospace. */
 #editor .overtype-placeholder {
@@ -358,8 +403,32 @@ button.secondary:hover { background: #4a4a4a; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* Sticky so the toolbar can float. The ROW is the sticky box, but in
+     the stuck (.floating) state only the button cluster is visible: the
+     section label fades out and the row itself stays transparent, so the
+     code shows through and the top of the card stays "open" instead of
+     gaining a second header bar. JS toggles .floating when the row is
+     actually stuck. */
+  position: sticky;
+  top: 0;
+  z-index: 15;
 }
-.section-head h2 { margin: 18px 0 8px; }
+.section-head h2 {
+  margin: 18px 0 8px;
+  transition: opacity .15s ease;
+}
+/* Stuck state: the buttons alone float — no background, no pill, just the
+   icons, slightly translucent. A soft drop shadow keeps them legible over
+   whatever code scrolls beneath them. pointer-events pass through the
+   transparent row so clicks land on the code behind it; the buttons
+   themselves stay clickable. */
+.section-head.floating { pointer-events: none; }
+.section-head.floating h2 { opacity: 0; }
+.section-head.floating .head-actions {
+  pointer-events: auto;
+  opacity: .8;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .95));
+}
 .head-actions {
   display: flex;
   gap: 2px;
