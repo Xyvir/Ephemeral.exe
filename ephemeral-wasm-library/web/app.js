@@ -1768,17 +1768,41 @@ function timestampedFileName(ext) {
   return `ephemeral-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
 }
 
+// "Share link output" mode: what the output ends with. none = nothing,
+// link = the "Try it here" hyperlink, qr = that link plus a QR code so
+// a printed page can be scanned straight back to the payload.
+function shareLinkMode() {
+  const sel = document.querySelector('input[name="shareLinkMode"]:checked');
+  return sel ? sel.value : "none";
+}
+
+// QR PNG data URL for a payload share URL (qrcode-generator, CDN).
+// Returns null when the library hasn't loaded (offline CDN) — callers
+// degrade to link-only rather than failing the footer.
+function qrDataUrl(text) {
+  try {
+    if (typeof qrcode !== "function") return null;
+    const qr = qrcode(0, "M"); // type 0 = auto size, M = medium error correction
+    qr.addData(text);
+    qr.make();
+    return qr.createDataURL(4, 8); // 4px modules, 8-module quiet zone
+  } catch {
+    return null;
+  }
+}
+
 // The on-screen mirror of the print "Try it here" footer: a single,
 // always-current element pinned at the end of the Output box while the
-// "Include share link in output" checkbox is on and the box has content.
+// "Share link output" mode is link or qr and the box has content.
 // Both view renderers wipe the box, so this is re-synced after every
-// rebuild (run end, interleave toggle, clear, checkbox change) and on
+// rebuild (run end, interleave toggle, clear, radio change) and on
 // URL sync — the link then always matches the current payload, on screen
 // and in the print snapshot alike.
 function syncTryItHere() {
   const box = $("output");
+  const mode = shareLinkMode();
   let el = box.querySelector(".try-it-here");
-  if (!$("printShareLink").checked || !box.textContent.trim()) {
+  if (mode === "none" || !box.textContent.trim()) {
     if (el) el.remove();
     return;
   }
@@ -1800,6 +1824,25 @@ function syncTryItHere() {
   a.href = url;
   a.title = url;
   a.textContent = "Try it here";
+  // QR mode: keep a single <img> in sync (replace on URL change). If the
+  // QR library is unavailable the footer degrades to link-only.
+  let img = el.querySelector("img.try-qr");
+  if (mode === "qr") {
+    const data = qrDataUrl(url);
+    if (data) {
+      if (!img) {
+        img = document.createElement("img");
+        img.className = "try-qr";
+        img.alt = "QR code linking to this output's share URL";
+        el.appendChild(img);
+      }
+      if (img.src !== data) img.src = data;
+    } else if (img) {
+      img.remove();
+    }
+  } else if (img) {
+    img.remove();
+  }
   box.scrollTop = box.scrollHeight;
 }
 
@@ -1914,20 +1957,32 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
   font-weight: 400;
   font-size: 10pt;
 }
+/* QR code in the footer (Link + QR mode): crisp on paper at 4px
+   modules; the quiet zone comes from the data URL itself. */
+.try-it-here .try-qr {
+  display: block;
+  width: 92px;
+  height: 92px;
+  margin-top: 8px;
+}
 @media print { body { padding: 0; } }
 `;
-  // Optional footer: when the "Include share link in output" checkbox is
-  // on and the on-screen mirror isn't already in the box (it normally is —
-  // syncTryItHere() pins it after every run), end the page with a
-  // "Try it here" link to this payload's share URL (built from the
-  // CURRENT editor content, like the Share button).
+  // Optional footer: when a share-link mode is on and the on-screen
+  // mirror isn't already in the box (it normally is — syncTryItHere()
+  // pins it after every run), end the page with a "Try it here" link
+  // to this payload's share URL (built from the CURRENT editor content,
+  // like the Share button), plus the QR when the mode asks for it.
+  const mode = shareLinkMode();
   let footerHtml = "";
-  if ($("printShareLink").checked && !box.querySelector(".try-it-here")) {
+  if (mode !== "none" && !box.querySelector(".try-it-here")) {
     const esc = (s) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const url = esc(currentShareUrl());
+    const rawUrl = currentShareUrl();
+    const url = esc(rawUrl);
+    const data = mode === "qr" ? qrDataUrl(rawUrl) : null;
     footerHtml =
       `\n<div class="try-it-here">\n` +
       `<a href="${url}" target="_blank" rel="noopener" title="${url}">Try it here</a>\n` +
+      (data ? `<img class="try-qr" src="${data}" alt="QR code linking to this output's share URL" />\n` : "") +
       `</div>`;
   }
   win.document.write(
@@ -2397,7 +2452,9 @@ $("copyOutput").addEventListener("click", () => {
 $("printOutput").addEventListener("click", printOutput);
 // "Include share link in output": toggling the checkbox immediately
 // shows/removes the on-screen mirror (and thereby the print footer too).
-$("printShareLink").addEventListener("change", syncTryItHere);
+document.querySelectorAll('input[name="shareLinkMode"]').forEach((r) =>
+  r.addEventListener("change", syncTryItHere)
+);
 $("copyCode").addEventListener("click", () => {
   copyText(editor.getValue(), $("copyCode"), "Copy code");
 });
