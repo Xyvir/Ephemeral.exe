@@ -2519,7 +2519,10 @@ function syncMoreHint() {
   const moreBelow =
     editor.getBoundingClientRect().bottom >
     dock.getBoundingClientRect().top + 2;
-  hint.hidden = !moreBelow;
+  // .visible (not [hidden]): the chevron eases in/out via its opacity
+  // transition, and display can't animate — the element stays in the
+  // DOM and merely fades to transparent when the fold is fully shown.
+  hint.classList.toggle("visible", moreBelow);
 }
 
 window.addEventListener("resize", () => {

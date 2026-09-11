@@ -130,10 +130,11 @@ textarea { min-height: 150px; resize: vertical; }
 }
 /* "More code below" chevron: a tiny centered marker INSIDE the dock,
    just under its top border — it lives on the dock's own panel
-   background, so it never overlays editor text (JS toggles it while
-   content is hidden beneath the fold). Pure decoration —
-   pointer-events: none so it never intercepts clicks, and [hidden] is
-   re-asserted like .icon-btn. */
+   background, so it never overlays editor text. JS toggles .visible
+   while content is hidden beneath the fold; the marker eases in and
+   out (opacity/transform only — display can't animate, so the element
+   stays in the DOM and merely transparent when idle). Pure decoration
+   — pointer-events: none so it never intercepts clicks. */
 .more-hint {
   position: absolute;
   top: 1px;
@@ -142,8 +143,14 @@ textarea { min-height: 150px; resize: vertical; }
   text-align: center;
   pointer-events: none;
   z-index: 9;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity .22s ease, transform .22s ease;
 }
-.more-hint[hidden] { display: none; }
+.more-hint.visible { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .more-hint { transition: none; }
+}
 .more-hint .more-tri {
   display: inline-block;
   width: 0;
@@ -737,4 +744,68 @@ pre.code-block:hover .block-copy,
 .about-link a:hover {
   color: var(--accent-hi);
   text-decoration: underline;
+}
+
+/* ============================================================
+   Mobile / narrow screens
+   The desktop layout assumes ~860px: a side-by-side header, an
+   860px-capped body, and a bottom dock whose row never needs to
+   wrap. On a phone that reads as a zoomed-out desktop page — the
+   viewport meta is already width=device-width, so the fixes are
+   about reclaiming padding and letting rows wrap cleanly.
+   ============================================================ */
+@media (max-width: 640px) {
+  /* Reclaim horizontal space: the desktop card padding (16px + 16px
+     card padding) eats 25% of a 375px screen. */
+  body { padding: 10px 8px; }
+  section { padding: 10px 10px 12px; }
+
+  /* Keep the browser from juggling font sizes on rotation / focus. */
+  html { -webkit-text-size-adjust: 100%; }
+
+  /* Header: title and status pill stack instead of squeezing into
+     one baseline row (the pill was being crushed against the h1). */
+  header { flex-direction: column; align-items: flex-start; gap: 6px; }
+  h1 { font-size: 17px; }
+
+  /* Editor: the desktop body reads well at 14px mono, but a phone
+     width fits only ~40 chars per line — drop to 12.5px for ~46.
+     OverType sizes the textarea and preview from its own inline
+     styles, so target both layers; line-height matches 1.6 for
+     touch-accuracy when tapping to place the caret. */
+  #editor textarea.overtype-input,
+  #editor .overtype-preview {
+    font-size: 12.5px !important;
+    line-height: 1.6 !important;
+  }
+
+  /* Toolbar icon buttons: 14px glyphs are small for touch — bump
+     hit areas to a comfortable 40px+ square. */
+  .icon-btn { padding: 9px; }
+  .icon-btn svg { width: 17px; height: 17px; }
+
+  /* Bottom dock: the Run/Share/checkbox row must wrap on a ~360px
+     screen instead of overflowing, and the Run button should span
+     the full width — it's the primary action. */
+  .run-dock { padding: 6px 10px 10px; }
+  .actions { flex-wrap: wrap; gap: 8px; }
+  .run-btn { flex: 1 1 100%; min-width: 0; }
+  .share-btn { flex: 1 1 auto; }
+  .print-link-opt { white-space: normal; }
+
+  /* Output: mono text at 13px overflows a narrow panel — size down
+     and let long tokens (hashes, URLs) break instead of scrolling. */
+  .output { font-size: 12px; }
+  .code-block code { font-size: 12px; }
+
+  /* Language-help popover: it tracks the editor's width, which is
+     fine, but its dense mono grid needs a smaller column minimum
+     to avoid a single squished column on narrow screens. */
+  .lang-help-list { grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); }
+}
+
+/* Very narrow screens (<360px): collapse the remaining margins. */
+@media (max-width: 360px) {
+  body { padding: 8px 4px; }
+  .section-head h2 { margin-top: 12px; }
 }

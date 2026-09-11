@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Ephemeral Web — distributed code runner</title>
 <link rel="stylesheet" href="app.css" />
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
@@ -59,7 +59,7 @@
   <div id="editor" class="editor" aria-label="Markdown input with code blocks"></div>
   </div>
   <div class="run-dock">
-    <div id="editorMore" class="more-hint" hidden><span class="more-tri"></span></div>
+    <div id="editorMore" class="more-hint" aria-hidden="true"><span class="more-tri"></span></div>
     <div id="langStatus" class="lang-status" hidden></div>
     <div class="actions">
         <button id="run" class="run-btn" title="Run in Cluster (Ctrl+Enter)">
