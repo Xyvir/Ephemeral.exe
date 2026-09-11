@@ -807,9 +807,15 @@ pre.code-block:hover .block-copy,
   /* Keep the browser from juggling font sizes on rotation / focus. */
   html { -webkit-text-size-adjust: 100%; }
 
-  /* Header: title and status pill stack instead of squeezing into
-     one baseline row (the pill was being crushed against the h1). */
-  header { flex-direction: column; align-items: flex-start; gap: 6px; }
+  /* Header: title on the left and status pill pinned to the upper right. */
+  header {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .title-block { flex: 1 1 auto; min-width: 0; }
+  .meta { flex: 0 0 auto; margin-top: 1px; }
   h1 { font-size: 17px; }
 
   /* Editor: the desktop body reads well at 14px mono, but a phone
@@ -828,22 +834,29 @@ pre.code-block:hover .block-copy,
   .icon-btn { padding: 9px; }
   .icon-btn svg { width: 17px; height: 17px; }
 
-  /* Bottom dock: the Run/Share/checkbox row must wrap on a ~360px
-     screen instead of overflowing, and the Run button should span
-     the full width — it's the primary action. */
+  /* Bottom dock: Run button spans full width; Share URL and the
+     compact radio options share the row below it. */
   .run-dock { padding: 6px 10px 10px; }
-  .actions { flex-wrap: wrap; gap: 8px; align-items: center; }
+  .actions { flex-wrap: wrap; gap: 6px 8px; align-items: center; }
   .run-btn { flex: 1 1 100%; min-width: 0; }
-  .share-btn { flex: 0 0 auto; }
+  .share-btn { flex: 0 0 auto; padding: 6px 10px; }
+  .print-link-opt legend,
+  .print-link-opt .print-link-opt-legend {
+    display: none;
+  }
   .print-link-opt,
   fieldset.print-link-opt {
     display: inline-flex;
     align-items: center;
     flex: 1 1 auto;
-    gap: 4px 8px;
-    white-space: normal;
+    gap: 2px 8px;
+    white-space: nowrap;
     border: none !important;
     outline: none !important;
+  }
+  .print-link-opt label {
+    font-size: 11px;
+    gap: 3px;
   }
 
   /* Output: mono text at 13px overflows a narrow panel — size down
