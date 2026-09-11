@@ -71,12 +71,12 @@
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
           <span>Share URL</span>
         </button>
-        <fieldset class="print-link-opt" title="What the output ends with: nothing, a 'Try it here' link, or that link plus a QR code (scannable from paper)">
-          <legend>Share link output</legend>
+        <div class="print-link-opt" role="radiogroup" aria-label="Share link output" title="What the output ends with: nothing, a 'Try it here' link, or that link plus a QR code (scannable from paper)">
+          <span class="print-link-opt-legend">Share link output</span>
           <label><input type="radio" name="shareLinkMode" value="none" /> None</label>
           <label><input type="radio" name="shareLinkMode" value="link" checked /> Link only</label>
           <label><input type="radio" name="shareLinkMode" value="qr" /> Link + QR</label>
-        </fieldset>
+        </div>
       </div>
       <p id="runNote" class="run-note">
         <strong class="caps">Public network</strong> — anything you submit is
