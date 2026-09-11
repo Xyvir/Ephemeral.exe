@@ -807,16 +807,35 @@ pre.code-block:hover .block-copy,
   /* Keep the browser from juggling font sizes on rotation / focus. */
   html { -webkit-text-size-adjust: 100%; }
 
-  /* Header: title on the left and status pill pinned to the upper right. */
+  /* Header: row 1 has title on the left and status pill on the upper right;
+     row 2 has the subtitle spanning all the way across on one line. */
   header {
-    flex-direction: row;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    align-items: center;
+    gap: 3px 8px;
   }
-  .title-block { flex: 1 1 auto; min-width: 0; }
-  .meta { flex: 0 0 auto; margin-top: 1px; }
-  h1 { font-size: 17px; }
+  .title-block { display: contents; }
+  h1 {
+    grid-column: 1;
+    grid-row: 1;
+    font-size: 17px;
+    margin: 0;
+  }
+  .meta {
+    grid-column: 2;
+    grid-row: 1;
+    margin-top: 0;
+  }
+  .subtitle {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    white-space: nowrap;
+    font-size: clamp(8.5px, 2.6vw, 10.5px);
+    letter-spacing: .08em;
+    margin-top: 0;
+  }
 
   /* Editor: the desktop body reads well at 14px mono, but a phone
      width fits only ~40 chars per line — drop to 12.5px for ~46.
