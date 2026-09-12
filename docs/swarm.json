@@ -1,8 +1,47 @@
 {
-  "updated": "2026-09-12T15:20:04Z",
+  "updated": "2026-09-12T20:23:44Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
+    {
+      "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
+      "relay": "https://use1-1.relay.n0.iroh.link./",
+      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6pvjydaeakhqdbmx5koay",
+      "images": [
+        "docker.io/catthehacker/ubuntu:act-22.04",
+        "docker.io/chromedp/headless-shell:138.0.7204.169",
+        "docker.io/chromedp/headless-shell:latest",
+        "docker.io/clfoundation/sbcl:slim",
+        "docker.io/continuumio/anaconda3:latest",
+        "docker.io/crystallang/crystal:latest",
+        "docker.io/library/alpine:latest",
+        "docker.io/library/eclipse-temurin:21-jdk-alpine",
+        "docker.io/library/elixir:alpine",
+        "docker.io/library/gcc:latest",
+        "docker.io/library/golang:alpine",
+        "docker.io/library/haskell:slim",
+        "docker.io/library/node:18-alpine",
+        "docker.io/library/perl:slim",
+        "docker.io/library/php:alpine",
+        "docker.io/library/python:3.12-slim",
+        "docker.io/library/r-base:latest",
+        "docker.io/library/ruby:alpine",
+        "docker.io/library/rust:alpine",
+        "docker.io/library/swipl:latest",
+        "docker.io/nickblah/lua:5.4-alpine",
+        "docker.io/nimlang/nim:alpine",
+        "docker.io/ocaml/opam:latest",
+        "docker.io/rhysd/actionlint:latest",
+        "docker.io/tymills620/ephemeral-python-uv:latest",
+        "mcr.microsoft.com/playwright:v1.63.0-jammy"
+      ],
+      "url": null,
+      "probe": "ok",
+      "probe_at": "2026-09-12T20:23:44Z",
+      "probe_detail": "ok",
+      "probe_ms": 1953,
+      "rtt_ms": 259
+    },
     {
       "node_id": "2970afc32b63f928503aea8c39d434baf3b6d58630ee3c41b77dd9d528781030",
       "relay": "https://use1-1.relay.n0.iroh.link./",
@@ -48,49 +87,10 @@
       ],
       "url": null,
       "probe": "ok",
-      "probe_at": "2026-09-12T15:20:04Z",
+      "probe_at": "2026-09-12T20:23:44Z",
       "probe_detail": "ok",
-      "probe_ms": 2467,
-      "rtt_ms": 844
-    },
-    {
-      "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6k7aidaeakhqdbmwxycay",
-      "images": [
-        "docker.io/catthehacker/ubuntu:act-22.04",
-        "docker.io/chromedp/headless-shell:138.0.7204.169",
-        "docker.io/chromedp/headless-shell:latest",
-        "docker.io/clfoundation/sbcl:slim",
-        "docker.io/continuumio/anaconda3:latest",
-        "docker.io/crystallang/crystal:latest",
-        "docker.io/library/alpine:latest",
-        "docker.io/library/eclipse-temurin:21-jdk-alpine",
-        "docker.io/library/elixir:alpine",
-        "docker.io/library/gcc:latest",
-        "docker.io/library/golang:alpine",
-        "docker.io/library/haskell:slim",
-        "docker.io/library/node:18-alpine",
-        "docker.io/library/perl:slim",
-        "docker.io/library/php:alpine",
-        "docker.io/library/python:3.12-slim",
-        "docker.io/library/r-base:latest",
-        "docker.io/library/ruby:alpine",
-        "docker.io/library/rust:alpine",
-        "docker.io/library/swipl:latest",
-        "docker.io/nickblah/lua:5.4-alpine",
-        "docker.io/nimlang/nim:alpine",
-        "docker.io/ocaml/opam:latest",
-        "docker.io/rhysd/actionlint:latest",
-        "docker.io/tymills620/ephemeral-python-uv:latest",
-        "mcr.microsoft.com/playwright:v1.63.0-jammy"
-      ],
-      "url": null,
-      "probe": "ok",
-      "probe_at": "2026-09-12T15:20:04Z",
-      "probe_detail": "ok",
-      "probe_ms": 1866,
-      "rtt_ms": 1141
+      "probe_ms": 2448,
+      "rtt_ms": 308
     }
   ],
   "bastions": [
@@ -101,9 +101,9 @@
       "images": [],
       "url": "https://ephemeralexe-production.up.railway.app",
       "probe": "ok",
-      "probe_at": "2026-09-12T15:20:04Z",
+      "probe_at": "2026-09-12T20:23:44Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 285
+      "probe_ms": 263
     }
   ]
 }
