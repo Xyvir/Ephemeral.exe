@@ -24,6 +24,12 @@ Cluster configuration (environment variables):
                              unset, a stable identity is auto-persisted to disk
     EPHEMERAL_ALLOW_NETWORK  "1" to let remote jobs use network access (default "0")
     EPHEMERAL_PRIVATE        "1" (or ``--private``) — skip the public swarm list
+    EPHEMERAL_TRAY_API       "1" to auto-start the loopback REST bridge at boot
+                             (same /ephemeral/api/v1 contract as the self-host
+                             API server, bound to 127.0.0.1 only; also toggled
+                             from the Distributed menu)
+    EPHEMERAL_TRAY_API_PORT  bridge port (default 8788 — 8787 is the self-host
+                             sidecar slot)
 """
 from __future__ import annotations
 
@@ -61,6 +67,7 @@ from ephemeral_net.swarm import (
 
 from ephemeral_ui import platform
 from ephemeral_ui.backends.base import Backend
+from ephemeral_ui.tray_api import TrayApi, TRAY_API_PORT, autostart_enabled, persist_enabled
 
 
 # --- Cluster lifecycle (dedicated event loop thread) ---------------------
@@ -264,6 +271,8 @@ class DistributedBackend(Backend):
             allow_network=os.getenv("EPHEMERAL_ALLOW_NETWORK", "0") == "1",
         )
         self._cluster_start_lock = threading.Lock()
+        # Opt-in loopback REST bridge (Distributed -> Local REST API).
+        self.tray_api = TrayApi(self)
 
     # --- identity --------------------------------------------------------
 
@@ -289,6 +298,47 @@ class DistributedBackend(Backend):
 
     def startup_message(self) -> str:
         return "Ephemeral tray started — node warming up in the background."
+
+    # --- local REST bridge -----------------------------------------------
+
+    def tray_api_checked(self, _item=None) -> bool:
+        """Whether the loopback REST bridge is currently serving."""
+        return self.tray_api.is_running()
+
+    def toggle_tray_api(self, icon, item_unused=None):
+        """Flip the opt-in REST bridge (same /ephemeral/api/v1 contract as
+        the self-host API server, loopback-only, backed by this node).
+
+        The checked state persists (state marker) so the bridge resumes on
+        the next tray start; starting it also ensures the cluster node is
+        up so the first REST job does not bootstrap on the request path.
+        """
+        if self.tray_api.is_running():
+            self.tray_api.stop()
+            persist_enabled(False)
+            icon.notify(
+                f"Local REST API off (was port {self.tray_api.port}).",
+                title="Ephemeral",
+            )
+            return
+        self.tray_api = TrayApi(self)  # re-read EPHEMERAL_TRAY_API_PORT
+        ok, result = self.tray_api.start()
+        if not ok:
+            icon.notify(f"Local REST API failed to start: {result}", title="Ephemeral Error")
+            return
+        persist_enabled(True)
+        port = self.tray_api.port
+        port_note = (
+            f"" if port == TRAY_API_PORT
+            else f"\nPort {TRAY_API_PORT} was taken."
+        )
+        icon.notify(
+            f"Local REST API on http://127.0.0.1:{port}{port_note}",
+            title="Ephemeral",
+        )
+        # Warm the node now so REST jobs do not bootstrap inside the
+        # request (best-effort; the first job retries anyway).
+        threading.Thread(target=self._warmup_cluster, name="ephemeral-api-warmup", daemon=True).start()
 
     # --- cluster helpers -------------------------------------------------
 
@@ -1239,6 +1289,20 @@ class DistributedBackend(Backend):
         threading.Thread(
             target=self._prehydrate_bash, name="ephemeral-prehydrate", daemon=True
         ).start()
+        # Opt-in REST bridge resumes here when persisted on (marker or env).
+        if autostart_enabled():
+            threading.Thread(target=self._start_tray_api_quietly, name="ephemeral-api-start", daemon=True).start()
+
+    def _start_tray_api_quietly(self) -> None:
+        """Best-effort bridge start at boot; never blocks the icon."""
+        try:
+            ok, result = self.tray_api.start()
+            if ok:
+                log.info("tray REST bridge resumed on port %s", self.tray_api.port)
+            else:
+                log.warning("tray REST bridge resume failed: %s", result)
+        except Exception as e:
+            log.warning("tray REST bridge resume error: %s", e)
 
     def setup_tray(self, icon):
         pass  # warmup already started in start_background()
@@ -1249,6 +1313,8 @@ class DistributedBackend(Backend):
             platform.item('Distributed', platform.pystray.Menu(
                 platform.item('Private Mode', lambda icon, i: self.toggle_private(icon, i),
                               checked=self.private_checked),
+                platform.item('Local REST API', lambda icon, i: self.toggle_tray_api(icon, i),
+                              checked=self.tray_api_checked),
                 platform.item('Pre-hydrate All Images', lambda icon, i: self.on_prehydrate_all(icon, i)),
             )),
         )
@@ -1267,9 +1333,11 @@ class DistributedBackend(Backend):
         self.cluster.stop()
 
     def shutdown(self) -> None:
+        self.tray_api.stop()
         self.cluster.stop()
 
     def quit(self, icon, item_unused=None):
+        self.tray_api.stop()
         self.cluster.stop()
         if platform.HAS_GUI:
             icon.stop()
