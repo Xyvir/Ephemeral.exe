@@ -279,6 +279,14 @@ def open_terminal_emulator(script_path: str) -> bool:
     return False
 
 
+def _error_sink():
+    """Where long-form feedback goes: stderr in CLI/pipe mode (a pipe client
+    wants the process's own streams, not a GUI window), stdout otherwise
+    (show_terminal_window's fallback printer) so tray/GUI behavior is
+    unchanged."""
+    return sys.stderr if CLI_MODE else sys.stdout
+
+
 def show_terminal_window(title: str, text: str, header: str | None = None) -> None:
     """Open a detached, non-blocking terminal window showing ``text``.
 
@@ -295,6 +303,12 @@ def show_terminal_window(title: str, text: str, header: str | None = None) -> No
     """
     if header:
         text = f"{header}\n\n{text}"
+    if CLI_MODE:
+        # Pipe/CLI callers read this process's streams; popping a GUI
+        # console from a headless run only orphans windows.
+        print(f"--- {title} ---", file=_error_sink())
+        print(text, file=_error_sink())
+        return
     try:
         if sys.platform != "win32":
             _show_terminal_linux(title, text)

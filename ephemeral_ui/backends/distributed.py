@@ -1195,6 +1195,8 @@ class DistributedBackend(Backend):
                 f"Cluster execution error:\n{e}",
                 header="EPHEMERAL EXECUTION ERROR",
             )
+            if platform.CLI_MODE:
+                sys.exit(1)
             return
         finally:
             platform.set_icon_animation_state(icon, False)
@@ -1217,6 +1219,8 @@ class DistributedBackend(Backend):
                 result.get("stderr") or f"Exit code {result.get('exit_code')}",
                 header="EPHEMERAL EXECUTION ERROR",
             )
+            if platform.CLI_MODE:
+                sys.exit(result.get("exit_code") or 1)
             return
 
         stdout = result.get("stdout") or ""
