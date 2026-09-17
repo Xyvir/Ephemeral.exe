@@ -126,6 +126,46 @@ class FakeBackend:
         pass
 
 
+# --- PATH shim (WindowsApps hardlink, cmd fallback) -----------------------
+
+import shutil  # noqa: E402
+from ephemeral_ui.platform import StartupManager  # noqa: E402
+
+if sys.platform == "win32":
+    apps = tempfile.mkdtemp()
+    real_dir = tempfile.mkdtemp()
+    try:
+        sm = StartupManager("Ephemeral-Distributed", "Ephemeral-Distributed")
+        exe_shim = os.path.join(apps, "Ephemeral-Distributed.exe")
+        cmd_shim = os.path.join(apps, "Ephemeral-Distributed.cmd")
+        sm._shim_paths = lambda: (exe_shim, cmd_shim)
+
+        real_exe = os.path.join(real_dir, "Ephemeral-Distributed.exe")
+        shutil.copy2(sys.executable, real_exe)
+
+        sm._write_shim(real_exe)
+        check("shim is a true hardlink to the installed exe",
+              os.path.exists(exe_shim) and os.path.samefile(exe_shim, real_exe))
+
+        sm._write_shim(real_exe)  # idempotent: re-link on upgrade
+        check("re-link is idempotent", os.path.exists(exe_shim))
+
+        real_link = os.link
+        os.link = lambda *a, **k: (_ for _ in ()).throw(OSError("no hardlinks"))
+        try:
+            sm._write_shim(real_exe)
+        finally:
+            os.link = real_link
+        check("hardlink failure falls back to a .cmd shim",
+              os.path.exists(cmd_shim) and real_exe in open(cmd_shim, encoding="utf-8").read())
+
+        sm._remove_shim()
+        check("uninstall clears both shims",
+              not os.path.exists(exe_shim) and not os.path.exists(cmd_shim))
+    finally:
+        shutil.rmtree(apps, ignore_errors=True)
+        shutil.rmtree(real_dir, ignore_errors=True)
+
 fake = FakeBackend()
 buf = io.StringIO(doc)
 orig_stdin = sys.stdin

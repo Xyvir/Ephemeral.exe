@@ -502,6 +502,43 @@ class StartupManager:
         ext = '.exe' if is_frozen else '.py'
         return os.path.join(install_dir, f'{self.app_key}{ext}')
 
+    def _shim_paths(self):
+        """Terminal-facing entry points in the per-user WindowsApps folder
+        (already on PATH): a hardlink named ``<app_key>.exe`` — the real exe
+        identity, so ``ephemeral.exe`` types literally — with a ``.cmd``
+        fallback for filesystems that refuse hardlinks."""
+        apps = os.path.join(os.getenv('LOCALAPPDATA', os.path.expanduser('~')),
+                            'Microsoft', 'WindowsApps')
+        return (os.path.join(apps, f'{self.app_key}.exe'),
+                os.path.join(apps, f'{self.app_key}.cmd'))
+
+    def _write_shim(self, install_path):
+        """Link (or fallback-write) the PATH shim; never fatal."""
+        exe_shim, cmd_shim = self._shim_paths()
+        try:
+            os.makedirs(os.path.dirname(exe_shim), exist_ok=True)
+            for stale in (exe_shim, cmd_shim):
+                if os.path.lexists(stale):
+                    os.remove(stale)
+            try:
+                # Hardlink: zero bytes, no admin, and the file IS the app —
+                # ``ephemeral.exe --cli -`` works from any terminal. Re-linked
+                # on every install so it never goes stale across upgrades.
+                os.link(install_path, exe_shim)
+            except OSError:
+                with open(cmd_shim, 'w', encoding='utf-8') as f:
+                    f.write(f'@"{install_path}" %*\r\n')
+        except OSError as e:
+            print(f"Failed to write PATH shim: {e}")
+
+    def _remove_shim(self):
+        for shim in self._shim_paths():
+            try:
+                if os.path.lexists(shim):
+                    os.remove(shim)
+            except OSError as e:
+                print(f"Failed to remove PATH shim: {e}")
+
     def _autostart_desktop_path(self):
         key = self.app_key.lower().replace(' ', '-')
         return os.path.join(os.path.expanduser("~"), ".config", "autostart", f"{key}.desktop")
@@ -521,6 +558,7 @@ class StartupManager:
                     shutil.copy2(app_path, install_path)
 
                 winreg.SetValueEx(key, self.app_key, 0, winreg.REG_SZ, f'"{install_path}"')
+                self._write_shim(install_path)
                 if icon:
                     icon.notify(f"Installed to and set to run on boot from:\n{install_path}", title="Ephemeral Setup")
             else:
@@ -529,6 +567,7 @@ class StartupManager:
                 except FileNotFoundError:
                     pass
 
+                self._remove_shim()
                 if os.path.exists(install_path):
                     if os.path.abspath(app_path) != os.path.abspath(install_path):
                         try:
