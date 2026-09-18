@@ -24,6 +24,10 @@ Cluster configuration (environment variables):
                              unset, a stable identity is auto-persisted to disk
     EPHEMERAL_ALLOW_NETWORK  "1" to let remote jobs use network access (default "0")
     EPHEMERAL_PRIVATE        "1" (or ``--private``) — skip the public swarm list
+    EPHEMERAL_TRAY_PIPE      "0" to disable the local named-pipe run bridge
+                             (local pipe ephemeral-run; same run contract as the
+                             self-host API server, token-gated, no sockets)
+    EPHEMERAL_TRAY_PIPE_NAME override for the pipe path
 """
 from __future__ import annotations
 
@@ -61,6 +65,7 @@ from ephemeral_net.swarm import (
 
 from ephemeral_ui import platform
 from ephemeral_ui.backends.base import Backend
+from ephemeral_ui.tray_pipe import TrayPipe, autostart_enabled, persist_enabled
 
 
 # --- Cluster lifecycle (dedicated event loop thread) ---------------------
@@ -264,6 +269,11 @@ class DistributedBackend(Backend):
             allow_network=os.getenv("EPHEMERAL_ALLOW_NETWORK", "0") == "1",
         )
         self._cluster_start_lock = threading.Lock()
+        # Local named-pipe run bridge (\\.\pipe\ephemeral-run): lets tools on
+        # this machine (e.g. the Lithic tauri app) submit runs through this
+        # node without sockets, HTTP, or clipboard tricks. On by default;
+        # EPHEMERAL_TRAY_PIPE=0 or the Distributed menu kills it.
+        self.tray_pipe = TrayPipe(self)
 
     # --- identity --------------------------------------------------------
 
@@ -289,6 +299,42 @@ class DistributedBackend(Backend):
 
     def startup_message(self) -> str:
         return "Ephemeral tray started — node warming up in the background."
+
+    # --- local pipe bridge -----------------------------------------------
+
+    def tray_pipe_checked(self, _item=None) -> bool:
+        """Whether the named-pipe run bridge is currently serving."""
+        return self.tray_pipe.is_running()
+
+    def toggle_tray_pipe(self, icon, item_unused=None):
+        """Flip the local named-pipe run bridge (same run contract as the
+        self-host API server, no sockets, token-gated, backed by this node).
+
+        The checked state persists (state marker) so the bridge resumes on
+        the next tray start; starting it also ensures the cluster node is
+        up so the first bridged run does not bootstrap on the request path.
+        """
+        if self.tray_pipe.is_running():
+            self.tray_pipe.stop()
+            persist_enabled(False)
+            icon.notify(
+                "Local pipe bridge off.",
+                title="Ephemeral",
+            )
+            return
+        self.tray_pipe = TrayPipe(self)  # re-read EPHEMERAL_TRAY_PIPE_NAME
+        ok, result = self.tray_pipe.start()
+        if not ok:
+            icon.notify(f"Local pipe bridge failed to start: {result}", title="Ephemeral Error")
+            return
+        persist_enabled(True)
+        icon.notify(
+            f"Local pipe bridge on {self.tray_pipe.pipe_name}",
+            title="Ephemeral",
+        )
+        # Warm the node now so bridged runs do not bootstrap inside the
+        # request (best-effort; the first run retries anyway).
+        threading.Thread(target=self._warmup_cluster, name="ephemeral-pipe-warmup", daemon=True).start()
 
     # --- cluster helpers -------------------------------------------------
 
@@ -1239,6 +1285,21 @@ class DistributedBackend(Backend):
         threading.Thread(
             target=self._prehydrate_bash, name="ephemeral-prehydrate", daemon=True
         ).start()
+        # Pipe bridge resumes here when not explicitly disabled (no marker
+        # and EPHEMERAL_TRAY_PIPE != 0).
+        if autostart_enabled():
+            threading.Thread(target=self._start_tray_pipe_quietly, name="ephemeral-pipe-start", daemon=True).start()
+
+    def _start_tray_pipe_quietly(self) -> None:
+        """Best-effort bridge start at boot; never blocks the icon."""
+        try:
+            ok, result = self.tray_pipe.start()
+            if ok:
+                log.info("tray pipe bridge resumed on %s", self.tray_pipe.pipe_name)
+            else:
+                log.warning("tray pipe bridge resume failed: %s", result)
+        except Exception as e:
+            log.warning("tray pipe bridge resume error: %s", e)
 
     def setup_tray(self, icon):
         pass  # warmup already started in start_background()
@@ -1250,6 +1311,8 @@ class DistributedBackend(Backend):
                 platform.item('Private Mode', lambda icon, i: self.toggle_private(icon, i),
                               checked=self.private_checked),
                 platform.item('Pre-hydrate All Images', lambda icon, i: self.on_prehydrate_all(icon, i)),
+                platform.item('Local Pipe Bridge', lambda icon, i: self.toggle_tray_pipe(icon, i),
+                              checked=self.tray_pipe_checked),
             )),
         )
 
