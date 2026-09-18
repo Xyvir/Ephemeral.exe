@@ -66,6 +66,7 @@ from ephemeral_net.swarm import (
 
 from ephemeral_ui import platform
 from ephemeral_ui.backends.base import Backend
+from ephemeral_ui.tray_pipe import TrayPipe, autostart_enabled, persist_enabled
 
 
 # --- Cluster lifecycle (dedicated event loop thread) ---------------------
@@ -269,6 +270,13 @@ class DistributedBackend(Backend):
             allow_network=os.getenv("EPHEMERAL_ALLOW_NETWORK", "0") == "1",
         )
         self._cluster_start_lock = threading.Lock()
+        # Local pipe trigger (double-knock doorbell on the ephemeral-run
+        # pipe): knock 1 acks and arms, knock 2 within the arm window makes
+        # this tray run the clipboard, exactly like a ctrl+alt+x press. No
+        # payload ever travels the pipe - the clipboard stays the data
+        # channel. On by default; EPHEMERAL_TRAY_PIPE=0 or the Distributed
+        # menu kills it.
+        self.tray_pipe = TrayPipe(self)
 
     # --- identity --------------------------------------------------------
 
@@ -295,6 +303,43 @@ class DistributedBackend(Backend):
     def startup_message(self) -> str:
         return "Ephemeral tray started — node warming up in the background."
 
+    # --- local pipe bridge -----------------------------------------------
+
+    def tray_pipe_checked(self, _item=None) -> bool:
+        """Whether the pipe trigger is currently listening."""
+        return self.tray_pipe.is_running()
+
+    def toggle_tray_pipe(self, icon, item_unused=None):
+        """Flip the local pipe trigger: knock 1 on the pipe acks and arms,
+        knock 2 within the arm window fires Run Clipboard, exactly like the
+        hotkey press (nothing travels the pipe; the clipboard remains the
+        data channel).
+
+        The checked state persists (state marker) so the trigger
+        resumes on the next tray start.
+        """
+        if self.tray_pipe.is_running():
+            self.tray_pipe.stop()
+            persist_enabled(False)
+            icon.notify(
+                "Local pipe trigger off.",
+                title="Ephemeral",
+            )
+            return
+        self.tray_pipe = TrayPipe(self)  # re-read EPHEMERAL_TRAY_PIPE_NAME
+        ok, result = self.tray_pipe.start()
+        if not ok:
+            icon.notify(f"Local pipe trigger failed to start: {result}", title="Ephemeral Error")
+            return
+        persist_enabled(True)
+        self.tray_pipe.attach_icon(icon)
+        icon.notify(
+            f"Local pipe trigger on {self.tray_pipe.pipe_name}",
+            title="Ephemeral",
+        )
+        # Warm the node now so bridged runs do not bootstrap inside the
+        # request (best-effort; the first run retries anyway).
+        threading.Thread(target=self._warmup_cluster, name="ephemeral-pipe-warmup", daemon=True).start()
 
     # --- cluster helpers -------------------------------------------------
 
@@ -1245,9 +1290,26 @@ class DistributedBackend(Backend):
         threading.Thread(
             target=self._prehydrate_bash, name="ephemeral-prehydrate", daemon=True
         ).start()
+        # Pipe trigger resumes here when not explicitly disabled (no marker
+        # and EPHEMERAL_TRAY_PIPE != 0).
+        if autostart_enabled():
+            threading.Thread(target=self._start_tray_pipe_quietly, name="ephemeral-pipe-start", daemon=True).start()
+
+    def _start_tray_pipe_quietly(self) -> None:
+        """Best-effort bridge start at boot; never blocks the icon."""
+        try:
+            ok, result = self.tray_pipe.start()
+            if ok:
+                log.info("tray pipe trigger resumed on %s", self.tray_pipe.pipe_name)
+            else:
+                log.warning("tray pipe trigger resume failed: %s", result)
+        except Exception as e:
+            log.warning("tray pipe trigger resume error: %s", e)
 
     def setup_tray(self, icon):
-        self.attach_pipe_trigger(icon)
+        # The pipe trigger needs the icon so runs animate and notify
+        # exactly like hotkey-triggered ones.
+        self.tray_pipe.attach_icon(icon)
 
     def extra_menu_items(self, icon) -> tuple:
         # Node status moved into About — no separate "Cluster Status" item.
@@ -1256,6 +1318,8 @@ class DistributedBackend(Backend):
                 platform.item('Private Mode', lambda icon, i: self.toggle_private(icon, i),
                               checked=self.private_checked),
                 platform.item('Pre-hydrate All Images', lambda icon, i: self.on_prehydrate_all(icon, i)),
+                platform.item('Local Pipe Trigger', lambda icon, i: self.toggle_tray_pipe(icon, i),
+                              checked=self.tray_pipe_checked),
             )),
         )
 

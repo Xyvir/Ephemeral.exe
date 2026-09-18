@@ -356,21 +356,14 @@ class LocalBackend(Backend):
                     icon.notify("Idling for 30 minutes. Stopping Podman VM.", title="Ephemeral Sleep")
                     self._stop_podman(icon)
 
-    def start_background(self) -> None:
-        super().start_background()  # resumes the shared pipe trigger
-
     # --- tray lifecycle --------------------------------------------------
 
     def setup_tray(self, icon):
-        # The shared pipe trigger needs the icon so runs animate and
-        # notify exactly like hotkey-triggered ones.
-        self.attach_pipe_trigger(icon)
         threading.Thread(target=self._idle_monitor, args=(icon,), daemon=True).start()
 
     def extra_menu_items(self, icon) -> tuple:
-        # No Distributed submenu on the local client, but the shared
-        # pipe trigger gets a top-level item of its own.
-        return self.pipe_trigger_menu_items()
+        # No Distributed submenu on the local client.
+        return ()
 
     # --- install verification --------------------------------------------
 
