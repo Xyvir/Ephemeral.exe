@@ -1,24 +1,18 @@
 """
-Local double-knock pipe trigger for the distributed tray.
+Local pipe trigger for the distributed tray.
 
-A doorbell with an arm/disarm step: the FIRST opening of the pipe (the
-``ephemeral-run`` entry under the system's named-pipe namespace) is only
-an acknowledgement — the tray is alive and the trigger arms for a short
-window. A SECOND opening within that window fires Run Clipboard, exactly
-as if the user had pressed ctrl+alt+x (results clobbered onto the
-clipboard as usual). No payload ever travels the pipe in either
-direction, so the clipboard remains the one and only data channel.
+A doorbell, nothing more: a local process opens the pipe (the
+``ephemeral-run`` entry under the system's named-pipe namespace) and the
+tray reacts exactly as if the user had pressed ctrl+alt+x — Run
+Clipboard, with results clobbered onto the clipboard as usual. No
+payload travels the pipe in either direction, so the clipboard remains
+the one and only data channel and the pipe carries nothing at all.
 
-Why two knocks: the first is a fast liveness probe with no side effects,
-so local tools can check for the tray without risking a run or clobbering
-the clipboard, and a stray single open (a scanner, a curious tool) can
-never execute anything on its own.
-
-The trigger is on by default (local tools find it with zero
-configuration). ``EPHEMERAL_TRAY_PIPE=0`` disables it entirely;
-``EPHEMERAL_TRAY_PIPE_NAME`` overrides the pipe path; the Distributed
-menu can toggle it at runtime (persisted via a state marker, same
-mechanism as private mode).
+The trigger is on by default (the whole point is that other local tools
+can find it without configuration). ``EPHEMERAL_TRAY_PIPE=0`` disables
+it entirely; ``EPHEMERAL_TRAY_PIPE_NAME`` overrides the pipe path; the
+Distributed menu can toggle it at runtime (persisted via a state marker,
+same mechanism as private mode).
 """
 
 from __future__ import annotations
@@ -121,10 +115,7 @@ def persist_enabled(enabled: bool) -> None:
 # --- server -----------------------------------------------------------------
 
 class TrayPipe:
-    """Double-knock doorbell that fires the tray's Run Clipboard action."""
-
-    #: How long the first knock keeps the trigger armed (seconds).
-    ARM_WINDOW_SECONDS = 3.0
+    """Named-pipe doorbell that fires the tray's Run Clipboard action."""
 
     def __init__(self, backend, pipe_name: str | None = None) -> None:
         self.backend = backend
@@ -132,9 +123,6 @@ class TrayPipe:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._icon = None
-        # Monotonic timestamp of the arming knock; only touched by the
-        # serve thread, so no lock is needed.
-        self._armed_at: float | None = None
 
     # --- lifecycle ----------------------------------------------------------
 
@@ -152,7 +140,6 @@ class TrayPipe:
         if os.getenv("EPHEMERAL_TRAY_PIPE", "").strip() == "0":
             return False, "disabled by EPHEMERAL_TRAY_PIPE=0"
         self._stop.clear()
-        self._armed_at = None
         self._thread = threading.Thread(
             target=self._serve, name="ephemeral-pipe-trigger", daemon=True
         )
@@ -162,8 +149,7 @@ class TrayPipe:
     def stop(self) -> None:
         self._stop.set()
         # Open and immediately close a client connection to unblock the
-        # server thread's waiting ConnectNamedPipe; the stop flag makes the
-        # server swallow that connection without arming or firing.
+        # server thread's waiting ConnectNamedPipe.
         try:
             with open(self.pipe_name, "rb", buffering=0):
                 pass
@@ -192,17 +178,9 @@ class TrayPipe:
             if self._stop.is_set():
                 _CloseHandle(handle)
                 break
-            # A connection IS a knock; no bytes are read or written. The
-            # first knock arms (ack), a second within the window fires.
-            now = time.monotonic()
-            armed = (
-                self._armed_at is not None
-                and now - self._armed_at <= self.ARM_WINDOW_SECONDS
-            )
-            self._armed_at = None if armed else now
+            # A connection IS the signal: no bytes are read or written.
             try:
-                if armed:
-                    self._ring()
+                self._ring()
             except Exception:
                 try:
                     from ephemeral_ui.platform import log
