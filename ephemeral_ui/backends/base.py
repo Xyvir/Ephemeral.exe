@@ -24,10 +24,15 @@ import threading
 from abc import ABC, abstractmethod
 
 from ephemeral_ui.platform import StartupManager
+from ephemeral_ui.tray_pipe import TrayPipeBackend
 
 
-class Backend(ABC):
-    """Generic contract the unified tray front end drives."""
+class Backend(TrayPipeBackend, ABC):
+    """Generic contract the unified tray front end drives.
+
+    Inherits the shared local pipe trigger (double-knock doorbell) so
+    both tiers expose the same benign surface; see tray_pipe.TrayPipeBackend.
+    """
 
     #: pystray icon/app identity (registry Run key, install dir, icon name).
     app_key: str
@@ -35,6 +40,7 @@ class Backend(ABC):
     display_name: str
 
     def __init__(self) -> None:
+        super().__init__()  # TrayPipeBackend: creates the pipe trigger
         # The autostart entry copies the *entry point* script/exe the user
         # launched (``sys.argv[0]``) — never this shared module.
         self.startup = StartupManager(self.app_key, self.display_name)
@@ -85,7 +91,16 @@ class Backend(ABC):
     # --- tray lifecycle --------------------------------------------------
 
     def start_background(self) -> None:
-        """Background threads spawned at process start (before the icon)."""
+        """Background threads spawned at process start (before the icon).
+
+        Default: quietly resume the shared pipe trigger when not disabled
+        (marker or EPHEMERAL_TRAY_PIPE=0). Overriders should call super().
+        """
+        threading.Thread(
+            target=self.start_pipe_trigger_quietly,
+            name="ephemeral-pipe-start",
+            daemon=True,
+        ).start()
 
     def setup_tray(self, icon) -> None:
         """Per-backend tray-mode setup (needs the live icon)."""
@@ -107,8 +122,8 @@ class Backend(ABC):
     def extra_menu_items(self, icon) -> tuple:
         """Extra pystray items/submenus after \"Install && Run on Boot\".
 
-        Local returns nothing (the Distributed submenu must not appear);
-        distributed returns its \"Distributed\" submenu.
+        Both tiers inherit the Local Pipe Trigger item from the shared
+        mixin; local exposes it alone, distributed also returns its
         """
         return ()
 
