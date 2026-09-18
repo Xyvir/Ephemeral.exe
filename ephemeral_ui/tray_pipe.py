@@ -37,13 +37,7 @@ TRAY_PIPE_MARKER = "tray_pipe_disabled"
 
 # --- win32 (kernel32 only — no winsock, no network namespace) --------------
 
-#: The doorbell is a Windows-only surface (named pipes, kernel32). On other
-#: platforms (the Linux AppImage build) everything below stays inert: the
-#: trigger reports disabled, the menu item is hidden, and the module still
-#: imports — ctypes has no WinDLL outside Windows.
-IS_WINDOWS = os.name == "nt"
-
-_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True) if IS_WINDOWS else None
+_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 _HANDLE = ctypes.c_void_p
 _GENERIC_READ = 0x80000000
@@ -64,32 +58,26 @@ def _kernel32_fn(name, restype, *params):
     return fn
 
 
-_CreateNamedPipeW = _ConnectNamedPipe = _DisconnectNamedPipe = _CloseHandle = None
-if IS_WINDOWS:
-    _CreateNamedPipeW = _kernel32_fn(
-        "CreateNamedPipeW",
-        _HANDLE,
-        ctypes.c_wchar_p,          # lpName
-        ctypes.c_ulong,            # dwOpenMode
-        ctypes.c_ulong,            # dwPipeMode
-        ctypes.c_ulong,            # nMaxInstances
-        ctypes.c_ulong,            # nOutBufferSize
-        ctypes.c_ulong,            # nInBufferSize
-        ctypes.c_ulong,            # nDefaultTimeOut
-        ctypes.c_void_p,           # lpSecurityAttributes
-    )
-    _ConnectNamedPipe = _kernel32_fn(
-        "ConnectNamedPipe", ctypes.c_int, _HANDLE, ctypes.c_void_p
-    )
-    _DisconnectNamedPipe = _kernel32_fn(
-        "DisconnectNamedPipe", ctypes.c_int, _HANDLE
-    )
-    _CloseHandle = _kernel32_fn("CloseHandle", ctypes.c_int, _HANDLE)
+_CreateNamedPipeW = _kernel32_fn(
+    "CreateNamedPipeW",
+    _HANDLE,
+    ctypes.c_wchar_p,          # lpName
+    ctypes.c_ulong,            # dwOpenMode
+    ctypes.c_ulong,            # dwPipeMode
+    ctypes.c_ulong,            # nMaxInstances
+    ctypes.c_ulong,            # nOutBufferSize
+    ctypes.c_ulong,            # nInBufferSize
+    ctypes.c_ulong,            # nDefaultTimeOut
+    ctypes.c_void_p,           # lpSecurityAttributes
+)
+_ConnectNamedPipe = _kernel32_fn(
+    "ConnectNamedPipe", ctypes.c_int, _HANDLE, ctypes.c_void_p
+)
+_DisconnectNamedPipe = _kernel32_fn("DisconnectNamedPipe", ctypes.c_int, _HANDLE)
+_CloseHandle = _kernel32_fn("CloseHandle", ctypes.c_int, _HANDLE)
 
 
 def _create_pipe(name: str) -> int:
-    if not IS_WINDOWS:
-        raise OSError("the pipe trigger is Windows-only")
     handle = _CreateNamedPipeW(
         name,
         _PIPE_ACCESS_DUPLEX | _FILE_FLAG_FIRST_PIPE_INSTANCE,
@@ -122,8 +110,8 @@ def _state_dir():
 
 
 def autostart_enabled() -> bool:
-    """The trigger is on unless explicitly disabled (marker, env, or OS)."""
-    if not IS_WINDOWS or os.getenv("EPHEMERAL_TRAY_PIPE", "").strip() == "0":
+    """The trigger is on unless explicitly disabled (marker or env)."""
+    if os.getenv("EPHEMERAL_TRAY_PIPE", "").strip() == "0":
         return False
     return not (_state_dir() / TRAY_PIPE_MARKER).exists()
 
@@ -174,8 +162,6 @@ class TrayPipe:
         """Start listening. Returns ``(ok, pipe_name_or_error)``."""
         if self.is_running():
             return True, self.pipe_name
-        if not IS_WINDOWS:
-            return False, "pipe trigger is Windows-only"
         if os.getenv("EPHEMERAL_TRAY_PIPE", "").strip() == "0":
             return False, "disabled by EPHEMERAL_TRAY_PIPE=0"
         self._stop.clear()
@@ -289,8 +275,6 @@ class TrayPipeBackend:
     def pipe_trigger_menu_items(self) -> tuple:
         from ephemeral_ui import platform
 
-        if not IS_WINDOWS:
-            return ()  # the doorbell is a Windows-only surface
         return (
             platform.item(
                 'Local Pipe Trigger',
@@ -329,8 +313,6 @@ class TrayPipeBackend:
 
     def start_pipe_trigger_quietly(self) -> None:
         """Best-effort trigger start at boot; never blocks the icon."""
-        if not IS_WINDOWS:
-            return
         try:
             from ephemeral_ui.platform import log
 
