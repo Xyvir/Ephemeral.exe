@@ -25,8 +25,9 @@ Cluster configuration (environment variables):
     EPHEMERAL_ALLOW_NETWORK  "1" to let remote jobs use network access (default "0")
     EPHEMERAL_PRIVATE        "1" (or ``--private``) — skip the public swarm list
     EPHEMERAL_TRAY_PIPE      "0" to disable the local pipe trigger (a
-                             doorbell that fires Run Clipboard; the clipboard
-                             stays the data channel, nothing travels the pipe)
+                             double-knock doorbell: knock 1 acks/arms, knock 2
+                             fires Run Clipboard; the clipboard stays the data
+                             channel, nothing travels the pipe)
     EPHEMERAL_TRAY_PIPE_NAME override for the pipe path
 """
 from __future__ import annotations
@@ -269,12 +270,12 @@ class DistributedBackend(Backend):
             allow_network=os.getenv("EPHEMERAL_ALLOW_NETWORK", "0") == "1",
         )
         self._cluster_start_lock = threading.Lock()
-        # Local pipe trigger (doorbell on the ephemeral-run pipe): a
-        # local process opening the pipe makes this tray run the
-        # clipboard, exactly like a ctrl+alt+x press. No payload ever
-        # travels the pipe - the clipboard stays the data channel. On
-        # by default; EPHEMERAL_TRAY_PIPE=0 or the Distributed menu
-        # kills it.
+        # Local pipe trigger (double-knock doorbell on the ephemeral-run
+        # pipe): knock 1 acks and arms, knock 2 within the arm window makes
+        # this tray run the clipboard, exactly like a ctrl+alt+x press. No
+        # payload ever travels the pipe - the clipboard stays the data
+        # channel. On by default; EPHEMERAL_TRAY_PIPE=0 or the Distributed
+        # menu kills it.
         self.tray_pipe = TrayPipe(self)
 
     # --- identity --------------------------------------------------------
@@ -309,9 +310,10 @@ class DistributedBackend(Backend):
         return self.tray_pipe.is_running()
 
     def toggle_tray_pipe(self, icon, item_unused=None):
-        """Flip the local pipe trigger: a local process opening the
-        pipe fires Run Clipboard, exactly like the hotkey press (nothing
-        travels the pipe; the clipboard remains the data channel).
+        """Flip the local pipe trigger: knock 1 on the pipe acks and arms,
+        knock 2 within the arm window fires Run Clipboard, exactly like the
+        hotkey press (nothing travels the pipe; the clipboard remains the
+        data channel).
 
         The checked state persists (state marker) so the trigger
         resumes on the next tray start.

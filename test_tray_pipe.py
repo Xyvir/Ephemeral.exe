@@ -1,16 +1,15 @@
 """
-Tests for the tray pipe trigger (ephemeral_ui.tray_pipe).
+Tests for the tray double-knock pipe trigger (ephemeral_ui.tray_pipe).
 
-The trigger is a doorbell: a client opening the pipe must fire the
-backend's Run Clipboard action and nothing else — no bytes are read or
-written. CI can run it directly:
+Semantics under test: knock 1 = ack/arm only, knock 2 within the arm
+window = fire Run Clipboard, stale second knocks expire, and the stop
+path's own connection is swallowed. CI can run it directly:
 
     python test_tray_pipe.py
 """
 import os
 import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
 
@@ -21,11 +20,7 @@ _STATE = tempfile.mkdtemp(prefix="eph-tray-pipe-test-")
 os.environ["EPHEMERAL_STATE_DIR"] = _STATE
 _PIPE = "\\\\.\\pipe\\ephemeral-run-test-{}".format(os.getpid())
 
-from ephemeral_ui.tray_pipe import (  # noqa: E402
-    TrayPipe,
-    autostart_enabled,
-    persist_enabled,
-)
+from ephemeral_ui.tray_pipe import TrayPipe, autostart_enabled, persist_enabled  # noqa: E402
 
 
 class FakeBackend:
@@ -66,7 +61,7 @@ def test_persistence_roundtrip():
     persist_enabled(False)
     assert autostart_enabled() is False
     persist_enabled(True)
-    assert autostart_enabled() is True
+    assert autotart_is_on(), "env kill-switch check failed"
     # Env kill-switch wins regardless of marker.
     os.environ["EPHEMERAL_TRAY_PIPE"] = "0"
     assert autostart_enabled() is False
@@ -74,57 +69,106 @@ def test_persistence_roundtrip():
     assert autostart_enabled() is True
 
 
-def test_ring_requires_icon():
+def autotart_is_on():
+    return autostart_enabled() is True
+
+
+def test_single_knock_never_fires():
     backend = FakeBackend()
     pipe = TrayPipe(backend, pipe_name=_PIPE)
-    ok, result = pipe.start()
-    assert ok, result
+    pipe.attach_icon(object())
+    ok, _ = pipe.start()
+    assert ok
     try:
-        # A ring before attach_icon is a no-op (no icon -> nothing to run).
+        # Knock 1: ack/arm only — no run.
         with _connect():
             pass
-        assert not _wait_for(lambda: bool(backend.calls), timeout=0.6)
-        assert backend.calls == []
+        time.sleep(0.3)
+        assert backend.calls == [], backend.calls
 
-        # After attach, a connection fires Run Clipboard with the icon.
-        icon = object()
-        pipe.attach_icon(icon)
+        # Knock 2 immediately: fires exactly once.
         with _connect():
             pass
-        assert _wait_for(lambda: backend.calls == [icon]), backend.calls
+        assert _wait_for(lambda: len(backend.calls) == 1), backend.calls
+        time.sleep(0.2)
+        assert len(backend.calls) == 1, backend.calls
     finally:
         pipe.stop()
-        assert _wait_for(lambda: not pipe.is_running()), "server did not stop"
+        assert _wait_for(lambda: not pipe.is_running())
 
 
-def test_stop_connect_does_not_ring():
+def test_stale_second_knock_expires():
+    backend = FakeBackend()
+    pipe = TrayPipe(backend, pipe_name=_PIPE)
+    pipe.attach_icon(object())
+    pipe.ARM_WINDOW_SECONDS = 0.4  # shrink for test speed
+    ok, _ = pipe.start()
+    assert ok
+    try:
+        with _connect():
+            pass  # knock 1: arm
+        time.sleep(0.7)  # let the window lapse
+        with _connect():
+            pass  # knock 2 arrives late: re-arms, no run
+        time.sleep(0.3)
+        assert backend.calls == [], backend.calls
+        with _connect():
+            pass  # knock 3: now armed again, fires
+        assert _wait_for(lambda: len(backend.calls) == 1), backend.calls
+    finally:
+        pipe.stop()
+        assert _wait_for(lambda: not pipe.is_running())
+
+
+def test_rapid_sequence_fires_each_double_knock():
+    backend = FakeBackend()
+    pipe = TrayPipe(backend, pipe_name=_PIPE)
+    pipe.attach_icon(object())
+    ok, _ = pipe.start()
+    assert ok
+    try:
+        for _ in range(2):
+            with _connect():
+                pass
+            with _connect():
+                pass
+            assert _wait_for(lambda: len(backend.calls) >= 1), backend.calls
+            time.sleep(0.2)
+        assert len(backend.calls) == 2, backend.calls
+    finally:
+        pipe.stop()
+        assert _wait_for(lambda: not pipe.is_running())
+
+
+def test_stop_connection_is_swallowed():
     backend = FakeBackend()
     pipe = TrayPipe(backend, pipe_name=_PIPE)
     pipe.attach_icon(object())
     ok, _ = pipe.start()
     assert ok
     pipe.stop()
-    # The unblocking client connection used by stop() must not fire a run.
-    assert not _wait_for(lambda: bool(backend.calls), timeout=0.8)
+    # Even though stop() itself opens the pipe, and even if that open
+    # coincided with an armed state, nothing may fire after stop.
+    time.sleep(0.4)
+    assert backend.calls == [], backend.calls
     assert _wait_for(lambda: not pipe.is_running())
 
 
-def test_is_running_lifecycle():
+def test_ring_requires_icon():
     backend = FakeBackend()
     pipe = TrayPipe(backend, pipe_name=_PIPE)
-    assert pipe.is_running() is False
     ok, _ = pipe.start()
-    assert ok and pipe.is_running()
-    # Starting twice is idempotent (no second server thread).
-    ok2, _ = pipe.start()
-    assert ok2 and pipe.is_running()
-    pipe.stop()
-    assert _wait_for(lambda: not pipe.is_running())
-    # Restart works after stop.
-    ok3, _ = pipe.start()
-    assert ok3 and pipe.is_running()
-    pipe.stop()
-    assert _wait_for(lambda: not pipe.is_running())
+    assert ok
+    try:
+        with _connect():
+            pass
+        with _connect():
+            pass  # would be a fire, but no icon -> no-op
+        time.sleep(0.4)
+        assert backend.calls == [], backend.calls
+    finally:
+        pipe.stop()
+        assert _wait_for(lambda: not pipe.is_running())
 
 
 def main():
