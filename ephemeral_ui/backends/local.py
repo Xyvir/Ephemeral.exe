@@ -308,8 +308,6 @@ class LocalBackend(Backend):
                         group_result.stderr,
                         header="EPHEMERAL EXECUTION ERROR",
                     )
-                    if platform.CLI_MODE:
-                        sys.exit(group_result.exit_code or 1)
 
                 if group_result.stdout_formatted:
                     all_stdout.append(group_result.stdout_formatted)
@@ -337,8 +335,6 @@ class LocalBackend(Backend):
                 f"System Exception:\n{str(e)}",
                 header="EPHEMERAL EXECUTION ERROR",
             )
-            if platform.CLI_MODE:
-                sys.exit(1)
 
         finally:
             platform.set_icon_animation_state(icon, False)

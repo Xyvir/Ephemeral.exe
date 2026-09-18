@@ -72,13 +72,17 @@ def setup_tray_mode(icon, backend):
     keyboard.add_hotkey(CONVERT_HOTKEY, lambda: backend.on_convert_hotkey(icon))
     backend.setup_tray(icon)
     icon.notify(backend.startup_message(), title="Ephemeral")
+
+
 def setup_oneshot_mode(icon, backend, file_path):
     """One-Shot Mode: Run file, respect backend state, then exit."""
     icon.visible = True
+
     def auto_run_sequence():
         token = backend.prepare_run(icon)
         try:
-            content = _read_document(file_path)
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
 
             icon.notify(f"Loading {os.path.basename(file_path)}...", title="Ephemeral One-Shot")
             backend.run_logic(icon, content=content)
@@ -93,12 +97,16 @@ def setup_oneshot_mode(icon, backend, file_path):
             sys.exit()
 
     threading.Thread(target=auto_run_sequence).start()
+
+
 def setup_headless_mode(backend, file_path):
-    """Headless CLI Mode: Run file (or stdin via ``-``) unattended, no GUI."""
+    """Headless CLI Mode: Run file completely unattended, no GUI dependencies."""
     icon = platform.DummyIcon()
     token = backend.prepare_run(icon)
+
     try:
-        content = _read_document(file_path)
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
 
         icon.notify(f"Headless Mode: Running {os.path.basename(file_path)}...", title="Ephemeral CLI")
         backend.run_logic(icon, content=content)
@@ -110,68 +118,13 @@ def setup_headless_mode(backend, file_path):
         backend.cleanup_run(icon, token)
 
 
-# --- Document input -------------------------------------------------------
-
-def _read_document(file_path: str) -> str:
-    """Load the run document: a UTF-8 file, or stdin when path is ``-``."""
-    if file_path == "-":
-        import sys
-        return sys.stdin.read()
-    with open(file_path, "r", encoding="utf-8") as f:
-        return f.read()
-
-
 # --- Entry ---------------------------------------------------------------
-
-def _detect_mode(argv: list, gui: bool) -> tuple[str, str | None]:
-    """Classify a launch into (mode, file_target) from ``argv``.
-
-    Modes: ``tray`` (GUI, no file), ``oneshot`` (GUI + file), ``headless``
-    (file + --cli/parse or no GUI), ``cli-stdin`` (markdown piped in via
-    ``-``/``--stdin``, with or without --cli), ``cli-missing-file`` (a
-    --cli file that does not exist). Pure so tests can table-drive it.
-    """
-    args = [a for a in argv[1:] if a not in ("--cli", "parse")]
-    wants_cli = len(args) != len(argv) - 1
-    stdin_mode = bool(args) and args[0] in ("-", "--stdin")
-
-    if stdin_mode:
-        return "cli-stdin", None
-
-    if args and wants_cli and not os.path.exists(args[0]):
-        # --cli with a path that is not there (yet) — say so instead of
-        # silently falling through to the tray. (Bare ``--cli`` filters
-        # down to no args at all and keeps the legacy tray behavior.)
-        return "cli-missing-file", args[0]
-
-    if args and os.path.exists(args[0]):
-        if wants_cli or not gui:
-            return "headless", args[0]
-        return "oneshot", args[0]
-
-    return "tray", None
-
 
 def run(backend):
     """Shared entry point: pick a mode, drive the backend through it."""
     # SELF-CHECK: verify the install without a GUI.
     if "--self-check" in sys.argv:
         sys.exit(backend.self_check())
-
-    # STDIN MODE: markdown piped in (``ephemeral.exe --cli - < doc.md``),
-    # the headless equivalent of one-shot mode for pipes and parent apps.
-    # No GUI work at all, so this check runs before the warmup — a pipe
-    # client wants a process that does one job and exits.
-    mode, file_target = _detect_mode(sys.argv, gui=HAS_GUI)
-    if mode == "cli-stdin":
-        platform.CLI_MODE = True
-        setup_headless_mode(backend, "-")
-        backend.shutdown()
-        sys.exit(0)
-    if mode == "cli-missing-file":
-        print(f"Ephemeral CLI: file not found: {file_target}", file=sys.stderr)
-        backend.shutdown()
-        sys.exit(1)
 
     # Background warmup (distributed: cluster + bash canary; local: none).
     backend.start_background()
