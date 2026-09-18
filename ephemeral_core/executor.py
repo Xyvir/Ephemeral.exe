@@ -29,9 +29,8 @@ logger = logging.getLogger(__name__)
 from .models import ExecutionResult, GroupResult
 from .parser import (
     parse_codeblocks,
-    prepare_block_for_resolution,
+    prepare_python_block,
     resolve_runtime_config,
-    resolver_for_image,
     strip_ansi_codes,
     strip_shebang,
 )
@@ -42,6 +41,40 @@ _active_pulls = set()
 #: requests whose runs are independent (no chaining declared) run in
 #: parallel up to this guardrail; chained requests always run in-order.
 MAX_PARALLEL_RUNS = 4
+
+
+# --- Platform image blocklist -------------------------------------------
+#
+# Some language-map images cannot run in every environment. Headless
+# Chromium (the html/svg renderer) hangs under Podman's WSL2 machine
+# backend, so Windows/WSL2 hosts must never pull, run, or advertise it
+# warm: a cached copy would be advertised to the swarm and turn the node
+# into a "stopping point" (jobs routed there hang until the node-side
+# timeout).
+
+
+def _running_under_wsl2() -> bool:
+    """True on Windows hosts or WSL2 Linux (Podman runs via the WSL2 VM)."""
+    if os.name == "nt":
+        return True
+    try:
+        with open("/proc/sys/kernel/osrelease", "r", encoding="utf-8") as f:
+            return "microsoft" in f.read().lower()
+    except Exception:
+        return False
+
+
+def images_blocked_on_host() -> frozenset[str]:
+    """Image refs this host must not pull, run, or advertise warm.
+
+    Returns the blocklist for the current platform (empty on native
+    Linux, where every language-map image works).
+    """
+    if not _running_under_wsl2():
+        return frozenset()
+    html_cfg = LANG_MAP.get("html")
+    image = html_cfg.get("image") if isinstance(html_cfg, dict) else None
+    return frozenset({image}) if image else frozenset()
 
 
 # --- Subprocess Helpers ---
@@ -129,6 +162,8 @@ def image_is_compatible(image_name: str) -> bool:
 
 def check_image_exists(image_name: str) -> bool:
     """Check whether a native-compatible container image is cached locally."""
+    if image_name in images_blocked_on_host():
+        return False
     try:
         startupinfo = get_startupinfo()
         subprocess.check_call(
@@ -162,12 +197,18 @@ def list_local_images() -> list[str]:
     except Exception:
         return []
     names: list[str] = []
+    blocked = images_blocked_on_host()
     for entry in entries if isinstance(entries, list) else []:
         entry_arch = _normalize_architecture(entry.get("Architecture"))
         if entry_arch is not None and entry_arch != host_arch():
             continue
         for name in entry.get('Names') or []:
             if not name or name in names:
+                continue
+            # Never advertise an image this host cannot run (see
+            # images_blocked_on_host) — a blocked image must not attract
+            # jobs it would only hang on.
+            if name in blocked:
                 continue
             # Older Podman versions omit Architecture from `images --format
             # json`; inspect those entries before advertising them as warm.
@@ -336,6 +377,16 @@ async def pull_image(image_name: str) -> int:
 
     Returns the exit code of the pull command (0 = success).
     """
+    # Platform blocklist: never pull an image this host cannot run (e.g.
+    # headless Chromium under WSL2 Podman) — a cached copy would be
+    # advertised warm and attract jobs that hang.
+    if image_name in images_blocked_on_host():
+        raise RuntimeError(
+            f"Image {image_name} is blocked on this platform: headless "
+            "Chromium cannot run under Podman's WSL2 machine. Use a native "
+            "Linux node for html/svg blocks."
+        )
+
     # Disk-space guardrail (best-effort): probe + evict coldest images
     # before pulling so a tight drive never hits "no space left on device".
     await asyncio.to_thread(ensure_space_for_pull, image_name)
@@ -371,13 +422,12 @@ def _run_container_sync(
     This is the core Podman orchestration logic extracted from the original
     run_container_piped_group(), with GUI dependencies removed.
     
-    Python blocks backed by `uv run` and TeX/pandoc blocks backed by tlmgr
-    get their dependencies inferred from the block content (implicit
-    dependency injection). When those blocks declare dependencies but the
-    user did NOT grant network access via the `unsafe` keyword, the run is
-    split into two container stages: resolve the dependencies into a shared
-    volume with the network up, then execute the payload with the network
-    removed (see _run_two_stage).
+    Python blocks backed by `uv run` get their third-party imports turned into
+    a PEP 723 inline-script header (implicit dependency injection). When those
+    blocks declare dependencies but the user did NOT grant network access via
+    the `unsafe` keyword, the run is split into two container stages:
+    resolve the dependencies into a shared venv with the network up, then
+    execute the payload with the network removed (see _run_two_stage_python).
     
     Args:
         config: Runtime configuration dict (image, cmd, entrypoint, flags)
@@ -391,32 +441,39 @@ def _run_container_sync(
     Returns:
         GroupResult with formatted stdout, stderr, exit code, and artifact paths.
     """
+    # Platform blocklist: never run an image this host cannot execute (e.g.
+    # headless Chromium under WSL2 Podman) — the run would hang to timeout.
+    image_name = config.get('image', '')
+    if image_name in images_blocked_on_host():
+        raise RuntimeError(
+            f"Image {image_name} is blocked on this platform: headless "
+            "Chromium cannot run under Podman's WSL2 machine. Use a native "
+            "Linux node for html/svg blocks."
+        )
+
     code_blocks = [b for b in run_blocks if b['type'] == 'code']
     is_single_step = len(code_blocks) <= 1
+    uses_uv_python = config.get('cmd') == ['uv', 'run', '-']
 
-    # Generic two-stage dependency resolution: any language whose image ships
-    # the Stage A tooling (see ephemeral_core.parser.DEP_RESOLVERS) gets its
-    # dependencies inferred (Python: imports -> PEP 723; TeX: \usepackage ->
-    # tlmgr), installed in a network-enabled container into a shared volume,
-    # and consumed by a network-disabled payload container.
-    resolver = resolver_for_image(config.get('image', ''))
+    # Implicit PEP 723 dependency injection: infer third-party imports and
+    # prepend a `# /// script` header so `uv run` knows what to resolve.
     prepared_blocks = run_blocks
-    deps: list[str] = []
-    if resolver:
+    python_deps: list[str] = []
+    if uses_uv_python:
         prepared_blocks = []
         for b in run_blocks:
             if b['type'] == 'code':
-                prepared, block_deps = prepare_block_for_resolution(b, resolver)
+                prepared, deps = prepare_python_block(b)
                 prepared_blocks.append(prepared)
-                deps.extend(block_deps)
+                python_deps.extend(deps)
             else:
                 prepared_blocks.append(b)
-        deps = sorted(set(deps))
+        python_deps = sorted(set(python_deps))
 
     # Two-stage execution: dependencies need the network, the payload doesn't.
-    if resolver and deps and not config.get('allow_network', False):
-        return _run_two_stage(
-            config, prepared_blocks, deps, resolver, lang,
+    if uses_uv_python and python_deps and not config.get('allow_network', False):
+        return _run_two_stage_python(
+            config, prepared_blocks, python_deps, lang,
             run_index, total_runs, output_dir, timeout, is_single_step
         )
 
@@ -431,8 +488,7 @@ def _build_podman_cmd(
     config: dict,
     output_dir: str,
     extra_mounts: list[tuple[str, str]] | None = None,
-    network: bool | None = None,
-    env: dict[str, str] | None = None,
+    network: bool | None = None
 ) -> list[str]:
     """
     Build the `podman run` command with Ephemeral's security flags.
@@ -462,8 +518,6 @@ def _build_podman_cmd(
     podman_cmd.extend(['-v', f'{output_dir}:/output'])
     for host_path, container_path in (extra_mounts or []):
         podman_cmd.extend(['-v', f'{host_path}:{container_path}'])
-    for key, value in (env or {}).items():
-        podman_cmd.extend(['-e', f'{key}={value}'])
 
     if 'entrypoint' in config:
         podman_cmd.extend(['--entrypoint', config['entrypoint']])
@@ -687,11 +741,10 @@ def _run_single_stage(
     )
 
 
-def _run_two_stage(
+def _run_two_stage_python(
     config: dict,
     run_blocks: list[dict],
     deps: list[str],
-    resolver: dict,
     lang: str,
     run_index: int,
     total_runs: int,
@@ -700,27 +753,28 @@ def _run_two_stage(
     is_single_step: bool
 ) -> GroupResult:
     """
-    Run a payload in two stages so dependencies can be resolved without
-    permanently granting the payload network access (see DEP_RESOLVERS):
+    Run a Python payload in two stages so dependencies can be resolved without
+    permanently granting the payload network access:
 
-      Stage A: a network-enabled container installs the resolved `deps` into
-               a volume shared with the next stage (uv pip into a venv for
-               Python, tlmgr --usermode into a TEXMF tree for TeX). This is
-               the only stage with internet access.
-      Stage C: a network-disabled container executes the payload, reading the
-               installed dependencies from that volume (venv interpreter, or
-               TEXMFHOME pointing into the mount).
+      Stage A: a network-enabled container installs `deps` into a venv created
+               on a volume shared with the next stage. This is the only stage
+               with internet access.
+      Stage C: a network-disabled container executes the payload with that
+               venv's interpreter. The payload itself never sees the network.
 
-    The dependency tree lives in a host temp directory mounted at /deps in
-    both containers and is removed when the run finishes.
+    The venv lives in a host temp directory mounted at /deps in both containers
+    and is removed when the run finishes.
     """
     deps_dir = tempfile.mkdtemp(prefix="ephemeral_deps_")
-    tlang = _lang_title(resolver.get('payload_lang') or lang)
+    tlang = _lang_title(lang)
     try:
         # --- Stage A: resolve dependencies with network access ---
         install_script = (
             "mkdir -p /deps /output 2>/dev/null || true\n"
-            + resolver['stage_a'](deps)
+            "uv venv /deps/venv || exit 1\n"
+            "uv pip install --no-cache --python /deps/venv/bin/python "
+            + " ".join(shlex.quote(d) for d in deps)
+            + "\n"
         ).encode('utf-8')
 
         stage_a_cmd = _build_podman_cmd(
@@ -745,13 +799,11 @@ def _run_two_stage(
             )
 
         # --- Stage C: run the payload with the network removed ---
-        run_cmd = resolver.get('run_cmd') or config['cmd']
-        script_lines, block_markers = _build_wrapper_script(run_blocks, run_cmd)
+        script_lines, block_markers = _build_wrapper_script(run_blocks, ['/deps/venv/bin/python', '-'])
         script_code = ("\n".join(script_lines) + "\n").encode('utf-8')
 
         stage_c_cmd = _build_podman_cmd(
-            config, output_dir, extra_mounts=[(deps_dir, '/deps')], network=False,
-            env=resolver.get('stage_c_env') or None,
+            config, output_dir, extra_mounts=[(deps_dir, '/deps')], network=False
         )
         retcode, stdout, stderr = _run_podman_script(stage_c_cmd, script_code, timeout)
         if retcode is None:

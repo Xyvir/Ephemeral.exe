@@ -2,15 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Ephemeral Web — distributed code runner</title>
 <link rel="stylesheet" href="app.css" />
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/overtype@latest/dist/overtype.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
 </head>
 <body>
 <header>
@@ -24,10 +22,6 @@
 </header>
 
 <section class="run">
-  <!-- .run-body bounds the toolbar's sticky range to the code area: the
-       floating buttons disappear with the editor's last line instead of
-       hovering over the controls below it. -->
-  <div class="run-body">
   <div class="section-head">
     <h2>Run code</h2>
     <div class="head-actions">
@@ -58,32 +52,22 @@
     </div>
   </div>
   <div id="editor" class="editor" aria-label="Markdown input with code blocks"></div>
+  <div id="langStatus" class="lang-status" hidden></div>
+  <div class="actions">
+    <button id="run" class="run-btn" title="Run in Cluster (Ctrl+Enter)">
+      <span class="run-label">Run in Cluster</span>
+      <span id="busy" class="spinner" role="status" aria-label="running"></span>
+    </button>
+    <button id="shareBtn" class="share-btn" title="Copy shareable URL to clipboard">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      <span>Share URL</span>
+    </button>
   </div>
-  <div class="run-dock">
-    <div id="editorMore" class="more-hint" aria-hidden="true"><span class="more-tri"></span></div>
-    <div id="langStatus" class="lang-status" hidden></div>
-    <div class="actions">
-        <button id="run" class="run-btn" title="Run in Cluster (Ctrl+Enter)">
-          <span class="run-label">Run in Cluster</span>
-          <span id="busy" class="spinner" role="status" aria-label="running"></span>
-        </button>
-        <button id="shareBtn" class="share-btn" title="Copy shareable URL to clipboard">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-          <span>Share URL</span>
-        </button>
-        <div class="print-link-opt" role="radiogroup" aria-label="Share link output" title="What the output ends with: nothing, a 'Try it here' link, or that link plus a QR code (scannable from paper)">
-          <span class="print-link-opt-legend">Share link output</span>
-          <label><input type="radio" name="shareLinkMode" value="none" checked /> None</label>
-          <label><input type="radio" name="shareLinkMode" value="link" /> Link only</label>
-          <label><input type="radio" name="shareLinkMode" value="qr" /> Link + QR</label>
-        </div>
-      </div>
-      <p id="runNote" class="run-note">
-        <strong class="caps">Public network</strong> — anything you submit is
-        <strong>public knowledge</strong>. No privacy guarantee. For private
-        use, self-host.
-      </p>
-    </div>
+  <p id="runNote" class="run-note">
+    <strong class="caps">Public network</strong> — anything you submit is
+    <strong>public knowledge</strong>. No privacy guarantee. For private
+    use, self-host.
+  </p>
 </section>
 
 <section class="output-wrap">
@@ -97,7 +81,7 @@
           <line x1="12" y1="17" x2="12.01" y2="17"></line>
         </svg>
       </button>
-      <button id="interleave" class="icon-btn" type="button" title="Interleave results" aria-label="Interleave results — mode: auto">
+      <button id="interleave" class="icon-btn" type="button" title="Interleave results" aria-label="Interleave results" aria-pressed="false">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
           <polyline points="2 12 12 17 22 12"></polyline>

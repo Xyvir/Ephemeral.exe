@@ -644,8 +644,13 @@ class DistributedBackend(Backend):
         Runs in the tray's own podman context. Sequential pulls with retry +
         backoff (registry rate limits), never raises.
         """
+        from ephemeral_core.executor import images_blocked_on_host
+
         startupinfo = platform.get_startupinfo()
         images = images if images is not None else mapped_images()
+        blocked = images_blocked_on_host()
+        if blocked:
+            images = [i for i in images if i not in blocked]
         if not ephemeral_core.check_podman_alive():
             try:
                 subprocess.run(
@@ -1073,13 +1078,23 @@ class DistributedBackend(Backend):
         confirmation. The pull runs in a native terminal window showing
         real-time ``podman pull`` output.
         """
+        from ephemeral_core.executor import images_blocked_on_host
+
         images = mapped_images()
+        blocked = images_blocked_on_host()
+        if blocked:
+            images = [i for i in images if i not in blocked]
 
         est_gb = _HYDRATE_MAX_EST_GB
         free, drive = self._hydration_free_space()
         warn = False
         lines = ["Pre-hydrate ALL language images?"]
         lines.append(f"  {len(images)} images in the language set.")
+        if blocked:
+            lines.append(
+                "  (skipping images that cannot run on this platform — "
+                f"headless Chromium under WSL2: {len(blocked)})"
+            )
         lines.append(f"  Worst-case download: ~{est_gb:.0f} GB (skips what's already cached)")
         if free:
             lines.append(f"  Free on {drive or 'storage drive'}: {free / 2**30:.1f} GB")
