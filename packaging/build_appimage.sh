@@ -36,9 +36,9 @@ if [ ! -d "$VENV" ]; then
   python3 -m venv "$VENV"
 fi
 "$VENV/bin/pip" install -q --upgrade pip
-"$VENV/bin/pip" install -q -r requirements.txt pyinstaller
+"$VENV/bin/pip" install -q -c "$ROOT/constraints-clean-build.txt" -r requirements.txt pyinstaller
 if [ "$TARGET" = "distributed" ]; then
-  "$VENV/bin/pip" install -q -r requirements-net.txt
+  "$VENV/bin/pip" install -q -c "$ROOT/constraints-clean-build.txt" -r requirements-net.txt
 fi
 
 # 2) Version stamp (same placeholder the Windows job injects) ------------

@@ -76,12 +76,12 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: '3.10.11'
 
     - name: Install dependencies
       run: |
-        pip install -r requirements.txt pyinstaller
-        pip install -r requirements-api.txt
+        python -m pip install -c constraints-clean-build.txt -r requirements.txt pyinstaller
+        python -m pip install -c constraints-clean-build.txt -r requirements-api.txt
 
     - name: Generate icon
       run: python -c "from PIL import Image, ImageDraw; img=Image.new('RGB', (64, 64), (30, 30, 30)); dc=ImageDraw.Draw(img); dc.rectangle((16, 16, 48, 48), fill=(255, 255, 255)); dc.rectangle((20, 20, 44, 28), fill=(0, 120, 215)); img.save('ephemeral.ico')"
@@ -97,11 +97,25 @@ jobs:
     - name: Build EXE
       run: pyinstaller --noconsole --onefile --name Ephemeral --icon=ephemeral.ico --hidden-import=ephemeral_core main_local.py
 
+    - name: Generate build manifest
+      shell: bash
+      run: |
+        FULL_SHA="${{ github.sha }}"
+        SHORT_SHA="${FULL_SHA:0:7}"
+        VERSION="$(date +'%Y%m%d')-${SHORT_SHA}"
+        python packaging/write_build_manifest.py \
+          --output dist/Ephemeral-build-manifest.json \
+          --build-version "$VERSION" \
+          --build-command 'pyinstaller --noconsole --onefile --name Ephemeral --icon=ephemeral.ico --hidden-import=ephemeral_core main_local.py' \
+          --artifact dist/Ephemeral.exe
+
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: Ephemeral-Windows-EXE
-        path: dist/Ephemeral.exe
+        path: |
+          dist/Ephemeral.exe
+          dist/Ephemeral-build-manifest.json
 
   # ── Windows EXE: distributed ──────────────────────────────────
   build-exe-distributed:
@@ -114,13 +128,13 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: '3.10.11'
 
     - name: Install dependencies
       run: |
-        pip install -r requirements.txt pyinstaller
-        pip install -r requirements-api.txt
-        pip install -r requirements-net.txt
+        python -m pip install -c constraints-clean-build.txt -r requirements.txt pyinstaller
+        python -m pip install -c constraints-clean-build.txt -r requirements-api.txt
+        python -m pip install -c constraints-clean-build.txt -r requirements-net.txt
 
     - name: Generate icon
       run: python -c "from PIL import Image, ImageDraw; img=Image.new('RGB', (64, 64), (30, 30, 30)); dc=ImageDraw.Draw(img); dc.rectangle((16, 16, 48, 48), fill=(255, 255, 255)); dc.rectangle((20, 20, 44, 28), fill=(0, 120, 215)); img.save('ephemeral.ico')"
@@ -136,11 +150,25 @@ jobs:
     - name: Build EXE
       run: pyinstaller --noconsole --onefile --name Ephemeral-Distributed --icon=ephemeral.ico --hidden-import=ephemeral_core --hidden-import=ephemeral_net --collect-all iroh main_distributed_client.py
 
+    - name: Generate build manifest
+      shell: bash
+      run: |
+        FULL_SHA="${{ github.sha }}"
+        SHORT_SHA="${FULL_SHA:0:7}"
+        VERSION="$(date +'%Y%m%d')-${SHORT_SHA}"
+        python packaging/write_build_manifest.py \
+          --output dist/Ephemeral-Distributed-build-manifest.json \
+          --build-version "$VERSION" \
+          --build-command 'pyinstaller --noconsole --onefile --name Ephemeral-Distributed --icon=ephemeral.ico --hidden-import=ephemeral_core --hidden-import=ephemeral_net --collect-all iroh main_distributed_client.py' \
+          --artifact dist/Ephemeral-Distributed.exe
+
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: Ephemeral-Distributed-Windows-EXE
-        path: dist/Ephemeral-Distributed.exe
+        path: |
+          dist/Ephemeral-Distributed.exe
+          dist/Ephemeral-Distributed-build-manifest.json
 
   # ── Linux AppImages: local + distributed ──────────────────────
   build-linux-appimage:
@@ -237,6 +265,22 @@ jobs:
           requirements-api.txt requirements-mcp.txt Dockerfile.api .dockerignore
 
 
+    - name: Generate build manifest
+      shell: bash
+      run: |
+        FULL_SHA="${{ github.sha }}"
+        SHORT_SHA="${FULL_SHA:0:7}"
+        VERSION="$(date +'%Y%m%d')-${SHORT_SHA}"
+        python packaging/write_build_manifest.py \
+          --output dist/Ephemeral-Linux-build-manifest.json \
+          --build-version "$VERSION" \
+          --build-command 'packaging/build_appimage.sh local && packaging/build_appimage.sh distributed' \
+          --artifact dist/ephemeral-local-x86_64.AppImage \
+          --artifact dist/ephemeral-distributed-x86_64.AppImage \
+          --artifact dist/ephemeral-wasm-library.tar.gz \
+          --artifact dist/ephemeral-self-host-distributed.tar.gz \
+          --artifact dist/ephemeral-self-host.tar.gz
+
     - name: Smoke test — install script + release tarballs
       shell: bash
       run: |
@@ -307,4 +351,7 @@ jobs:
           dist/ephemeral-wasm-library.tar.gz
           dist/ephemeral-self-host-distributed.tar.gz
           dist/ephemeral-self-host.tar.gz
+          dist/Ephemeral-build-manifest.json
+          dist/Ephemeral-Distributed-build-manifest.json
+          dist/Ephemeral-Linux-build-manifest.json
         generate_release_notes: true

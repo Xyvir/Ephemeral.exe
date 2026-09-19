@@ -1,0 +1,35 @@
+# Recovered from the known-clean Windows build environment.
+# Keep this file in sync with the CI build manifest when deliberately changing
+# the executable toolchain.
+altgraph==0.17.5
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+click==8.5.0
+exceptiongroup==1.3.1
+fastapi==0.141.1
+h11==0.16.0
+httptools==0.8.0
+idna==3.19
+iroh==1.1.0
+keyboard==0.13.5
+packaging==26.3
+pefile==2024.8.26
+Pillow==12.3.0
+pydantic==2.13.5
+pydantic-core==2.46.5
+pyinstaller==6.22.2
+pyinstaller-hooks-contrib==2026.7
+pyperclip==1.11.0
+pystray==0.19.5
+python-dotenv==1.2.3
+python-xlib==0.33
+pywin32-ctypes==0.2.3
+PyYAML==6.0.3
+six==1.17.0
+starlette==1.6.0
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+uvicorn==0.52.4
+watchfiles==1.2.0
+websockets==16.1.1
