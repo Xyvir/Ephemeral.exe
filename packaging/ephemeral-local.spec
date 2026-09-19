@@ -10,7 +10,7 @@ import os
 from PyInstaller.utils.hooks import collect_all
 
 datas, binaries, hiddenimports = [], [], []
-for _pkg in ("PIL", "pystray", "pyperclip", "keyboard", "Xlib"):
+for _pkg in ("PIL", "pystray", "pyperclip", "keyboard", "Xlib", "iroh"):
     _d, _b, _h = collect_all(_pkg)
     datas += _d
     binaries += _b
@@ -23,7 +23,11 @@ a = Analysis(
     pathex=[ROOT],
     binaries=binaries,
     datas=datas,
-    hiddenimports=hiddenimports + ["ephemeral_core"],
+    hiddenimports=hiddenimports + [
+        "ephemeral_core",
+        "ephemeral_net",
+        "ephemeral_ui.backends.distributed",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

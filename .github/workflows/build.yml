@@ -95,7 +95,7 @@ jobs:
         sed -i "s/Version number (injected from the github workflow)/${VERSION}/g" ephemeral_ui/backends/local.py
 
     - name: Build EXE
-      run: pyinstaller --noconsole --onefile --name Ephemeral --icon=ephemeral.ico --hidden-import=ephemeral_core main_local.py
+      run: pyinstaller --noconsole --onefile --name Ephemeral --icon=ephemeral.ico --hidden-import=ephemeral_core --hidden-import=ephemeral_net --hidden-import=ephemeral_ui.backends.distributed --collect-all iroh main_local.py
 
     - name: Generate build manifest
       shell: bash
@@ -106,7 +106,7 @@ jobs:
         python packaging/write_build_manifest.py \
           --output dist/Ephemeral-build-manifest.json \
           --build-version "$VERSION" \
-          --build-command 'pyinstaller --noconsole --onefile --name Ephemeral --icon=ephemeral.ico --hidden-import=ephemeral_core main_local.py' \
+          --build-command 'pyinstaller --noconsole --onefile --name Ephemeral --icon=ephemeral.ico --hidden-import=ephemeral_core --hidden-import=ephemeral_net --hidden-import=ephemeral_ui.backends.distributed --collect-all iroh main_local.py' \
           --artifact dist/Ephemeral.exe
 
     - name: Upload artifact

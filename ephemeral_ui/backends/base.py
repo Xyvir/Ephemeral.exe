@@ -1,10 +1,11 @@
 """
 Backend contract for the unified Ephemeral tray front end.
 
-A backend is a bundle of tier-specific behavior behind a small generic
-interface. The front end (``ephemeral_ui.tray``) only ever calls these
-methods — it never imports ``ephemeral_core``/``ephemeral_net`` directly,
-which keeps the local build free of the networking tier.
+A backend is a bundle of tier-specific execution behavior behind a small
+generic interface. The front end (``ephemeral_ui.tray``) only ever calls
+these methods. The application selects the tier explicitly at its build
+entry point; local builds may contain the distributed modules, but never
+initialize them.
 
 Two implementations live next door:
 

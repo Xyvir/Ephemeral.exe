@@ -21,12 +21,13 @@ ephemeral_ui/            ← Unified desktop front end (one tray, two backends)
 ├── tray.py              ← Shared tray UI (menu, hotkeys, modes) — drives generic backend functions
 ├── platform.py          ← Shared platform plumbing (clipboard, prompts, artifacts, autostart)
 └── backends/            ← local.py (Podman) | distributed.py (iroh cluster)
-main_local.py            ← Thin entry: LocalBackend
-main_distributed_client.py ← Thin entry: DistributedBackend
+main_local.py            ← Thin explicit `local` mode entry
+main_distributed_client.py ← Thin explicit `distributed` mode entry
+ephemeral_ui/app.py       ← Shared mode dispatcher; never infers mode from filename
 install.sh               ← One-shot sidecar deployment (systemd + rootless Podman)
 ```
 
-**Key rule:** `ephemeral_core/` must never import GUI, clipboard, HTTP, or platform-specific code. All platform logic lives in `ephemeral_ui/` (the unified front end + backends). The tray front end never imports `ephemeral_core`/`ephemeral_net` directly — backends own that, so the local build stays free of the networking tier.
+**Key rule:** `ephemeral_core/` must never import GUI, clipboard, HTTP, or platform-specific code. All platform logic lives in `ephemeral_ui/` (the unified front end + backends). The tray front end never imports `ephemeral_core`/`ephemeral_net` directly — backends own that. Both desktop builds may bundle the same distributed modules for parity; only the explicit immutable mode selects whether the distributed backend is initialized.
 
 ### Core API
 

@@ -4,15 +4,14 @@ Unified Ephemeral tray front end.
 One front end drives both desktop clients. It builds the tray menu,
 registers the hotkeys, and runs the tray / one-shot / headless modes —
 calling only the generic :class:`~ephemeral_ui.backends.base.Backend`
-interface. It never imports ``ephemeral_core`` or ``ephemeral_net``, so a
-local build stays free of the networking tier.
+interface. The build mode is selected explicitly by ``ephemeral_ui.app``;
+the front end never infers it from an executable filename.
 
 Entry points (``main_local.py``, ``main_distributed_client.py``) are
-thin:
+thin mode selectors:
 
-    from ephemeral_ui import tray
-    from ephemeral_ui.backends.local import LocalBackend
-    tray.run(LocalBackend())
+    from ephemeral_ui.app import run
+    run("local")
 """
 from __future__ import annotations
 
