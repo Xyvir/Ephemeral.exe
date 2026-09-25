@@ -1,12 +1,12 @@
 {
-  "updated": "2026-09-25T04:21:50Z",
+  "updated": "2026-09-25T11:32:46Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6nllidaeakhqdbmxk22ay",
+      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6ibxacaeakhqdbmwanyaq",
       "images": [
         "docker.io/catthehacker/ubuntu:act-22.04",
         "docker.io/chromedp/headless-shell:138.0.7204.169",
@@ -37,23 +37,23 @@
       ],
       "url": null,
       "probe": "ok",
-      "probe_at": "2026-09-25T04:21:50Z",
+      "probe_at": "2026-09-25T11:32:46Z",
       "probe_detail": "ok",
-      "probe_ms": 1955,
-      "rtt_ms": 933
+      "probe_ms": 1887,
+      "rtt_ms": 2640
     }
   ],
   "bastions": [
     {
       "node_id": "ed7106bced606bede735b4c9b215052855f9747e8cb56629759ae672ce29b9c8",
       "relay": "https://usw1-1.relay.n0.iroh.link./",
-      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacv4ka2jlcicaeajqn5sgkkysaq",
+      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3von3tcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacwzrqu4fcacaeadindmglbiqaq",
       "images": [],
       "url": "https://ephemeralexe-production.up.railway.app",
       "probe": "ok",
-      "probe_at": "2026-09-25T04:21:50Z",
+      "probe_at": "2026-09-25T11:32:46Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 358
+      "probe_ms": 291
     }
   ]
 }
