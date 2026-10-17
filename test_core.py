@@ -550,16 +550,18 @@ with tempfile.TemporaryDirectory() as tmp31:
     assert "runpy.run_path" in printed31.getvalue(), printed31.getvalue()
     assert 'run_name="__main__"' in printed31.getvalue(), printed31.getvalue()
 
-    # ask_code = chat + save in one call (chat is stubbed, then restored so the
-    # tests below exercise the real one).
+    # write_code = chat + save in one call (chat is stubbed, then restored so
+    # the tests below exercise the real one). `ask_code` is the old name and
+    # must keep working, or every document written before the rename breaks.
     _real_chat31 = llm.chat
     llm.chat = lambda *a, **k: "```python\nprint(5)\n```"
     try:
-        asked31 = llm.ask_code("write a script", directory=tmp31, quiet=True)
+        asked31 = llm.write_code("write a script", directory=tmp31, quiet=True)
     finally:
         llm.chat = _real_chat31
     with open(asked31, encoding="utf-8") as fh31:
         assert fh31.read() == "print(5)\n"
+    assert llm.ask_code is llm.write_code, "ask_code must stay an alias of write_code"
 
 if _openai_stub:
     del sys.modules["openai"]
@@ -636,22 +638,23 @@ class _Resp34:
 
 
 class _Completions34:
-    def __init__(self, seen):
+    def __init__(self, seen, reply=None):
         self.seen = seen
+        self.reply = _Resp34() if reply is None else reply
 
     def create(self, **kwargs):
         self.seen.append(kwargs)
-        return _Resp34()
+        return self.reply
 
 
 class _Chat34:
-    def __init__(self, seen):
-        self.completions = _Completions34(seen)
+    def __init__(self, seen, reply=None):
+        self.completions = _Completions34(seen, reply)
 
 
 class _Client34:
-    def __init__(self, seen):
-        self.chat = _Chat34(seen)
+    def __init__(self, seen, reply=None):
+        self.chat = _Chat34(seen, reply)
 
 
 seen34 = []
@@ -666,9 +669,13 @@ with redirect_stdout(buf34):
 request34 = seen34[-1]
 assert reply34 == "Five.", reply34
 assert isinstance(request34["seed"], int) and 0 <= request34["seed"] < 2 ** 31
-assert f"seed={request34['seed']}" in buf34.getvalue(), buf34.getvalue()
+# The line is shaped as the call to replay, so it can be pasted straight back.
+assert (
+    f"[ephemeral-llm] chat(prompt, seed={request34['seed']}, temperature=0.8)"
+    in buf34.getvalue()
+), buf34.getvalue()
 # The temperature reported is the server's own default, not an invention.
-assert "temperature=0.8 (reproduce: chat(prompt, seed=" in buf34.getvalue(), buf34.getvalue()
+assert llm.last_call()["temperature"] == 0.8
 assert llm.last_call()["seed"] == request34["seed"]
 assert llm.last_call()["temperature"] == 0.8
 assert llm.last_call()["system_fingerprint"] == "b11706-f74e2fa6a"
@@ -678,7 +685,10 @@ buf34 = io.StringIO()
 with redirect_stdout(buf34):
     llm.chat("hi", seed=12345, temperature=0.25)
 assert seen34[-1]["seed"] == 12345 and seen34[-1]["temperature"] == 0.25
-assert "seed=12345 temperature=0.25" in buf34.getvalue(), buf34.getvalue()
+assert (
+    "[ephemeral-llm] chat(prompt, seed=12345, temperature=0.25)"
+    in buf34.getvalue()
+), buf34.getvalue()
 
 # report=False (or EPHEMERAL_LLM_REPORT=0) leaves the output to the reply.
 buf34 = io.StringIO()
@@ -707,15 +717,46 @@ with redirect_stdout(buf34):
     llm.chat("hi", seed=1)
 assert "server build changed" in buf34.getvalue(), buf34.getvalue()
 
-# ask_code forwards the seed and still saves the code.
+# write_code forwards the seed, echoes the code, and names itself — not the
+# chat() it used internally, which would print a second, wrong line.
+class _CodeMsg34:
+    content = "```python\nprint(6)\n```"
+
+
+class _CodeResp34(_Resp34):
+    choices = [type("_C34", (), {"message": _CodeMsg34()})()]
+
+
+llm.client = lambda **kw: _Client34(seen34, reply=_CodeResp34())
 with tempfile.TemporaryDirectory() as tmp34:
     buf34 = io.StringIO()
     with redirect_stdout(buf34):
-        llm.chat = lambda *a, **k: "```python\nprint(6)\n```"
-        path34 = llm.ask_code("write a script", seed=99, directory=tmp34)
+        path34 = llm.write_code("write a script", seed=99, directory=tmp34)
+    out34 = buf34.getvalue()
     with open(path34, encoding="utf-8") as fh34:
         assert fh34.read() == "print(6)\n"
     assert path34.endswith("generated.py")
+    assert out34.startswith(
+        "[ephemeral-llm] write_code(prompt, seed=99, temperature=0.8)\n"
+    ), out34
+    assert "[ephemeral-llm] chat(" not in out34, out34  # one line, not two
+    assert "saved " not in out34, out34  # off by default
+    assert "```python\nprint(6)\n```" in out34, out34  # code still echoed
+
+    # ... and can be brought back, or silenced entirely.
+    buf34 = io.StringIO()
+    with redirect_stdout(buf34):
+        llm.write_code(
+            "write a script", seed=99, directory=tmp34, echo=False,
+            save_confirmation=True,
+        )
+    assert "saved " in buf34.getvalue(), buf34.getvalue()
+    assert "print(6)" not in buf34.getvalue(), buf34.getvalue()
+
+    buf34 = io.StringIO()
+    with redirect_stdout(buf34):
+        llm.write_code("write a script", seed=99, directory=tmp34, quiet=True)
+    assert buf34.getvalue() == "", buf34.getvalue()
 print("PASS: reported seed/temperature make a reply reproducible")
 
 print("\n=== ALL 34 TESTS PASSED ===")

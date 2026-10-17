@@ -249,39 +249,42 @@ print(chat("What did 21 and 9 add up to? One short sentence.", max_tokens=40))
 
 ##### Generated code, run in the next block
 
-`ask_code()` asks for a program, drops the prose, and writes the code to `/output/generated`. The stem is fixed — the extension follows the language the model actually fenced (`generated.py`, `generated.js`, `generated.sh`, or no suffix when it names none), so the next block can run it in its own language. Put `chain` on the header and that file is staged into the *next* container's working directory:
+`write_code()` asks for a program, drops the prose, and writes the code to `/output/generated`. The stem is fixed — the extension follows the language the model actually fenced (`generated.py`, `generated.js`, `generated.sh`, or no suffix when it names none), so the next block can run it in its own language. Put `chain` on the header and that file is staged into the *next* container's working directory:
 
 ```llm chain
-from ephemeral_llm import ask_code
+from ephemeral_llm import write_code
 
-ask_code("Write a Python script that prints the first 10 primes.")
+write_code("Write a Python script that prints the first 10 primes.")
 ```
 
 ```python
 import generated
 ```
 
-The code is also echoed to stdout, fenced in its own language, so the block's output shows the program the model wrote and the block after it shows what that program printed. Pass `echo=False` for the saved-file line alone.
+The code is also echoed to stdout, fenced in its own language, so the block's output shows the program the model wrote and the block after it shows what that program printed. The `[ephemeral-llm] saved …` confirmation is **off** for `write_code()` — the echoed program already says what was written — and `save_confirmation=True` brings it back; `echo=False, save_confirmation=True` gives the confirmation alone, and `quiet=True` prints neither.
 
-`save_code(reply)` does the same for a reply you already have, and `extract_code(reply)` returns just the code without touching the disk. The file is written verbatim, so it is also an ordinary `/output` artifact you can download and keep. Generated code is treated as a local module — `import generated` resolves from the workdir instead of sending `uv` to the package registry — so the chain works with no dependency resolution at all.
+`save_code(reply)` does the same for a reply you already have (its `saved …` line defaults on, since there the path *is* the output), and `extract_code(reply)` returns just the code without touching the disk. The file is written verbatim, so it is also an ordinary `/output` artifact you can download and keep. Generated code is treated as a local module — `import generated` resolves from the workdir instead of sending `uv` to the package registry — so the chain works with no dependency resolution at all.
 
-> The one thing an import cannot do is fire a script's `if __name__ == "__main__":` guard. `ask_code` asks the model for top-level code for exactly that reason, and if a reply insists on a guard, `save_code` prints the `runpy.run_path("generated.py", run_name="__main__")` call that runs it anyway.
+> The one thing an import cannot do is fire a script's `if __name__ == "__main__":` guard. `write_code` asks the model for top-level code for exactly that reason, and if a reply insists on a guard, `save_code` prints the `runpy.run_path("generated.py", run_name="__main__")` call that runs it anyway.
+
+> `ask_code` is the old name and still works — it is an alias of `write_code`, so documents written before the rename keep running.
 
 ##### Reproducible replies
 
-Qwen the *weights* have no seed; the seed belongs to llama.cpp's sampler. Its OpenAI-compatible endpoint accepts a `seed` but never reports the one it used — with no seed it draws one internally and the reply can never be repeated. So the helper owns it: every `chat()` / `ask_code()` picks a seed (or uses the one you pass), sends it, and prints what it used:
+Qwen the *weights* have no seed; the seed belongs to llama.cpp's sampler. Its OpenAI-compatible endpoint accepts a `seed` but never reports the one it used — with no seed it draws one internally and the reply can never be repeated. So the helper owns it: every `chat()` / `write_code()` picks a seed (or uses the one you pass), sends it, and prints a line shaped like the call that produced it:
 
 ```text
-[ephemeral-llm] seed=1575985648 temperature=0.8 (reproduce: chat(prompt, seed=1575985648, temperature=0.8))
+[ephemeral-llm] chat(prompt, seed=1575985648, temperature=0.8)
+[ephemeral-llm] write_code(prompt, seed=1575985648, temperature=0.8)
 ```
 
-Pass those two back and the reply repeats exactly — same prompt, same seed, same temperature, same image:
+The line names the function that made the reply, so it can be pasted straight back into a block — same prompt, same seed, same temperature, same image gives the same text:
 
 ```llm
-from ephemeral_llm import ask_code
+from ephemeral_llm import write_code
 
-ask_code("Write a Python script that prints the first 10 primes.",
-         seed=1575985648, temperature=0.8)
+write_code("Write a Python script that prints the first 10 primes.",
+           seed=1575985648, temperature=0.8)
 ```
 
 * **Temperature is read from the server, not guessed.** llama.cpp does not echo applied sampler settings either, so the default is fetched once from `/props` (0.8 in the shipped image); the printed value is what the server actually used.

@@ -147,11 +147,11 @@ export const LANG_SNIPPETS = {
   // that never touches the model.
   llm: [
     "```llm chain",
-    "from ephemeral_llm import ask_code",
+    "from ephemeral_llm import write_code",
     "",
     "# Prints the reply's code and saves it to /output/generated.py.",
-    "# The seed is printed above the code, so the same script can be regenerated.",
-    'ask_code("Write a Python script that prints the first 10 primes.", seed=7)',
+    "# seed= fixes the reply, so this demo regenerates the same script every run.",
+    'write_code("Write a Python script that prints the first 5 Fibonacci numbers.", seed=7)',
     "```",
     "",
     "```python",

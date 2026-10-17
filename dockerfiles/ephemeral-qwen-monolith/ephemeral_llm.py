@@ -19,15 +19,15 @@ network removed.
 
 Generated code, run somewhere else
 ----------------------------------
-:func:`ask_code` (or :func:`save_code` on a reply you already have) strips the
-prose off a model answer, writes the code block to ``/output/generated`` and
-returns the path. With Ephemeral's ``chain`` flag that file is staged into the
-*next* container's working directory, so another block can simply run it::
+:func:`write_code` (or :func:`save_code` on a reply you already have) strips
+the prose off a model answer, writes the code block to ``/output/generated``
+and returns the path. With Ephemeral's ``chain`` flag that file is staged into
+the *next* container's working directory, so another block can simply run it::
 
     # block 1: ask for code and keep it
-    from ephemeral_llm import ask_code
+    from ephemeral_llm import write_code
 
-    ask_code("Write a small Python script that prints the first 10 primes.")
+    write_code("Write a small Python script that prints the first 10 primes.")
 
     # block 2 (any language): run what the model wrote
     import generated
@@ -41,7 +41,11 @@ so what you run is exactly what the model said.
 
 The code is echoed to stdout by default (``echo=False`` to suppress it), fenced
 in its own language, so one block's output reads as "here is the program the
-model wrote" and the next block's output shows what it printed when it ran.
+model wrote" and the next block's output shows what it printed when it ran. The
+``[ephemeral-llm] saved …`` confirmation is off for :func:`write_code`
+(``save_confirmation=True`` to bring it back) because the echoed program already
+names what was written; :func:`save_code` keeps it, since there the path *is*
+the output.
 
 Reproducible replies
 --------------------
@@ -50,17 +54,20 @@ the server randomises internally and the reply is unrepeatable. So every
 :func:`chat` picks a seed itself (unless you pass one, or set
 ``EPHEMERAL_LLM_SEED``), sends it, and prints what it used::
 
-    [ephemeral-llm] seed=1837465283 temperature=0.8 (reproduce: pass both to chat())
+    [ephemeral-llm] chat(prompt, seed=1837465283, temperature=0.8)
 
-Pass those back (``chat(prompt, seed=1837465283, temperature=0.8)``) and the
-reply repeats exactly, as long as the same image is running:
+The line is shaped like the call that produced it — ``chat(…)`` for
+:func:`chat`, ``write_code(…)`` for :func:`write_code` — so it can be pasted
+straight back into a block. Passing those values again
+(``chat(prompt, seed=1837465283, temperature=0.8)``) repeats the reply exactly,
+as long as the same image is running:
 :func:`last_call` also carries the response's ``system_fingerprint``, which
 changes when the server build or weights do — that, not the seed, is what
 breaks reproduction between builds. ``temperature=0`` makes the seed
 irrelevant for anyone who wants greedy, boring determinism.
 
 The one thing import cannot do is fire a script's ``__main__`` guard, so
-:func:`ask_code` asks for top-level code; when a reply insists on a guard,
+:func:`write_code` asks for top-level code; when a reply insists on a guard,
 :func:`save_code` prints the ``runpy.run_path(..., run_name="__main__")`` call
 that runs it anyway.
 """
@@ -85,7 +92,7 @@ SERVER_ROOT = BASE_URL[:-3] if BASE_URL.endswith("/v1") else BASE_URL
 #: Pin every reply in a run to one seed, e.g. `EPHEMERAL_LLM_SEED=1234 python -`.
 SEED_ENV = "EPHEMERAL_LLM_SEED"
 
-#: Default stem for :func:`save_code` / :func:`ask_code`.
+#: Default stem for :func:`save_code` / :func:`write_code`.
 DEFAULT_NAME = "generated"
 
 #: Where generated code lands. ``/output`` is the only writable path Ephemeral
@@ -150,7 +157,7 @@ def new_seed() -> int:
 
 
 def last_call() -> dict | None:
-    """Seed, temperature, model and fingerprint of the last chat()/ask_code()."""
+    """Seed, temperature, model and fingerprint of the last chat()/write_code()."""
     return dict(_last_call) if _last_call else None
 
 
@@ -172,15 +179,23 @@ def _remember(prompt, system, model, seed, temperature, fingerprint, reply) -> N
     }
 
 
-def _report_lines(seed: int, temperature: float | None, fingerprint: str | None):
-    """The provenance line, plus a note when the server build changed."""
+def _report_lines(
+    seed: int,
+    temperature: float | None,
+    fingerprint: str | None,
+    call: str = "chat",
+):
+    """The provenance line, plus a note when the server build changed.
+
+    The line is written as the call that produced the reply
+    (``chat(prompt, seed=7, temperature=0.8)``), so it can be pasted back
+    verbatim — that is the whole point of printing it.
+    """
     global _last_fingerprint
-    reuse = f"seed={seed}"
-    head = f"seed={seed}"
+    arguments = f"seed={seed}"
     if temperature is not None:
-        head += f" temperature={temperature:g}"
-        reuse += f", temperature={temperature:g}"
-    lines = [f"[ephemeral-llm] {head} (reproduce: chat(prompt, {reuse}))"]
+        arguments += f", temperature={temperature:g}"
+    lines = [f"[ephemeral-llm] {call}(prompt, {arguments})"]
     if fingerprint and _last_fingerprint and fingerprint != _last_fingerprint:
         lines.append(
             f"[ephemeral-llm] note: the server build changed "
@@ -232,7 +247,7 @@ def chat(
     fingerprint = getattr(response, "system_fingerprint", None) or None
     _remember(prompt, system, model, seed, used_temperature, fingerprint, reply)
     if report:
-        for line in _report_lines(seed, used_temperature, fingerprint):
+        for line in _report_lines(seed, used_temperature, fingerprint, "chat"):
             print(line)
     return reply
 
@@ -241,7 +256,7 @@ def chat(
 # Reply -> runnable file
 # ---------------------------------------------------------------------------
 
-#: Used by :func:`ask_code` so a small model reliably fences its answer, and so
+#: Used by :func:`write_code` so a small model reliably fences its answer, and so
 #: the result runs when the next block imports it. A `main()` + `__main__` guard
 #: (a very common shape) would import as a silent no-op, so the prompt asks for
 #: top-level code instead of a script skeleton.
@@ -423,6 +438,7 @@ def save_code(
     directory: str = DEFAULT_DIRECTORY,
     quiet: bool = False,
     echo: bool = True,
+    save_confirmation: bool = True,
 ) -> str:
     """Write the code from a model reply to ``directory`` and return its path.
 
@@ -433,7 +449,8 @@ def save_code(
 
     ``echo`` prints the code itself, fenced, so the block's output shows the
     program the model wrote above the result of running it. Pass ``echo=False``
-    for just the one-line confirmation, or ``quiet=True`` for neither.
+    for just the one-line confirmation, ``save_confirmation=False`` for the code
+    without the ``saved …`` line, or ``quiet=True`` for neither.
     """
     code, label = _extract(reply, lang)
     filename = _filename(name, label)
@@ -443,9 +460,10 @@ def save_code(
         handle.write(code)
 
     if not quiet:
-        lines = max(1, code.count("\n"))
-        kind = label or "code"
-        print(f"[ephemeral-llm] saved {path} ({lines} lines, {kind})")
+        if save_confirmation:
+            lines = max(1, code.count("\n"))
+            kind = label or "code"
+            print(f"[ephemeral-llm] saved {path} ({lines} lines, {kind})")
         if echo:
             # Fenced in the reply's own language: the core widens the wrapper
             # around this output when the payload already contains fences, so
@@ -464,7 +482,7 @@ def save_code(
     return path
 
 
-def ask_code(
+def write_code(
     prompt: str,
     name: str = DEFAULT_NAME,
     lang: str | None = None,
@@ -472,32 +490,61 @@ def ask_code(
     directory: str = DEFAULT_DIRECTORY,
     quiet: bool = False,
     echo: bool = True,
+    save_confirmation: bool = False,
     seed: int | None = None,
     temperature: float | None = None,
     report: bool = True,
     **kwargs,
 ) -> str:
-    """Ask the model for a program, save it to ``directory``, return the path.
+    """Ask the model to write a program, save it to ``directory``, return the path.
 
     Same flow as ``save_code(chat(prompt))``, with a system prompt that asks for
     one labelled code block so the language (and therefore the suffix) is
     unambiguous. ``kwargs`` go to :func:`chat`.
 
     The code is echoed to stdout by default, so the block's output shows the
-    program and the next block shows its result. ``echo=False`` prints only the
-    saved-file line.
+    program and the next block shows its result. The ``saved …`` line is off by
+    default here (``save_confirmation=True`` restores it) because the echoed
+    code already says what was written; ``echo=False, save_confirmation=True``
+    gives the old confirmation-only output, and ``quiet=True`` prints neither.
 
-    ``seed`` and ``temperature`` go to :func:`chat`, and the seed that was used
-    is printed above the code, so the same script can be regenerated exactly.
+    ``seed`` and ``temperature`` go to :func:`chat`, and the call that produced
+    the reply is printed above the code — ``write_code(prompt, seed=7,
+    temperature=0.8)`` — so the same program can be regenerated exactly.
     """
+    if os.environ.get("EPHEMERAL_LLM_REPORT", "1") == "0":
+        report = False
+
+    # `report=False` keeps chat() from printing its own line: the provenance is
+    # announced once, as `write_code(...)`, since that is the call to replay.
     reply = chat(
         prompt,
         system=system or _CODE_SYSTEM,
         seed=seed,
         temperature=temperature,
-        report=report,
+        report=False,
         **kwargs,
     )
+    used = _last_call or {}
+    if report and not quiet:
+        for line in _report_lines(
+            used.get("seed"),
+            used.get("temperature"),
+            used.get("system_fingerprint"),
+            "write_code",
+        ):
+            print(line)
     return save_code(
-        reply, name=name, lang=lang, directory=directory, quiet=quiet, echo=echo
+        reply,
+        name=name,
+        lang=lang,
+        directory=directory,
+        quiet=quiet,
+        echo=echo,
+        save_confirmation=save_confirmation,
     )
+
+
+#: Former name of :func:`write_code`, kept so existing documents keep working.
+ask_code = write_code
+
