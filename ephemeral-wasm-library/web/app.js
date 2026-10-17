@@ -334,15 +334,55 @@ function updateLangStatus() {
     // while a run is in flight, matched back to the fence via data-idx.
     const ok = SUPPORTED_LANGUAGES.has(f.lang);
     const isFile = !ok && f.lang.includes(".");
+    // One pill per fence: the header is a single declaration, so the
+    // language and its params share a pill ("llm chain" is one decision, not
+    // two). Splitting them into a declaration pill plus a pill per param read
+    // as separate blocks and pushed the artifact chip between them.
+    //
+    // The pill colour is the strictest verdict across the whole header:
+    // stripped tokens (`unsafe`, `notimeout`, an `image=` override) or an
+    // unknown language go amber, an unrecognized token greys it, and a
+    // supported language with honored flags stays blue. The tooltip names the
+    // token responsible, and a stripped token keeps its inline ✗ — being
+    // honored is what a blue pill already means, so flags do not repeat a ✓.
+    const labels = [];
+    const notes = [];
+    let strippedToken = false;
+    let unknownToken = false;
+    for (const raw of f.params) {
+      const p = raw.toLowerCase();
+      if (NETWORK_FLAGS.has(p) || NO_TIMEOUT_FLAGS.has(p)) {
+        labels.push("✗ " + raw);
+        notes.push(`'${raw}' is not honored on the distributed network — jobs run sandboxed, with a node-side timeout`);
+        strippedToken = true;
+      } else if (DROPPED_OVERRIDES.some((o) => p.startsWith(o + "="))) {
+        labels.push("✗ " + raw);
+        notes.push(`'${raw}' is dropped on remote jobs — the node operator decides the image`);
+        strippedToken = true;
+      } else if (CHAIN_FLAGS.has(p) || NO_CHAIN_FLAGS.has(p)) {
+        labels.push(raw);
+        notes.push(`'${raw}' is honored by the node`);
+      } else {
+        labels.push(raw);
+        notes.push(`'${raw}' is not a header token — ignored by the parser`);
+        unknownToken = true;
+      }
+    }
     const chip = document.createElement("span");
     // `lang-name` marks the declaration pill itself: run-status overlays and
     // artifact pills share the fence index, so updates must not grab them.
-    chip.className = "lang-chip lang-name " + (ok ? "valid" : isFile ? "file" : "invalid");
-    chip.title = ok
-      ? "supported — click to run just this block"
-      : isFile
-        ? "file/seed block — not a language"
-        : "not in the language map — this block will be rejected";
+    chip.className = "lang-chip lang-name " + (
+      (!ok && !isFile) || strippedToken ? "invalid"
+        : isFile || unknownToken ? "file"
+          : "valid");
+    chip.title = [
+      ok
+        ? "supported — click to run just this block"
+        : isFile
+          ? "file/seed block — not a language"
+          : "not in the language map — this block will be rejected",
+      ...notes,
+    ].join("\n");
     chip.dataset.baseTitle = chip.title;
     linkPillToBlock(chip, i);
     // A supported language pill doubles as the "re-run just this block"
@@ -364,7 +404,7 @@ function updateLangStatus() {
     const runInd = document.createElement("span");
     runInd.className = "chip-run";
     chip.appendChild(runInd);
-    chip.appendChild(document.createTextNode(f.lang));
+    chip.appendChild(document.createTextNode([f.lang, ...labels].join(" ")));
     el.appendChild(chip);
     // Artifact chip: the block references /output, so the run is expected
     // to return a downloadable artifact (single images preview inline).
@@ -380,32 +420,6 @@ function updateLangStatus() {
         : "writes to /output — returned as a downloadable artifact after the run (images preview inline)";
       linkPillToBlock(achip, i);
       el.appendChild(achip);
-    }
-    // Ephemeral parameter chips: ✗ for what the distributed network
-    // strips, ✓ for what it honors, neutral for unknown tokens.
-    for (const raw of f.params) {
-      const p = raw.toLowerCase();
-      const pchip = document.createElement("span");
-      if (NETWORK_FLAGS.has(p)) {
-        pchip.className = "lang-chip invalid";
-        pchip.textContent = "✗ " + raw;
-        pchip.title =
-          "'unsafe' is not supported on the distributed network — jobs always run sandboxed";
-      } else if (DROPPED_OVERRIDES.some((o) => p.startsWith(o + "="))) {
-        pchip.className = "lang-chip invalid";
-        pchip.textContent = "✗ " + raw;
-        pchip.title = "overrides are dropped on remote jobs — the node operator decides the image";
-      } else if (CHAIN_FLAGS.has(p) || NO_CHAIN_FLAGS.has(p)) {
-        pchip.className = "lang-chip valid";
-        pchip.textContent = "✓ " + raw;
-        pchip.title = "supported execution flag";
-      } else {
-        pchip.className = "lang-chip file";
-        pchip.textContent = raw;
-        pchip.title = "unknown header token — ignored by the parser";
-      }
-      linkPillToBlock(pchip, i);
-      el.appendChild(pchip);
     }
   }
   // The (i) help pill is always the trailing chip — even with no fences,
