@@ -532,10 +532,26 @@ def test_msi_is_machine_wide_and_declarative():
     # CI must actually build it, prove it installs, and ship it with the release.
     workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
     assert "packaging/msi/build_msi.sh" in workflow, "CI must build the MSI"
-    assert "msiexec /i dist/Ephemeral-Distributed-Beta.msi /qn" in workflow, (
+    # msiexec needs a Windows path: it was handed the POSIX-relative
+    # `dist/...msi` and answered 1619, "This installation package could not be
+    # opened", in the time it takes to look at the argument. cygpath -w is the
+    # fix, so assert the resolved variable rather than the literal path.
+    assert 'MSI="$(cygpath -w "$PKG")"' in workflow, (
+        "the smoke test must hand msiexec an absolute Windows path")
+    assert 'msiexec /i "$MSI" /qn' in workflow, (
         "CI must prove the MSI installs, not just that it links")
-    assert "msiexec /x dist/Ephemeral-Distributed-Beta.msi /qn" in workflow, (
+    assert 'msiexec /x "$MSI" /qn' in workflow, (
         "...and that it uninstalls again, or the smoke test leaks an install")
+    for relative in ("msiexec /i dist/", "msiexec /x dist/"):
+        assert relative not in workflow, (
+            "a POSIX-relative package path is the 1619 'could not be opened' "
+            "case, not shorthand for the same thing")
+    assert 'if [ ! -f "$PKG" ]' in workflow, (
+        "the smoke test must say the MSI is missing instead of letting msiexec "
+        "report it as a package it could not open")
+    assert "Ephemeral-Distributed-Node" in workflow, (
+        "the machine-wide Run value is the claim this package makes, so CI has "
+        "to check it and not only that files landed")
     assert "--artifact dist/Ephemeral-Distributed-Beta.msi" in workflow, (
         "the MSI's hash must reach the build manifest consumers verify against")
     assert "dist/Ephemeral-Distributed-Beta.msi" in workflow, (

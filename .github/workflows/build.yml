@@ -258,15 +258,69 @@ jobs:
     - name: Smoke test - install and remove the MSI
       shell: bash
       run: |
+        # msiexec is a native Windows binary and has to be handed a Windows
+        # path. Given the POSIX-relative `dist/...msi` it answered 1619, "This
+        # installation package could not be opened" - the MSI-in-a-subfolder
+        # case, where the reference is in a form the installer does not
+        # resolve. cygpath -w gives the absolute backslash form, and
+        # MSYS2_ARG_CONV_EXCL stops Git Bash rewriting /i and /qn.
         # A machine-wide install writes %ProgramFiles% and the HKLM Run key, so
         # it needs elevation - the runner has it, and /qn keeps it unattended.
-        # MSYS2_ARG_CONV_EXCL stops Git Bash turning /i into a path.
         export MSYS2_ARG_CONV_EXCL='*'
-        msiexec /i dist/Ephemeral-Distributed-Beta.msi /qn /l*v msi-install.log
-        ls -la "$PROGRAMFILES/Ephemeral-Distributed-Beta/Ephemeral-Distributed-Beta.exe"
-        msiexec /x dist/Ephemeral-Distributed-Beta.msi /qn /l*v msi-uninstall.log
-        test ! -d "$PROGRAMFILES/Ephemeral-Distributed-Beta"
-        echo "MSI install + uninstall smoke passed"
+        PKG="$PWD/dist/Ephemeral-Distributed-Beta.msi"
+        if [ ! -f "$PKG" ]; then
+          echo "no MSI at $PKG - the build step produced nothing" >&2
+          ls -la dist >&2
+          exit 1
+        fi
+        # A Windows Installer package is an OLE compound file, and msiexec
+        # answers a non-package with the same 1619 as a path it cannot reach,
+        # so check the magic and name a bad artifact as one.
+        magic="$(head -c 8 "$PKG" | od -An -tx1 | tr -d ' \n')"
+        if [ "$magic" != "d0cf11e0a1b11ae1" ]; then
+          echo "$PKG is not an MSI (OLE magic: $magic)" >&2
+          exit 1
+        fi
+        MSI="$(cygpath -w "$PKG")"
+        RUNKEY='HKLM\Software\Microsoft\Windows\CurrentVersion\Run'
+        INSTALLED="$(cygpath -u "${PROGRAMFILES:-C:\Program Files}")/Ephemeral-Distributed-Beta"
+        echo "installing $MSI ($(du -h "$PKG" | cut -f1))"
+        # Git Bash reports a Windows exit status mod 256, so msiexec's 1619
+        # reaches the log as "exit code 83" with nothing saying why: on failure
+        # print the status we did see, and the installer's own log.
+        code=0
+        msiexec /i "$MSI" /qn /l*v "$(cygpath -w "$PWD/msi-install.log")" || code=$?
+        if [ "$code" -ne 0 ]; then
+          echo "msiexec /i failed: status $code (bash reports it mod 256, so 1619 shows as 83)" >&2
+          tail -n 40 msi-install.log >&2 || true
+          exit 1
+        fi
+        ls -la "$INSTALLED/Ephemeral-Distributed-Beta.exe"
+        # "Machine-wide" is the claim this package makes, so the smoke test
+        # checks the machine-wide entries rather than only the files.
+        echo "--- machine-wide Run entry ---"
+        reg query "$RUNKEY" /v Ephemeral-Distributed-Node /reg:64
+        reg query "$RUNKEY" /v Ephemeral-Distributed-Node /reg:64 | grep -qF -- '--node' || {
+          echo "the machine-wide node entry is missing from $RUNKEY" >&2
+          exit 1
+        }
+        reg query 'HKLM\Software\Ephemeral\Ephemeral-Distributed-Beta' /v NodeAtLogin /reg:64
+        code=0
+        msiexec /x "$MSI" /qn /l*v "$(cygpath -w "$PWD/msi-uninstall.log")" || code=$?
+        if [ "$code" -ne 0 ]; then
+          echo "msiexec /x failed: status $code" >&2
+          tail -n 40 msi-uninstall.log >&2 || true
+          exit 1
+        fi
+        if [ -d "$INSTALLED" ]; then
+          echo "the install directory survived uninstall: $INSTALLED" >&2
+          exit 1
+        fi
+        if reg query "$RUNKEY" /v Ephemeral-Distributed-Node /reg:64 >/dev/null 2>&1; then
+          echo "the machine-wide node entry survived uninstall" >&2
+          exit 1
+        fi
+        echo "MSI install + uninstall smoke passed, machine-wide entries included"
 
     - name: Generate build manifest
       shell: bash
