@@ -257,8 +257,10 @@ textarea { min-height: 150px; resize: vertical; }
   margin: 6px 0 0;
 }
 
-/* Artifacts: inline image previews + download/copy action bar. */
+/* Artifacts: inline image previews with floating copy/download icons. */
 .block.artifacts {
+  /* Anchors the floating .artifact-tools over the preview. */
+  position: relative;
   border-top: 1px dashed #333;
   margin-top: 8px;
   padding-top: 8px;
@@ -277,22 +279,58 @@ textarea { min-height: 150px; resize: vertical; }
   margin: 6px 0;
   background: #111;
 }
-.artifact-bar {
+/* Copy image / Download: the same floating top-right affordance as the
+   per-code-block copy button, so artifacts carry no separate text buttons. */
+.artifact-tools {
+  position: absolute;
+  top: 2px;
+  right: 2px;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
+  gap: 2px;
+  opacity: .55;
+  transition: opacity .12s ease;
 }
-.artifact-count { color: var(--muted); font-size: 12px; }
-/* Non-image artifact shown inline under its run result (interleaved view). */
+.block.artifacts:hover .artifact-tools,
+.artifact-tools:focus-within { opacity: 1; }
+.artifact-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, .55);
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+.artifact-tool:hover { background: rgba(0, 0, 0, .85); color: var(--text); }
+.artifact-tool svg { width: 13px; height: 13px; }
+.artifact-tool.ok { color: var(--ok); }
+/* Touch devices have no hover: keep the icons permanently visible rather
+   than fading a tap target out. */
+@media (hover: none) {
+  .artifact-tools { opacity: 1; }
+}
+.artifact-count { color: var(--muted); font-size: 12px; margin-top: 2px; }
+/* Inline artifact filename caption (interleaved view) — the file name used
+   to ride on the old action bar. */
+.artifact-name {
+  color: var(--muted);
+  font-size: 12px;
+  font-family: ui-monospace, Consolas, monospace;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+/* Non-image artifact shown inline under its run result (interleaved view):
+   the floating icons sit over its top-right, so leave them room. */
 .artifact-file {
   color: #6db3ff;
   font-size: 13px;
   font-family: ui-monospace, Consolas, monospace;
   margin: 6px 0;
+  padding-right: 64px;
 }
-.artifact-btn { padding: 5px 12px; font-size: 12.5px; }
-.artifact-btn.ok { background: #2d5a2d; }
 
 .actions { display: flex; gap: 10px; margin-top: 10px; align-items: center; }
 /* Spinner lives inside the Run button: centered over the label while a
@@ -398,6 +436,16 @@ fieldset.print-link-opt:hover { color: var(--text); }
   margin-top: 8px;
   image-rendering: pixelated;
 }
+/* The QR <img> sits inside a link to the same share URL, so the printed
+   paper/PDF keeps a second clickable target on top of the "Try it here"
+   text link. Pure wrapper: inline-block so the anchor hugs the image
+   with no extra spacing or color. */
+.try-it-here a.try-qr-link {
+  display: inline-block;
+  line-height: 0;
+  color: inherit;
+}
+.try-it-here a.try-qr-link:hover { text-decoration: none; }
 /* On-screen mirror of the print "Try it here" footer: one element pinned
    at the end of the Output box while the checkbox is on, so the payload
    link is visible without printing (and the print snapshot already
@@ -715,6 +763,17 @@ details.advanced .advanced-meta code { color: var(--accent-hi); }
   margin-left: 18px;
   border-left: 2px solid #2b2b2b;
   padding-left: 10px;
+}
+/* Live-preview placeholder under a block with no result (nothing has run
+   yet, or its code changed since the last run). Same inset as a result
+   panel so the document keeps its rhythm. */
+#output.interleaved .block.pending {
+  margin: 0 0 10px 18px;
+  border-left: 2px solid #2b2b2b;
+  padding-left: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: normal;
 }
 .code-block {
   background: #0c0c0c;

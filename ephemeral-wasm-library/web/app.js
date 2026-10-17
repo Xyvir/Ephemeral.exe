@@ -64,6 +64,20 @@ let lastExitCode = 0;
 let warningsOn = false;
 let lastStderrEl = null;
 
+// --- live document preview -------------------------------------------------
+// Prose is never executed, so the interleaved view can track the editor as it
+// is typed without submitting a job. Results stay attached to the fences that
+// produced them (matched by content, not position), so prose edits keep every
+// result on screen and only an edited block loses its own — now stale —
+// result. While a job is in flight the box carries streamed logs, so live
+// re-rendering is suppressed until the run's own final render.
+let runInFlight = false;
+let liveTimer = null;
+let liveLastAt = 0;
+const LIVE_PREVIEW_MS = 220;
+// The document the interleaved view currently shows (skip no-op renders).
+let lastRenderedDoc = null;
+
 // Image extensions -> mime (inline render + clipboard copy).
 const IMAGE_MIMES = {
   ".png": "image/png",
@@ -309,6 +323,10 @@ function updateLangStatus() {
   // Chips appearing/disappearing changes how tall the dock is — re-check
   // the "more below" indicator against the dock's new top edge.
   syncMoreHint();
+  // Every path that changes the document (typing, setValue from import /
+  // snippet / clear / undo / URL pre-fill) reaches updateLangStatus, so this
+  // is also the one place the live document preview is kept in sync.
+  scheduleLivePreview();
 }
 
 // Bright-highlight fence header info-strings (the language declaration +
@@ -678,6 +696,23 @@ function splitResults(stdout) {
   return out;
 }
 
+// Highlighted fence bodies, keyed by language + exact code. The live preview
+// re-renders the whole document on (throttled) keystrokes; re-running
+// highlight.js over unchanged blocks every time would make typing stutter, so
+// unchanged fences reuse their HTML. Cleared wholesale at the cap (bounded
+// memory — these are classroom-sized documents).
+const hlCache = new Map();
+const HL_CACHE_MAX = 400;
+
+function cachedHighlight(seg) {
+  const key = (seg.lang || "") + "\u0000" + seg.code;
+  if (hlCache.has(key)) return hlCache.get(key);
+  const html = highlightFenceBody(seg.code, seg.lang);
+  if (hlCache.size >= HL_CACHE_MAX) hlCache.clear();
+  hlCache.set(key, html);
+  return html;
+}
+
 function renderCodeSeg(seg) {
   const div = document.createElement("div");
   div.className = "block source";
@@ -693,7 +728,7 @@ function renderCodeSeg(seg) {
   // so interleaved source blocks mirror the editor: shebang markers,
   // per-language hljs, and the auto-detect fallback for unknown
   // languages (instead of the plain text highlightElement left behind).
-  const html = highlightFenceBody(seg.code, seg.lang);
+  const html = cachedHighlight(seg);
   if (html !== null) code.innerHTML = html;
   else code.textContent = seg.code;
   pre.appendChild(code);
@@ -749,39 +784,110 @@ function renderProseSeg(seg) {
   return div;
 }
 
-// Interleaved view: the original document with each executable code
-// block's result slotted in right after it. Best-effort: results are
-// matched positionally (in order) to non-seed code blocks.
+// The markdown the interleaved view renders: the LIVE editor content, so
+// prose follows typing without a re-run (only fenced code is ever submitted).
+// Falls back to the last submitted document when the editor is empty, so
+// clearing the code box doesn't blank the output panel.
+function displayDoc() {
+  const live = editor ? editor.getValue() : "";
+  return live.trim() ? live : lastMarkdown;
+}
+
+// Identity of a runnable fence: header + body. Pairing on content (not
+// position) is what keeps results attached to their block while the prose
+// around them is edited.
+function fenceKey(seg) {
+  return seg.header + "\u0000" + seg.code;
+}
+
+function runnableFences(segs) {
+  return segs.filter((s) => s.type === "code" && !s.isSeed);
+}
+
+// Pair each executable fence in `segs` with the result the last run produced
+// for it — matched by content and consumed in document order. Prose-only
+// edits keep every result, an edited block drops just its own (stale) result,
+// and inserting or deleting a fence shifts nothing.
+function pairResults(segs, results) {
+  const runKeys = runnableFences(splitMarkdown(lastMarkdown)).map(fenceKey);
+  const pairs = new Map(); // segment index -> result envelope text
+  let from = 0;
+  segs.forEach((seg, i) => {
+    if (seg.type !== "code" || seg.isSeed) return;
+    const key = fenceKey(seg);
+    for (let j = from; j < runKeys.length; j++) {
+      if (runKeys[j] !== key) continue;
+      if (j < results.length) pairs.set(i, results[j]);
+      from = j + 1;
+      return;
+    }
+  });
+  return pairs;
+}
+
+// True when the displayed document's runnable fences are exactly the ones the
+// last run executed, in the same order — the only case where inline artifacts
+// can be trusted to line up with their block.
+function docMatchesRun(segs) {
+  const live = runnableFences(segs).map(fenceKey);
+  const run = runnableFences(splitMarkdown(lastMarkdown)).map(fenceKey);
+  return live.length === run.length && live.every((k, i) => k === run[i]);
+}
+
+// Placeholder under a code block that has no result yet: nothing has run, the
+// block was added after the run, or its code changed since. Without it an
+// unrun block would just silently have no output area.
+function pendingElement(seg) {
+  const div = document.createElement("div");
+  div.className = "block pending";
+  div.textContent =
+    "▶ not run — press Run to execute this " + (seg.lang || "code") + " block";
+  return div;
+}
+
+// Interleaved view: the document with each executable code block's result
+// slotted in right after it. The document is the live editor content, so
+// prose tracks typing; results are paired to fences by content.
 function renderInterleaved() {
   const box = $("output");
   box.textContent = "";
   box.classList.add("interleaved");
-  if (!lastMarkdown) return;
+  const doc = displayDoc();
+  lastRenderedDoc = doc;
+  if (!doc) return;
+  const segs = splitMarkdown(doc);
   const results = splitResults(lastResultText);
-  // Pure positional 1:1 — inline each artifact under its run's result
-  // ONLY in the clean one-artifact-per-run case (the fan-out norm, where
-  // artifact frames + run envelopes both arrive in document order). Any
-  // other shape (no results, missing/extra artifacts, multi-file runs)
-  // falls back to the rolled-up artifact block at the end.
+  const pairs = pairResults(segs, results);
+  // Inline each artifact under its own run's result ONLY in the clean
+  // one-artifact-per-run case for the exact document that ran (the fan-out
+  // norm, where artifact frames + run envelopes both arrive in document
+  // order). Any other shape — no results, missing/extra artifacts, multi-file
+  // runs, or a document edited since the run — falls back to the rolled-up
+  // artifact block at the end.
   const inlineAll =
-    runArtifacts.length > 0 && runArtifacts.length === results.length;
-  let ri = 0;
+    docMatchesRun(segs) &&
+    runArtifacts.length > 0 &&
+    runArtifacts.length === results.length &&
+    pairs.size === runnableFences(segs).length;
   let ai = 0;
-  for (const seg of splitMarkdown(lastMarkdown)) {
+  segs.forEach((seg, i) => {
     if (seg.type === "prose") {
       box.appendChild(renderProseSeg(seg));
-    } else {
-      box.appendChild(renderCodeSeg(seg));
-      if (!seg.isSeed && ri < results.length) {
-        box.appendChild(resultElement(results[ri++]));
-        if (inlineAll) {
-          box.appendChild(
-            renderArtifactInline(runArtifacts[ai++], artifactLang(lastMarkdown))
-          );
-        }
-      }
+      return;
     }
-  }
+    box.appendChild(renderCodeSeg(seg));
+    if (seg.isSeed) return;
+    if (pairs.has(i)) {
+      box.appendChild(resultElement(pairs.get(i)));
+      if (inlineAll) {
+        box.appendChild(
+          renderArtifactInline(runArtifacts[ai++], artifactLang(lastMarkdown))
+        );
+      }
+    } else {
+      box.appendChild(pendingElement(seg));
+    }
+  });
   leftoverArtifacts = inlineAll ? [] : runArtifacts;
   addCopyButtons(box);
   pruneEmptyStdoutForImages(box);
@@ -796,6 +902,7 @@ function renderNormal() {
   const box = $("output");
   box.textContent = "";
   box.classList.remove("interleaved");
+  lastRenderedDoc = null;
   if (lastOutputRaw) box.appendChild(resultElement(lastOutputRaw));
   addCopyButtons(box);
   pruneEmptyStdoutForImages(box);
@@ -819,17 +926,17 @@ function appendArtifactsIfAny() {
 // block's result spliced in after its code fence. Copy uses this while the
 // interleave toggle is on, so the clipboard matches what's on screen.
 function interleavedMarkdown() {
+  const segs = splitMarkdown(displayDoc());
+  const pairs = pairResults(segs, splitResults(lastResultText));
   const parts = [];
-  const results = splitResults(lastResultText);
-  let ri = 0;
-  for (const seg of splitMarkdown(lastMarkdown)) {
+  segs.forEach((seg, i) => {
     if (seg.type === "prose") {
       parts.push(seg.text);
-    } else {
-      parts.push(seg.fence + seg.header + "\n" + seg.code + "\n" + seg.fence);
-      if (!seg.isSeed && ri < results.length) parts.push(results[ri++]);
+      return;
     }
-  }
+    parts.push(seg.fence + seg.header + "\n" + seg.code + "\n" + seg.fence);
+    if (pairs.has(i)) parts.push(pairs.get(i));
+  });
   return parts.join("\n").replace(/\n+$/, "");
 }
 
@@ -1493,6 +1600,11 @@ async function start() {
   // Pre-fill editor from ?code=<base64> query parameter.
   if (url.code && editor) {
     editor.setValue(url.code);
+    // setValue is programmatic — OverType's onChange never fires, so refresh
+    // the language pills and the live preview the same way the import,
+    // snippet and undo paths do.
+    updateLangStatus();
+    highlightCodeHeaders();
     // Clear the query string so a refresh doesn't re-inject stale code.
     history.replaceState(null, "", location.pathname + location.hash);
   }
@@ -1555,7 +1667,11 @@ async function run() {
   $("warnings").hidden = true;
   $("output").textContent = "";
   $("output").classList.remove("interleaved");
+  lastRenderedDoc = null;
   setBusy(true);
+  // Streamed logs own the output box until the run's own final render, so the
+  // live document preview stands down for the duration.
+  runInFlight = true;
   // Rebuild the language pills from the current editor content so no
   // run-status overlay from a previous run survives.
   updateLangStatus();
@@ -1682,6 +1798,10 @@ async function run() {
     box.appendChild(note);
     box.scrollTop = box.scrollHeight;
   }
+  // The merge is done — typing may drive the live preview again from here on
+  // (the final render below re-reads the live document, so keystrokes entered
+  // during the run are already reflected).
+  runInFlight = false;
   lastOutputRaw = outputRaw;
   // View follows the selected mode: auto keys off the document shape
   // (prose outside the fences → interleaved, bare code → results-only),
@@ -1831,17 +1951,33 @@ function syncTryItHere() {
     const data = qrDataUrl(url);
     if (data) {
       if (!img) {
+        // The QR itself is a link to the same share URL, so even the
+        // printed-paper image can be clicked in a PDF viewer (and the
+        // phone camera treats it as plain QR). One <a> wraps the img.
+        const wrap = document.createElement("a");
+        wrap.className = "try-qr-link";
+        wrap.target = "_blank";
+        wrap.rel = "noopener";
+        wrap.title = url;
         img = document.createElement("img");
         img.className = "try-qr";
         img.alt = "QR code linking to this output's share URL";
-        el.appendChild(img);
+        wrap.appendChild(img);
+        el.appendChild(wrap);
+      }
+      const wrapA = img.closest("a.try-qr-link");
+      if (wrapA) {
+        wrapA.href = url;
+        wrapA.title = url;
       }
       if (img.src !== data) img.src = data;
     } else if (img) {
       img.remove();
     }
   } else if (img) {
-    img.remove();
+    // Link-only mode: drop the whole QR wrapper.
+    const wrap = img.closest("a.try-qr-link");
+    (wrap || img).remove();
   }
   box.scrollTop = box.scrollHeight;
 }
@@ -1883,6 +2019,14 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
 }
 .result-title.failed { color: #b00020; }
 .result-step { color: #555; font-size: 10.5pt; margin: 8px 0 4px; }
+.block.pending {
+  color: #666;
+  font-size: 10.5pt;
+  font-style: italic;
+  margin: 0 0 10px 18px;
+  padding-left: 10px;
+  border-left: 2px solid #d8dee4;
+}
 .result-line { color: #111; white-space: pre-wrap; word-break: break-word; margin: 2px 0; }
 .interleave-h1, .interleave-h2, .interleave-h3 { font-weight: 700; margin: 14px 0 4px; }
 .interleave-h1 { font-size: 15pt; }
@@ -1915,7 +2059,7 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
   word-break: break-word;
 }
 .code-block code { background: transparent; padding: 0; }
-.block-copy, .artifact-bar { display: none; }
+.block-copy, .artifact-tools { display: none; }
 .artifact-img {
   max-width: 100%;
   max-height: 320px;
@@ -1923,6 +2067,7 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
   border-radius: 4px;
   margin: 6px 0;
 }
+.artifact-count, .artifact-name { color: #666; font-size: 10.5pt; margin-top: 2px; }
 .block.reminder {
   border: 1px solid #d4a72c;
   background: #fdf6e3;
@@ -1946,17 +2091,6 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
   border-top: 1px solid #d8dee4;
 }
 .try-it-here a { color: #0a66c2; font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
-/* Acrobat workaround: append the full payload URL in angle brackets so
-   Acrobat's link detection treats the entire string — query string
-   included — as a single unit and keeps it clickable when the PDF is
-   opened there. The brackets are the visible cue that the whole URL is
-   one link target. */
-.try-it-here a::after {
-  content: " <" attr(href) ">";
-  color: #555;
-  font-weight: 400;
-  font-size: 10pt;
-}
 /* QR code in the footer (Link + QR mode): crisp on paper at 4px
    modules; the quiet zone comes from the data URL itself. */
 .try-it-here .try-qr {
@@ -1982,7 +2116,7 @@ pre, code { font-family: ui-monospace, Consolas, monospace; }
     footerHtml =
       `\n<div class="try-it-here">\n` +
       `<a href="${url}" target="_blank" rel="noopener" title="${url}">Try it here</a>\n` +
-      (data ? `<img class="try-qr" src="${data}" alt="QR code linking to this output's share URL" />\n` : "") +
+      (data ? `<a class="try-qr-link" href="${url}" target="_blank" rel="noopener" title="${url}"><img class="try-qr" src="${data}" alt="QR code linking to this output's share URL" /></a>\n` : "") +
       `</div>`;
   }
   win.document.write(
@@ -2024,26 +2158,72 @@ async function downloadArtifacts(artifacts, lang) {
 }
 
 // Copy a single image artifact to the clipboard as an image (ClipboardItem
-// write — Chrome/Edge; Firefox requires a permission).
+// write — Chrome/Edge; Firefox requires a permission). The button is an icon
+// by then, so success/failure reads through the .ok flash + tooltip rather
+// than swapped label text.
 async function copyArtifactImage(a, btn) {
-  const label = btn.textContent;
+  const label = btn.title;
   try {
     await navigator.clipboard.write([new ClipboardItem({ [a.mime]: b64ToBlob(a.b64, a.mime) })]);
     btn.classList.add("ok");
-    btn.textContent = "Copied image";
+    btn.title = "Copied image";
   } catch (e) {
-    btn.textContent = "Copy failed";
+    btn.title = "Copy failed";
   }
   setTimeout(() => {
     btn.classList.remove("ok");
-    btn.textContent = label;
+    btn.title = label;
   }, 1200);
 }
 
+// Icons for the floating artifact actions — the same glyphs as the per-code
+// -block copy button and the toolbar's export/download button, so an artifact
+// preview carries the identical affordance instead of a row of text buttons.
+const ICON_COPY =
+  '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>' +
+  '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>';
+const ICON_DOWNLOAD =
+  '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>' +
+  '<polyline points="7 10 12 15 17 10"></polyline>' +
+  '<line x1="12" y1="15" x2="12" y2="3"></line>';
+
+function artifactIconButton(svg, label) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "artifact-tool";
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+  btn.innerHTML =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round">' + svg + "</svg>";
+  return btn;
+}
+
+// Floating action icons pinned to the top-right of an artifact: Copy image
+// (single image only — the clipboard write needs one image) and Download
+// (the file itself, or a .zip when a run produced several).
+function artifactTools(artifacts, lang) {
+  const tools = document.createElement("div");
+  tools.className = "artifact-tools";
+  const single = artifacts.length === 1 ? artifacts[0] : null;
+  if (single && IMAGE_MIMES[single.ext]) {
+    const copy = artifactIconButton(ICON_COPY, "Copy image");
+    copy.addEventListener("click", () => copyArtifactImage(single, copy));
+    tools.appendChild(copy);
+  }
+  const dl = artifactIconButton(
+    ICON_DOWNLOAD,
+    single ? "Download " + single.name : `Download all ${artifacts.length} as .zip`
+  );
+  dl.addEventListener("click", () => downloadArtifacts(artifacts, lang));
+  tools.appendChild(dl);
+  return tools;
+}
+
 // Render a SINGLE artifact inline under its run's result (interleaved
-// view): image preview (or a file row for non-images) plus a Download /
-// Copy-image action bar. Used when positional 1:1 matching holds — the
-// one-artifact-per-run fan-out case.
+// view): image preview (or a file row for non-images) with the floating
+// Copy-image / Download icons over it, plus the filename as a caption. Used
+// when positional 1:1 matching holds — the one-artifact-per-run fan-out case.
 function renderArtifactInline(a, lang) {
   const div = document.createElement("div");
   div.className = "block artifacts inline";
@@ -2060,38 +2240,33 @@ function renderArtifactInline(a, lang) {
     row.textContent = "📄 " + a.name;
     div.appendChild(row);
   }
-  const bar = document.createElement("div");
-  bar.className = "artifact-bar";
-  const label = document.createElement("span");
-  label.className = "artifact-count";
-  label.textContent = a.name;
-  bar.appendChild(label);
-  if (IMAGE_MIMES[a.ext]) {
-    const copy = document.createElement("button");
-    copy.className = "secondary artifact-btn";
-    copy.textContent = "Copy image";
-    copy.addEventListener("click", () => copyArtifactImage(a, copy));
-    bar.appendChild(copy);
-  }
-  const dl = document.createElement("button");
-  dl.className = "secondary artifact-btn";
-  dl.textContent = "Download";
-  dl.addEventListener("click", () => downloadArtifacts([a], lang));
-  bar.appendChild(dl);
-  div.appendChild(bar);
+  div.appendChild(artifactTools([a], lang));
+  const caption = document.createElement("div");
+  caption.className = "artifact-name";
+  caption.textContent = a.name;
+  div.appendChild(caption);
   return div;
 }
 
-// Render a run's artifacts in the output: inline image previews, then an
-// action bar — Download (single file) / Download all (.zip) (multi),
-// plus Copy image for a single image artifact.
+// Render a run's artifacts in the output: inline image previews with the
+// floating Copy-image / Download icons over them (Copy only when the run
+// produced a single image), and the artifact count as a caption.
 function renderArtifacts(artifacts, markdown) {
   const lang = artifactLang(markdown);
   const box = $("output");
   const div = document.createElement("div");
   div.className = "block artifacts";
   for (const a of artifacts) {
-    if (!IMAGE_MIMES[a.ext]) continue;
+    if (!IMAGE_MIMES[a.ext]) {
+      // Non-image artifacts have no preview, so list them by name — the
+      // rolled-up block is the only place a multi-file run names its files
+      // (the download icon above ships them together as a .zip).
+      const row = document.createElement("div");
+      row.className = "artifact-file";
+      row.textContent = "📄 " + a.name;
+      div.appendChild(row);
+      continue;
+    }
     const img = document.createElement("img");
     img.className = "artifact-img";
     img.src = `data:${a.mime};base64,${a.b64}`;
@@ -2099,25 +2274,11 @@ function renderArtifacts(artifacts, markdown) {
     img.title = a.name;
     div.appendChild(img);
   }
-  const bar = document.createElement("div");
-  bar.className = "artifact-bar";
-  const label = document.createElement("span");
+  div.appendChild(artifactTools(artifacts, lang));
+  const label = document.createElement("div");
   label.className = "artifact-count";
   label.textContent = `${artifacts.length} artifact${artifacts.length === 1 ? "" : "s"}`;
-  bar.appendChild(label);
-  if (artifacts.length === 1 && IMAGE_MIMES[artifacts[0].ext]) {
-    const copy = document.createElement("button");
-    copy.className = "secondary artifact-btn";
-    copy.textContent = "Copy image";
-    copy.addEventListener("click", () => copyArtifactImage(artifacts[0], copy));
-    bar.appendChild(copy);
-  }
-  const dl = document.createElement("button");
-  dl.className = "secondary artifact-btn";
-  dl.textContent = artifacts.length === 1 ? "Download" : "Download all (.zip)";
-  dl.addEventListener("click", () => downloadArtifacts(artifacts, lang));
-  bar.appendChild(dl);
-  div.appendChild(bar);
+  div.appendChild(label);
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
 }
@@ -2235,7 +2396,15 @@ function langHelpPillEl() {
     // popover landed off-screen. Measuring from the dock keeps the
     // popover always opening upward from the pill, above the hovering
     // bottom controls rather than behind or below them.
-    const dock = document.querySelector("section.run .run-dock").getBoundingClientRect();
+    // Fall back to whatever bottom-anchored control row exists (the dock, its
+    // action row, the section itself) so a markup change degrades the popover
+    // to "roughly right" instead of throwing and leaving it unpositioned.
+    const dockEl =
+      document.querySelector("section.run .run-dock") ||
+      document.querySelector("section.run .actions") ||
+      document.querySelector("section.run");
+    if (!ed || !dockEl) return;
+    const dock = dockEl.getBoundingClientRect();
     pop.style.position = "fixed";
     pop.style.left = ed.left + "px";
     pop.style.bottom = window.innerHeight - dock.top + "px";
@@ -2245,9 +2414,9 @@ function langHelpPillEl() {
     // the sticky toolbar row (when it's floating) or the editor's top
     // edge, whichever is lower, so the popover can't cover the header row.
     pop.style.height = ""; // natural size first, so scrollHeight is real
-    const head = document
-      .querySelector("section.run .section-head")
-      .getBoundingClientRect();
+    const headEl = document.querySelector("section.run .section-head");
+    if (!headEl) return;
+    const head = headEl.getBoundingClientRect();
     // The 0 floor keeps the popover inside the viewport when the dock has
     // been pushed up near the top (the run section ending) — there it
     // shrinks to the room above the dock instead of opening past the edge.
@@ -2322,6 +2491,9 @@ function langHelpPillEl() {
 }
 $("clearOutput").addEventListener("click", () => {
   $("output").textContent = "";
+  $("output").classList.remove("interleaved");
+  if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; }
+  lastRenderedDoc = null;
   outputRaw = "";
   runArtifacts = [];
   lastMarkdown = lastResultText = lastOutputRaw = "";
@@ -2358,12 +2530,50 @@ function docHasProse(md) {
 
 // The view decision implied by the current mode: pinned modes decide
 // outright; auto keys off the document shape (prose outside the fences →
-// interleaved, bare code → results-only).
+// interleaved, bare code → results-only). The shape is read off the LIVE
+// document, so the preview can appear as soon as prose is typed — before
+// anything has run.
 function effectiveInterleave() {
   return (
     interleaveMode === "on" ||
-    (interleaveMode === "auto" && docHasProse(lastMarkdown))
+    (interleaveMode === "auto" && docHasProse(displayDoc()))
   );
+}
+
+// --- live preview scheduling ----------------------------------------------
+// A throttled (leading + trailing) re-render of the interleaved view. Prose
+// is not executed, so the document view can follow typing with zero cluster
+// work; only the highlighted code blocks are rebuilt, and those come out of
+// hlCache. Throttling (not debouncing) keeps long dictation updating while
+// the student is still typing.
+function scheduleLivePreview() {
+  if (runInFlight) return;
+  if (!interleaved && !canStartPreview()) return;
+  const wait = Math.max(0, LIVE_PREVIEW_MS - (performance.now() - liveLastAt));
+  if (liveTimer) clearTimeout(liveTimer);
+  liveTimer = setTimeout(renderLivePreview, wait);
+}
+
+// Auto mode may flip into the document view before the first run — that's the
+// point of the live preview. After a run the view stays where the run's
+// decision put it (its results are still valid for the submitted document).
+function canStartPreview() {
+  return lastMarkdown === "" && lastOutputRaw === "" && effectiveInterleave();
+}
+
+function renderLivePreview() {
+  liveTimer = null;
+  if (runInFlight) return; // streamed logs own the box right now
+  liveLastAt = performance.now();
+  if (!interleaved) {
+    if (!canStartPreview()) return;
+    setInterleaved(true);
+  }
+  if (displayDoc() === lastRenderedDoc) return; // nothing visible changed
+  renderInterleaved();
+  // The renderer wipes the box, so re-pin the footer mirror (it is part of
+  // the box, not of the document view).
+  syncTryItHere();
 }
 
 // Keep the Interleave button's affordance in sync with the effective
@@ -2397,8 +2607,15 @@ $("interleave").addEventListener("click", () => {
   syncInterleaveButton();
   const on = effectiveInterleave();
   setInterleaved(on);
-  if (interleaved && lastMarkdown) renderInterleaved();
-  else if (!interleaved && lastOutputRaw) renderNormal();
+  if (interleaved) renderInterleaved();
+  else if (lastOutputRaw) renderNormal();
+  else {
+    // Results-only view with nothing run yet: drop the document preview so
+    // the pinned "off" mode shows an empty box, not a stale preview.
+    $("output").textContent = "";
+    $("output").classList.remove("interleaved");
+    lastRenderedDoc = null;
+  }
   // The view renderers wiped the box, so re-pin the footer mirror.
   syncTryItHere();
 });
