@@ -24,8 +24,12 @@ by default, or a self-hosted one.
   top two nodes as compact `iroh1:<node_id>;<relay>` entries in one
   255-char TXT string, resolved via DNS-over-HTTPS for an independent,
   tiered path), then the manual seed field. It auto-routes jobs to the
-  best node by id + relay and renders streamed output. The built glue is
-  committed under `web/wbg/` so the SPA runs without a Rust toolchain.
+  best node by id + relay and renders streamed output. The language pills
+  under the editor are live controls: hovering one highlights its fence in
+  the editor, clicking a supported language pill re-runs **just that block**
+  (the other blocks keep their results), and a pill for a returned artifact
+  downloads that single file. The built glue is committed under `web/wbg/`
+  so the SPA runs without a Rust toolchain.
 - `build.sh` — rebuilds the wasm module (see its header for the toolchain
   requirements: stable Rust with `wasm32-unknown-unknown`, a wasm-capable
   clang for `ring`'s C files such as wasi-sdk, and the `wasm-bindgen` CLI

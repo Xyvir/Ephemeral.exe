@@ -248,6 +248,75 @@ function fenceInfo(markdown) {
   return out;
 }
 
+// ---------- pill ↔ editor linking ------------------------------------------
+// OverType renders a fence as a run of sibling nodes in the preview: the
+// ```lang opening line, the highlighted code <pre>, then the closing ``` line.
+// Grouping them gives every fence index a contiguous highlight range, so a
+// pill hover can light up the exact block it describes.
+function previewFenceGroups() {
+  const preview = document.querySelector("#editor .overtype-preview");
+  if (!preview) return [];
+  const groups = [];
+  let cur = null;
+  for (const el of preview.children) {
+    if (el.classList.contains("code-block-line")) {
+      const text = (el.textContent || "").trim();
+      const bare = /^(`{3,}|~{3,})$/.test(text);
+      if (!bare && /^(`{3,}|~{3,})\s*\S/.test(text)) {
+        cur = [el];
+        groups.push(cur);
+        continue;
+      }
+      if (cur) {
+        cur.push(el);
+        if (bare) cur = null; // the closing fence ends this block
+      }
+      continue;
+    }
+    if (cur) cur.push(el);
+  }
+  return groups;
+}
+
+// Light up the block behind a pill. OverType wipes the preview DOM on every
+// keystroke, so the class is transient by design — it is re-applied on hover.
+function setPreviewHighlight(idx) {
+  for (const el of document.querySelectorAll("#editor .overtype-preview .block-hover")) {
+    el.classList.remove("block-hover");
+  }
+  if (idx == null || !editor) return;
+  const groups = previewFenceGroups();
+  // Only trust the grouping when it lines up 1:1 with the parsed fences (a
+  // bare, headerless fence can throw the scan off) — highlighting the wrong
+  // block would be worse than highlighting none.
+  if (groups.length !== fenceInfo(editor.getValue()).length) return;
+  const group = groups[idx];
+  if (!group || !group.length) return;
+  for (const el of group) el.classList.add("block-hover");
+  revealPreviewBlock(group);
+}
+
+// Bring a highlighted block into view — but only when it is off screen, so
+// sweeping across the pills doesn't yank the page around.
+function revealPreviewBlock(group) {
+  const first = group[0];
+  const last = group[group.length - 1];
+  const top = first.getBoundingClientRect().top;
+  const bottom = last.getBoundingClientRect().bottom;
+  const margin = 80; // leave room for the sticky toolbar above / dock below
+  if (top >= margin && bottom <= window.innerHeight - margin) return;
+  first.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+// Every pill that belongs to a fence points back at it: hovering (or focusing)
+// the pill highlights that block in the editor.
+function linkPillToBlock(el, idx) {
+  el.dataset.idx = String(idx);
+  el.addEventListener("mouseenter", () => setPreviewHighlight(idx));
+  el.addEventListener("mouseleave", () => setPreviewHighlight(null));
+  return el;
+}
+
 function updateLangStatus() {
   if (!editor) return; // OverType fires onChange during its own _init,
   // before the constructor's destructuring assigns `editor`.
@@ -263,14 +332,32 @@ function updateLangStatus() {
     const ok = SUPPORTED_LANGUAGES.has(f.lang);
     const isFile = !ok && f.lang.includes(".");
     const chip = document.createElement("span");
-    chip.className = "lang-chip " + (ok ? "valid" : isFile ? "file" : "invalid");
-    chip.dataset.idx = String(i);
+    // `lang-name` marks the declaration pill itself: run-status overlays and
+    // artifact pills share the fence index, so updates must not grab them.
+    chip.className = "lang-chip lang-name " + (ok ? "valid" : isFile ? "file" : "invalid");
     chip.title = ok
-      ? "supported"
+      ? "supported — click to run just this block"
       : isFile
         ? "file/seed block — not a language"
         : "not in the language map — this block will be rejected";
     chip.dataset.baseTitle = chip.title;
+    linkPillToBlock(chip, i);
+    // A supported language pill doubles as the "re-run just this block"
+    // button: it is reachable by keyboard and never re-submits the document.
+    if (ok) {
+      chip.classList.add("rerun");
+      chip.setAttribute("role", "button");
+      chip.setAttribute("tabindex", "0");
+      chip.addEventListener("focus", () => setPreviewHighlight(i));
+      chip.addEventListener("blur", () => setPreviewHighlight(null));
+      chip.addEventListener("click", () => rerunBlock(i));
+      chip.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          rerunBlock(i);
+        }
+      });
+    }
     const runInd = document.createElement("span");
     runInd.className = "chip-run";
     chip.appendChild(runInd);
@@ -286,8 +373,9 @@ function updateLangStatus() {
         ? "📦 " + artifactNames.join(", ")
         : "📦 artifact";
       achip.title = artifactNames.length
-        ? `writes ${artifactNames.join(", ")} to /output — the result is returned as a downloadable artifact (images preview inline)`
-        : "writes to /output — the result is returned as a downloadable artifact (images preview inline)";
+        ? `writes ${artifactNames.join(", ")} to /output — returned as a downloadable artifact after the run (images preview inline)`
+        : "writes to /output — returned as a downloadable artifact after the run (images preview inline)";
+      linkPillToBlock(achip, i);
       el.appendChild(achip);
     }
     // Ephemeral parameter chips: ✗ for what the distributed network
@@ -313,6 +401,7 @@ function updateLangStatus() {
         pchip.textContent = raw;
         pchip.title = "unknown header token — ignored by the parser";
       }
+      linkPillToBlock(pchip, i);
       el.appendChild(pchip);
     }
   }
@@ -1013,6 +1102,39 @@ function withTimeout(promise, ms) {
   ]);
 }
 
+// Transport failures are transient: a node that is restarting (or whose relay
+// handshake is still warming up) makes the wasm client reject with a bare
+// string — usually "timed out" — instead of a terminal job frame. Replaying the
+// block once the node answers again is far better than surfacing a failed run
+// for a job that never started. Guarded by the frame counter below so a job
+// that DID start can never be executed twice.
+const TRANSIENT_SUBMIT_ERROR = /timed out|timeout|closed|reset|refused|unreachable|network|connection/i;
+
+async function submitWithRetry(sub, attempts = 3) {
+  const deadline = performance.now() + 90000; // never stretch a run past ~90s of dialing
+  for (let attempt = 1; ; attempt++) {
+    const framesBefore = sub.state.frames || 0;
+    try {
+      return await sub.submit();
+    } catch (e) {
+      // wasm-bindgen rejects with a plain string, not an Error.
+      const msg = String((e && e.message) || e || "connection failed");
+      const replayable =
+        (sub.state.frames || 0) === framesBefore && TRANSIENT_SUBMIT_ERROR.test(msg);
+      if (!replayable || attempt >= attempts || performance.now() > deadline) throw e;
+      if (attempt === 1) {
+        // The node is briefly unreachable, not broken: say so instead of
+        // letting a silent delay look like a hang.
+        appendOut(
+          `[block ${sub.idx}] ${msg} — node not answering, retrying…`,
+          "err"
+        );
+      }
+      await new Promise((r) => setTimeout(r, 500 * attempt));
+    }
+  }
+}
+
 // Languages used in a Markdown doc (code fence info strings).
 function languagesIn(markdown) {
   const langs = new Set();
@@ -1404,6 +1526,7 @@ function makeBlockEventHandler(blockIdx) {
     const evt = JSON.parse(jsonStr);
     const state = blockStates.get(blockIdx);
     if (!state) return;
+    state.frames = (state.frames || 0) + 1;
 
     if (evt.type === "job_log") {
       const data = new TextDecoder().decode(base64_decode(evt.data));
@@ -1463,10 +1586,15 @@ function initBlockStates(fences) {
       idx: i,
       lang: f.lang,
       header: f.header,
+      // Header + body: a re-run carries a prior result forward only when the
+      // fence is unchanged (see rerunBlock).
+      key: f.header + "\u0000" + f.body,
       exec,
       warn: false,
       status: exec ? "queued" : "skip",
       nodeId: null,
+      // Frames seen for this block; a retry is only safe while this is 0.
+      frames: 0,
       logs: [],
       stdout: "",
       stderr: "",
@@ -1514,6 +1642,7 @@ function statusLabel(state) {
     return state.errors.length ? state.errors[0] : `failed (exit ${state.exitCode ?? 1})`;
   }
   if (state.status === "no-match") return state.errors[0] || "no match";
+  if (state.status === "idle") return "not run — click this pill to run the block";
   if (state.status === "skip") return "seed/file";
   return state.status;
 }
@@ -1540,7 +1669,7 @@ function blockOutputPreview(state) {
 // Reflect a block's state on its language pill (matched by fence index, which
 // aligns fenceInfo() with the updateLangStatus() pill order).
 function applyBlockStatus(state) {
-  const chip = document.querySelector(`#langStatus .lang-chip[data-idx="${state.idx}"]`);
+  const chip = document.querySelector(`#langStatus .lang-chip.lang-name[data-idx="${state.idx}"]`);
   if (!chip) return;
   const { cls, icon } = blockStatusVisual(state);
   chip.classList.remove("running", "done", "warn", "err");
@@ -1548,17 +1677,6 @@ function applyBlockStatus(state) {
   const ind = chip.querySelector(".chip-run");
   if (ind) ind.textContent = icon;
   chip.title = `${chip.dataset.baseTitle || "block"} — ${statusLabel(state)}${blockOutputPreview(state)}`;
-}
-
-// Drop every pill's run-status overlay, returning it to its idle validity
-// colors (used when the output/run state is cleared).
-function resetPillStatuses() {
-  for (const chip of document.querySelectorAll("#langStatus .lang-chip[data-idx]")) {
-    chip.classList.remove("running", "done", "warn", "err");
-    const ind = chip.querySelector(".chip-run");
-    if (ind) ind.textContent = "";
-    chip.title = chip.dataset.baseTitle || "";
-  }
 }
 
 
@@ -1616,6 +1734,45 @@ async function start() {
   } catch (e) {
     setStatus("failed: " + e, "err");
   }
+}
+
+// Fold the per-block states into the run-level result contract the output
+// panel and the interleaved view consume: stdout in document order, stderr,
+// the first non-zero exit code, and every artifact. Shared by a full run and
+// a single-block re-run so both render from exactly one source of truth.
+function mergeBlockResults() {
+  const stdoutParts = [];
+  const stderrParts = [];
+  let exitCode = 0;
+  const mergedArtifacts = [];
+  for (const [, state] of blockStates) {
+    if (!state.exec) continue;
+    if (state.stdout) stdoutParts.push(state.stdout);
+    if (state.stderr) stderrParts.push(state.stderr);
+    if (state.exitCode !== null && state.exitCode !== 0 && exitCode === 0) {
+      exitCode = state.exitCode;
+    }
+    for (const a of state.artifacts) mergedArtifacts.push(a);
+    for (const e of state.errors) {
+      stderrParts.push(e);
+      if (exitCode === 0) exitCode = 1;
+    }
+  }
+  lastResultText = stdoutParts.join("\n");
+  lastStderr = stderrParts.join(
+    stdoutParts.length && stderrParts.length ? "\n" : ""
+  );
+  lastExitCode = exitCode || 0;
+  runArtifacts = mergedArtifacts;
+  // "idle" blocks were never part of this run (single-block re-runs), so they
+  // cannot count as passing or failing.
+  const ran = [...blockStates.values()].filter(
+    (s) => s.exec && s.status !== "idle"
+  );
+  const failed = ran.filter(
+    (s) => s.status === "failed" || (s.exitCode ?? 0) !== 0
+  ).length;
+  return { ran, failed };
 }
 
 async function run() {
@@ -1715,7 +1872,7 @@ async function run() {
   // node unreachable) surface as promise rejections with no terminal frame, so
   // map each result back to its block and mark it failed explicitly —
   // Promise.allSettled swallows rejections, so the per-block status must too.
-  const results = await Promise.allSettled(submissions.map((s) => s.submit()));
+  const results = await Promise.allSettled(submissions.map((s) => submitWithRetry(s)));
   setBusy(false);
   refreshPeers(); // re-sync the peer table after each run (non-blocking)
   for (let i = 0; i < submissions.length; i++) {
@@ -1723,40 +1880,19 @@ async function run() {
     if (r.status === "rejected") {
       const sub = submissions[i];
       const msg = String(r.reason || "connection failed");
+      const node = sub.node && sub.node.node_id ? ` on node ${sub.node.node_id.slice(0, 8)}…` : "";
       sub.state.status = "failed";
       sub.state.exitCode = sub.state.exitCode ?? 1;
       sub.state.errors.push(msg);
       applyBlockStatus(sub.state);
-      appendOut(`[block ${sub.idx}] ${msg}`, "err");
+      appendOut(`[block ${sub.idx}] ${msg}${node}`, "err");
     }
   }
 
   // --- merge per-block results into the existing output contract -------------
   // Preserve document order for the merged result text (best-effort positional
   // matching the existing interleaved view already relies on).
-  const stdoutParts = [];
-  const stderrParts = [];
-  let exitCode = 0;
-  const mergedArtifacts = [];
-  for (const [, state] of blockStates) {
-    if (!state.exec) continue;
-    if (state.stdout) stdoutParts.push(state.stdout);
-    if (state.stderr) stderrParts.push(state.stderr);
-    if (state.exitCode !== null && state.exitCode !== 0 && exitCode === 0) {
-      exitCode = state.exitCode;
-    }
-    for (const a of state.artifacts) mergedArtifacts.push(a);
-    for (const e of state.errors) {
-      stderrParts.push(e);
-      if (exitCode === 0) exitCode = 1;
-    }
-  }
-  lastResultText = stdoutParts.join("\n");
-  lastStderr = stderrParts.join(
-    stdoutParts.length && stderrParts.length ? "\n" : ""
-  );
-  lastExitCode = exitCode || 0;
-  runArtifacts = mergedArtifacts;
+  const { ran, failed } = mergeBlockResults();
 
   // Rebuild the merged result + stderr the same way the single-job path did.
   if (lastResultText) appendResult(lastResultText);
@@ -1765,10 +1901,9 @@ async function run() {
   if (runArtifacts.length) {
     renderArtifacts(runArtifacts, markdown);
   }
-  const ran = [...blockStates.values()].filter((s) => s.exec);
-  const failed = ran.filter(
-    (s) => s.status === "failed" || (s.exitCode ?? 0) !== 0
-  ).length;
+  // The declaration-time "writes to /output" hints now become real, one-click
+  // downloads for whatever this run actually returned.
+  syncArtifactChips();
   setDetail(
     failed === 0
       ? `done (exit 0)`
@@ -1814,6 +1949,184 @@ async function run() {
   // Mirror the "Try it here" footer into the box (checkbox-gated), so
   // the payload link is visible on screen and rides along in print.
   syncTryItHere();
+}
+
+// ---------------------------------------------------------------------------
+// Single-block re-run: a supported language pill is a button that executes
+// just that fence (with the seed/file fences above it — the same mini-document
+// a full run submits by fan-out), leaving every other block's result alone.
+// Output, artifacts and pill states are then re-derived from the per-block
+// results, so the panel and the interleaved view stay consistent.
+async function rerunBlock(idx) {
+  if ($("run").disabled) return; // a run is already in flight (single flight)
+  if (!editor) return;
+  const markdown = editor.getValue();
+  const fences = fenceInfo(markdown);
+  const f = fences[idx];
+  // Only an executable fence has a re-run affordance; seed/file blocks and
+  // unknown languages stay inert pills.
+  if (!f || !SUPPORTED_LANGUAGES.has(f.lang) || f.lang.includes(".")) return;
+
+  const manual = $("ticket").value.trim();
+  const target = pickBlockTarget(f.lang) ||
+    (manual ? { node_id: null, relay: null, ticket: manual } : null);
+  if (!target) {
+    setStatus("no compute nodes discovered — paste a seed ticket", "err");
+    return;
+  }
+  localStorage.setItem("ephemeral.ticket", manual);
+  localStorage.setItem("ephemeral.relay", $("relay").value.trim());
+
+  // Re-key the per-block states onto the LIVE document. A result is carried
+  // over only when that fence's header+body is unchanged, so a block edited
+  // since the last run loses its stale result (and renders as "not run")
+  // instead of showing output for code that is no longer there.
+  const previous = blockStates;
+  initBlockStates(fences);
+  for (const [i, state] of blockStates) {
+    const old = previous.get(i);
+    if (!old || !state.exec || !old.exec || old.key !== state.key) continue;
+    state.status = old.status;
+    state.nodeId = old.nodeId;
+    state.warn = old.warn;
+    state.logs = old.logs;
+    state.stdout = old.stdout;
+    state.stderr = old.stderr;
+    state.exitCode = old.exitCode;
+    state.errors = old.errors;
+    state.artifacts = old.artifacts;
+  }
+  // Blocks that never ran stay idle: this re-run is scoped to one fence.
+  for (const state of blockStates.values()) {
+    if (state.exec && state.status === "queued") state.status = "idle";
+  }
+  // Repaint the carried-over results: typing rebuilt the pill row (the editor's
+  // onChange runs updateLangStatus), which drops the status overlays.
+  for (const state of blockStates.values()) {
+    if (state.exec && state.status !== "idle") applyBlockStatus(state);
+  }
+
+  const state = blockStates.get(idx);
+  state.status = "running";
+  state.nodeId = target.node_id || (manual ? "(manual)" : null);
+  state.warn = false;
+  state.logs = [];
+  state.stdout = "";
+  state.stderr = "";
+  state.exitCode = null;
+  state.errors = [];
+  state.artifacts = [];
+  state.frames = 0;
+  applyBlockStatus(state);
+
+  const doc = buildBlockDocument(fences, idx);
+  const sub = {
+    state,
+    idx,
+    node: target,
+    submit: target.node_id && target.relay
+      ? () => client.submit_job_to_node(target.node_id, target.relay, b64encode(doc), 300, makeBlockEventHandler(idx))
+      : () => client.submit_job(target.ticket, b64encode(doc), 300, makeBlockEventHandler(idx)),
+  };
+
+  // Single flight: the Run button spins (and is disabled) exactly as during a
+  // full run, so a second pill click can't start a concurrent job.
+  runInFlight = true; // streamed logs own the box until the re-render below
+  setBusy(true);
+  try {
+    await submitWithRetry(sub);
+  } catch (e) {
+    const msg = String((e && e.message) || e || "connection failed");
+    const node = target.node_id ? ` on node ${shortId(target.node_id)}` : "";
+    state.status = "failed";
+    state.exitCode = state.exitCode ?? 1;
+    state.errors.push(msg + node);
+    applyBlockStatus(state);
+  } finally {
+    setBusy(false);
+  }
+  refreshPeers(); // re-sync the peer table after the job (non-blocking)
+
+  // These results belong to the document as it is now — pairing (interleaved
+  // view) reads lastMarkdown, so keep it in step with the editor.
+  lastMarkdown = markdown;
+  const { failed } = mergeBlockResults();
+  paintMergedOutput();
+  syncArtifactChips();
+  setDetail(
+    failed === 0
+      ? `${f.lang} block re-ran — exit 0`
+      : `${f.lang} block re-ran — exit ${lastExitCode}`
+  );
+}
+
+// Rebuild the output panel from the merged per-block results. A re-run keeps
+// the previous panel on screen while its job streams, so this clears and
+// re-renders instead of appending (no duplicated log lines, and the re-run
+// block's fresh result replaces its old one).
+function paintMergedOutput() {
+  runInFlight = false;
+  lastStderrEl = null;
+  lastOutputRaw = lastResultText
+    ? (lastResultText.endsWith("\n") ? lastResultText : lastResultText + "\n") + "\n"
+    : "";
+  outputRaw = lastOutputRaw;
+  if (lastStderr && lastExitCode === 0) showWarningsButton();
+  else $("warnings").hidden = true;
+  setInterleaved(effectiveInterleave());
+  syncInterleaveButton();
+  if (interleaved) renderInterleaved();
+  else renderNormal();
+  syncTryItHere();
+}
+
+// Reflect the artifacts a run actually returned as clickable pills: each
+// block's pre-run "writes to /output" hint becomes one pill per file, and a
+// click downloads exactly that file (the rolled-up artifact block still zips
+// the whole run together).
+function syncArtifactChips() {
+  for (const el of document.querySelectorAll("#langStatus .lang-chip.artifact-ready")) {
+    el.remove();
+  }
+  for (const [idx, state] of blockStates) {
+    if (!state.exec || !state.artifacts.length) continue;
+    const chip = document.querySelector(`#langStatus .lang-chip.lang-name[data-idx="${idx}"]`);
+    if (!chip) continue;
+    // The declaration-time placeholder is redundant once the real names are
+    // known (and it must go before the per-file pills are inserted).
+    const placeholder = document.querySelector(`#langStatus .lang-chip.artifact[data-idx="${idx}"]`);
+    if (placeholder) placeholder.remove();
+    const lang = String(state.lang).replace(/[^a-zA-Z0-9]/g, "_");
+    let anchor = chip;
+    for (const a of state.artifacts) {
+      const achip = document.createElement("span");
+      achip.className = "lang-chip artifact artifact-ready";
+      achip.textContent = "📦 " + a.name;
+      achip.title = `download ${a.name} — produced by this ${state.lang} block`;
+      achip.setAttribute("role", "button");
+      achip.setAttribute("tabindex", "0");
+      const download = () => downloadArtifact(a, lang);
+      achip.addEventListener("click", download);
+      achip.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          download();
+        }
+      });
+      linkPillToBlock(achip, idx);
+      anchor.after(achip);
+      anchor = achip;
+    }
+  }
+}
+
+// One-click download of a single artifact pill.
+function downloadArtifact(a, lang) {
+  if (!a || !a.b64) return;
+  triggerDownload(
+    b64ToBlob(a.b64, a.mime || "application/octet-stream"),
+    artifactFileName(lang || "custom", a.name)
+  );
 }
 
 // Render the "unsupported language" reminder: which fences were unknown,
@@ -2502,10 +2815,15 @@ $("clearOutput").addEventListener("click", () => {
   warningsOn = false;
   lastStderrEl = null;
   $("warnings").hidden = true;
-  // Also clear the in-flight per-block status overlay so a cleared run
-  // doesn't leave stale final states on the language pills.
+  // Also clear the per-block state so a cleared run doesn't leave stale
+  // final states on the language pills, then rebuild the pill row from the
+  // document — that drops the per-artifact download pills too, whose blobs
+  // are gone with the results.
   blockStates.clear();
-  resetPillStatuses();
+  updateLangStatus();
+  // updateLangStatus schedules the live document preview; a cleared box stays
+  // cleared until the next keystroke (which re-arms it) or the next run.
+  if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; }
   // Back to the pre-execute state: grey pip until the next run decides.
   syncInterleaveButton();
   // The "Try it here" footer lives inside the box, so it is gone with

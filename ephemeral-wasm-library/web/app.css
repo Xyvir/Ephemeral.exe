@@ -213,6 +213,32 @@ textarea { min-height: 150px; resize: vertical; }
 .lang-chip.file { border-color: #444; color: var(--muted); }
 .lang-chip.artifact { border-color: #1e4a6e; color: #6db3ff; }
 
+/* Pills are affordances: a supported language pill re-runs just its block,
+   and a ready artifact pill downloads that one file — both highlight their
+   block in the editor while hovered/focused. */
+.lang-chip.rerun,
+.lang-chip.artifact-ready { cursor: pointer; }
+.lang-chip.rerun:hover,
+.lang-chip.rerun:focus-visible,
+.lang-chip.artifact-ready:hover,
+.lang-chip.artifact-ready:focus-visible {
+  border-color: var(--accent-hi);
+  background: #14304a;
+  color: #fff;
+  outline: none;
+}
+.lang-chip[tabindex]:focus-visible { outline: 1px solid var(--accent-hi); }
+
+/* The block behind the hovered pill, highlighted in place inside OverType's
+   preview (the invisible textarea can't show a selection, so the rendered
+   fence — opening line, code, closing line — gets the tint instead). The
+   !important is forced: OverType paints its own fence backgrounds with
+   !important, and #editor's id gives this rule the specificity to win. */
+#editor .overtype-wrapper .overtype-preview .block-hover {
+  background-color: rgba(30, 144, 255, 0.16) !important;
+  box-shadow: inset 2px 0 0 var(--accent-hi) !important;
+}
+
 /* Run-status overlay on the language pills while a run is in flight. */
 .lang-chip.running { border-color: #555; color: var(--muted); background: #222; }
 .lang-chip.done { border-color: #2d5a2d; color: var(--ok); }
