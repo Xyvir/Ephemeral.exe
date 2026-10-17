@@ -1,0 +1,9 @@
+# Shell scripts and Containerfiles are consumed by Linux tooling (Podman in
+# WSL2, GitHub Actions runners). Without this, a Windows clone checks them out
+# with CRLF and the container's `#!/bin/sh` shebang fails with
+# "bad interpreter: /bin/sh^M" — the image builds fine on CI and breaks only
+# for local Windows builds.
+*.sh text eol=lf
+*.dockerfile text eol=lf
+Dockerfile text eol=lf
+Dockerfile.* text eol=lf

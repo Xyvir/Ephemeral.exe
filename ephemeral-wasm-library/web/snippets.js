@@ -137,6 +137,16 @@ export const LANG_SNIPPETS = {
     "lisp",
     '(format t "Markdown: Common Lisp (SBCL) | Math Check: ~d - OK~%" (+ 27 3))'
   ),
+  // The monolith's server is already running on loopback by the time this
+  // executes, so the demo only needs the one-shot helper.
+  llm: fence(
+    "llm",
+    [
+      "from ephemeral_llm import chat",
+      "",
+      'print(chat("In one sentence, what is a pandas DataFrame?"))',
+    ].join("\n")
+  ),
   lolcode: fence(
     "lolcode",
     ['HAI 1.2', 'VISIBLE "Markdown: Lolcode | Math Check: 14 - OK"', "KTHXBYE"].join("\n")

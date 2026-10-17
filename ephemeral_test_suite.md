@@ -265,6 +265,18 @@ endmodule
 ````
 
 ````
+```llm
+import pandas as pd
+from ephemeral_llm import chat
+
+# Deterministic data check, then a round-trip to the in-container model
+df = pd.DataFrame({"n": [21, 9]})
+print(f"Markdown: Local LLM (Qwen2.5-0.5B) | Data Check: {int(df.n.sum())} - OK")
+print(chat("In one short sentence, what did 21 and 9 just add up to?", max_tokens=64))
+```
+````
+
+````
 ```code.png b64
 iVBORw0KGgoAAAANSUhEUgAAAFcAAAAXCAYAAAB+kNMAAAAAAXNSR0IArs4c6QAAAAlwSFlzAAALEwAACxMBAJqcGAAAAAd0SU1FB9sDChMZB4c0/WoAAAAZdEVYdENvbW1lbnQAQ3JlYXRlZCB3aXRoIEdJTVBXgQ4XAAAA7UlEQVRYw+2Y0Q6DMAhFL8b/op8OX8YedGatdUuMzZi794VCTKQHSrQCWKCRmaLAsYurorh04gZ42cVVDS6duFnvcagppHTe+2v5FCAiMIG6TEXqQs9Eck6hWvkiAtizhRefcK+CHbEAfvEJ92LAr+LMHagpX/W1a7+dz5H/TnPO45UD7BmgqTpXkwAcoTkD1G3tnLkU4RIu4VIn4Wb7rrxd5xIsxwLhDvtLWq/4Wku4gwAT7h9r/tQl4r6t/cYgunccPrhze0cwNCq7Jbj6qpEcZFQ2zVhowUYDdGcjqs1cvaHQqHI5KvgR2JGAH5UkmGgNBgvjAAAAAElFTkSuQmCC
 ```

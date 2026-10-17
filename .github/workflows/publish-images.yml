@@ -43,13 +43,14 @@ jobs:
             # gnuoctave/octave is amd64-only upstream — requesting arm64
             # fails manifest resolution at build time.
             platforms: linux/amd64
-          # Work in progress, untested — built so it can be pulled and tried,
-          # but deliberately NOT wired into the language map yet.
+          # Local-LLM monolith (wired into LANG_MAP as `llm`). The bundled GGUF
+          # is architecture-neutral and every baked Python wheel has an arm64
+          # build, so publish both: an amd64-only tag makes every arm64 swarm
+          # node skip the language entirely (warm-image routing rejects
+          # foreign-arch cache entries).
           - name: ephemeral-qwen-monolith
             image: tymills620/ephemeral-qwen-monolith
-            platforms: linux/amd64
-            # widen to linux/amd64,linux/arm64 if the llama.cpp arm64 server
-            # image is wanted; the bundled GGUF is architecture-neutral.
+            platforms: linux/amd64,linux/arm64
     steps:
       - uses: actions/checkout@v4
 

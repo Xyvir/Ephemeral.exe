@@ -56,9 +56,25 @@ LANG_MAP = {
 
     # --- Science & Data ---
     'science': {'image': 'docker.io/continuumio/anaconda3', 'cmd': ['python', '-']},
+
     'octave':  {'image': 'docker.io/tymills620/octave-forge:latest', 'cmd': ['octave', '--no-gui', '--quiet']},
     'r':       {'image': 'docker.io/library/r-base:latest',           'cmd': ['R', '--vanilla', '--slave', '-f', '/dev/stdin']},
     'julia':   {'image': 'docker.io/library/julia:alpine',            'cmd': ['julia']},
+
+    # --- Local LLM (batteries-included monolith) ---
+    # One self-contained image: llama.cpp serving Qwen2.5-0.5B-Instruct on
+    # 127.0.0.1:12434, plus a pandas/polars/duckdb/scipy/matplotlib stack and
+    # a tiny `ephemeral_llm` helper. The image ENTRYPOINT boots the server
+    # before the block's code runs, so this entry must NOT set `entrypoint`
+    # (that would replace the boot script with plain `sh`). It also must not
+    # use `uv run`: the implicit-dependency path re-invokes the payload as
+    # `/deps/venv/bin/python -`, which would skip the boot step. Inference is
+    # loopback-only, so blocks stay under the default `--network none`, and
+    # the image is pull-and-run — no volumes, no host model cache.
+    'llm': {
+        'image': 'docker.io/tymills620/ephemeral-qwen-monolith:latest',
+        'cmd': ['python', '-'],
+    },
 
     # --- Databases ---
     # SQLite: a ~10 MB image with a shell (the official duckdb CLI image ships
@@ -175,7 +191,8 @@ exec sqlite3 -bail -box -header "$DB"
     'htm': 'html', 'svg': 'html',
     'runner': 'gh-runner', 'ubuntu-latest': 'gh-runner',
     'sqlite': 'sql', 'sqlite3': 'sql',
-    'lint-action': 'actionlint'
+    'lint-action': 'actionlint',
+    'local-llm': 'llm', 'localmodel': 'llm', 'qwen': 'llm'
 }
 
 # Add esolangs dynamically

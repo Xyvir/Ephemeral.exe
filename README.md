@@ -86,7 +86,7 @@ Running a node takes minutes and requires nothing beyond the app itself:
 
   Or run it in Docker (see [Deployment](#deployment)).
 
-  Optionally, turn your node into a **super-seed** that already has every language image warm: run `python scripts/hydrate_images.py` once — or, on the distributed tray, right-click → **Distributed → Pre-hydrate All Images** (it estimates the download size, checks your free disk space, and warns before pulling). Budget roughly **15–25 GB** of disk for the full set — most of it is the big science and typesetting images (Anaconda and the TeX-enabled pandoc image are a few GB each). Pull just the common languages with `python scripts/hydrate_images.py --only python,node` if space is tight; nodes pull images lazily anyway, so hydrating is purely a performance boost.
+  Optionally, turn your node into a **super-seed** that already has every language image warm: run `python scripts/hydrate_images.py` once — or, on the distributed tray, right-click → **Distributed → Pre-hydrate All Images** (it estimates the download size, checks your free disk space, and warns before pulling). Budget roughly **17–28 GB** of disk for the full set — most of it is the big science and typesetting images (Anaconda and the TeX-enabled pandoc image are a few GB each), plus ≈ 2.3 GB for the local-LLM monolith. Pull just the common languages with `python scripts/hydrate_images.py --only python,node` if space is tight; nodes pull images lazily anyway, so hydrating is purely a performance boost.
 
 * **Desktop / Windows users:** just run **`Ephemeral-Distributed.exe`** — it runs its own per-user compute node (one stable identity per user account), available while you're logged in or the PC is locked. For an always-on node that keeps serving even when no one is logged in, self-host the Linux gateway below.
 
@@ -206,12 +206,40 @@ MCP is deliberately absent from the public bastion and public distributed mode. 
 ### Supported Languages
 
 05ab1e, Bash, Brainfuck, C, C++, CJam, Clojure, Common Lisp, Crystal, Elixir, Fortran, FreeBASIC,
-Go, GolfScript, Haskell, Java, Julia, Lolcode, Lua, Nim, Node.js, OCaml, Octave, Perl, PHP, Piet,
-PowerShell, Prolog, Python, R, Ruby, Rust, Science Python, SQLite, Verilog.
+Go, GolfScript, Haskell, Java, Julia, Local LLM, Lolcode, Lua, Nim, Node.js, OCaml, Octave, Perl,
+PHP, Piet, PowerShell, Prolog, Python, R, Ruby, Rust, Science Python, SQLite, Verilog.
 
 > **SQLite = SQL for teaching** — `sql`, `sqlite`, and `sqlite3` blocks run in a ~10 MB container. Seed a lesson's dummy data as JSON blocks in the same document and each file becomes a queryable table named after it (`students.json` → `students`), so a student can start with `SELECT * FROM students;` on the first line. Blocks that run together share one database (no `chain` flag — chaining starts a fresh container per run), so `CREATE TABLE` in the first block is visible in the second. JSON seeds must be a top-level array of objects (or a single object).
 
 > **Octave = MATLAB-compatible** for the intro tier — scripts, functions, and plots run as-is; licensed toolboxes and Simulink still need real MATLAB (usually on lab machines anyway). Define your own helper functions as a seeded `.m` block (see [Seed Files](#seed-files--binary-data)). Science Python resolves numpy/scipy/matplotlib on demand through the lighter default image, so you rarely need the full Anaconda pull.
+
+#### Local LLM (batteries included)
+
+`llm` blocks (aliases `local-llm`, `localmodel`, `qwen`) run in a single self-contained image: llama.cpp serving **Qwen2.5-0.5B-Instruct** on `127.0.0.1:12434`, plus numpy, pandas, polars, pyarrow, duckdb, scipy, scikit-learn and matplotlib. That is deliberately against container orthodoxy — but Ephemeral's cycle is pull-and-run, with no volume mount or sidecar pod to hang a GGUF on, so the ~470 MB of weights ride inside the image and "use a local model" stays the same one-line workflow as every other language.
+
+```llm
+from ephemeral_llm import chat
+
+print(chat("Explain what a pandas DataFrame is in one sentence."))
+```
+
+* **Offline by design.** The server boots from the image entrypoint *before* your block runs, binds loopback only, and dies with the container. No `unsafe` flag, no network, no API key — the block still runs under `--network none`.
+* **Data and model in one run.** pandas/duckdb/scipy are already installed, so a single block can shape a table, ask the model about it, and save a plot to `/output` with no dependency resolution.
+* **OpenAI-compatible.** `from ephemeral_llm import client` gives a normal `openai.OpenAI` pointed at `http://127.0.0.1:12434/v1` for streaming, tools, or response formats. Model name: `local`.
+* **Sized for the sandbox.** Q4_K_M plus a 4096-token context fits Ephemeral's 2 GB default (and the scaled ~1 GB limit on small hosts) next to the Python stack. `EPHEMERAL_LLM_CTX` / `EPHEMERAL_LLM_THREADS` override context and thread count, and `EPHEMERAL_LLM_DISABLE=1` boots the image without the model for plain data work.
+* **Swap the model at build time** (weights are a build arg, checksummed against Hugging Face):
+
+  ```bash
+  podman build -f dockerfiles/ephemeral-qwen-monolith.dockerfile \
+    --build-arg MODEL_URL=https://huggingface.co/<repo>/resolve/main/<file>.gguf \
+    --build-arg MODEL_SHA256=<sha256> \
+    --build-arg MODEL_FILE=<file>.gguf \
+    -t docker.io/tymills620/ephemeral-qwen-monolith:latest .
+  ```
+
+  A 1.5B model needs a larger `EPHEMERAL_MEMORY_LIMIT` (e.g. `3g`) on the node running it.
+
+> **Distributed note:** the language is in `LANG_MAP`, so it is automatically part of every node's allowlist and hydrate set — `python scripts/hydrate_images.py --only llm` warms a node (≈ 2.3 GB, of which ~470 MB is the model), and jobs only route to nodes that already advertise the image.
 
 ### Features
 
@@ -672,7 +700,7 @@ curl -fsSL https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/install_se
 curl -fsSL https://raw.githubusercontent.com/Xyvir/Ephemeral.exe/main/install_self_host.sh | bash -s -- distributed
 ```
 
-Overrides: `INSTALL_DIR` (target directory), `PORT` (default **8787** — the Lithic-UK sidecar slot; see below), `EPHEMERAL_STORAGE_ROOT` (relocate Podman's image cache to a path on a big attached volume — written to `~/.config/containers/storage.conf` before first use, ideal for block-volume-backed VPS nodes), `EPHEMERAL_PREHYDRATE=1` (additionally pull the full ~15-25 GB language image map so the node is warm immediately; off by default — only the bash canary is pulled as the Podman end-to-end check), `EPHEMERAL_AUTOUPDATE=0` (distributed + `SYSTEMD=1` only: opt out of the **on-by-default** auto-updater), and for the distributed flavor `EPHEMERAL_RELAY` / `EPHEMERAL_SEEDS` / `EPHEMERAL_SECRET` / `EPHEMERAL_ALLOW_NETWORK`. Example: `curl -fsSL .../install_self_host.sh | EPHEMERAL_SECRET="..." EPHEMERAL_STORAGE_ROOT=/mnt/ephemeral SYSTEMD=1 bash -s -- distributed` (or add `EPHEMERAL_PREHYDRATE=1` to pre-pull every language).
+Overrides: `INSTALL_DIR` (target directory), `PORT` (default **8787** — the Lithic-UK sidecar slot; see below), `EPHEMERAL_STORAGE_ROOT` (relocate Podman's image cache to a path on a big attached volume — written to `~/.config/containers/storage.conf` before first use, ideal for block-volume-backed VPS nodes), `EPHEMERAL_PREHYDRATE=1` (additionally pull the full ~17-28 GB language image map so the node is warm immediately; off by default — only the bash canary is pulled as the Podman end-to-end check), `EPHEMERAL_AUTOUPDATE=0` (distributed + `SYSTEMD=1` only: opt out of the **on-by-default** auto-updater), and for the distributed flavor `EPHEMERAL_RELAY` / `EPHEMERAL_SEEDS` / `EPHEMERAL_SECRET` / `EPHEMERAL_ALLOW_NETWORK`. Example: `curl -fsSL .../install_self_host.sh | EPHEMERAL_SECRET="..." EPHEMERAL_STORAGE_ROOT=/mnt/ephemeral SYSTEMD=1 bash -s -- distributed` (or add `EPHEMERAL_PREHYDRATE=1` to pre-pull every language).
 
 **Auto-update (distributed, on by default):** installing with `SYSTEMD=1` also installs a user systemd timer (`ephemeral-self-host-update.timer`) that re-runs the installer every 6 hours — matching the swarm-refresh cadence — from the same source the node was installed from (latest release, or `main` if you installed with `EPHEMERAL_FROM_MAIN=1`). It uses the node's **own** config: the `EPHEMERAL_SECRET` baked into the unit, so the `node_id` never changes, plus the storage root and relay/seeds. The backend is restarted only when the code actually changed, and every release download is **verified against the GitHub-published sha256 digest** (from the Releases API) before it is installed — a tampered or truncated artifact is refused, and the digest doubles as the version stamp, so the change-probe is a few KB of JSON rather than a full download. Opt out at install time with `EPHEMERAL_AUTOUPDATE=0`, or afterwards with `systemctl --user disable --now ephemeral-self-host-update.timer`; manual run: `~/.config/systemd/user/…` — or `bash ~/ephemeral-self-host/update.sh`.
 

@@ -1,0 +1,17 @@
+# Python packages baked into the local-LLM monolith.
+#
+# This is intentionally the "batteries included" set: a snippet should be able
+# to fetch/reshape data, query DuckDB, fit a model, and plot it in the *same*
+# run that asks the local LLM for help — with no dependency resolution, no
+# network, and no PEP 723 header. Keep additions to things that work on
+# python:3.12 with manylinux wheels (the image must build without a compiler).
+numpy
+pandas
+polars
+pyarrow
+duckdb
+scipy
+scikit-learn
+matplotlib
+openai
+requests

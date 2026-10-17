@@ -44,6 +44,9 @@ export const SUPPORTED_LANGUAGES = new Set([
   "latex",
   "lint-action",
   "lisp",
+  "llm",
+  "local-llm",
+  "localmodel",
   "lolcode",
   "lua",
   "markdown",
@@ -75,6 +78,7 @@ export const SUPPORTED_LANGUAGES = new Set([
   "py",
   "python",
   "pywine",
+  "qwen",
   "r",
   "ruby",
   "runner",
@@ -118,6 +122,7 @@ export const CANONICAL_LANGUAGES = [
   "julia",
   "latex",
   "lisp",
+  "llm",
   "lolcode",
   "lua",
   "nim",
@@ -243,6 +248,11 @@ export const ALIAS_MAP = {
   ],
   "actionlint": [
     "lint-action"
+  ],
+  "llm": [
+    "local-llm",
+    "localmodel",
+    "qwen"
   ]
 };
 
@@ -480,6 +490,12 @@ export const IMAGE_LANGUAGES = {
   ],
   "docker.io/tymills620/ephemeral-python-uv:latest": [
     "python"
+  ],
+  "docker.io/tymills620/ephemeral-qwen-monolith": [
+    "llm"
+  ],
+  "docker.io/tymills620/ephemeral-qwen-monolith:latest": [
+    "llm"
   ],
   "docker.io/tymills620/octave-forge": [
     "octave"

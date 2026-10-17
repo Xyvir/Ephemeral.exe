@@ -196,6 +196,23 @@ assert set(imgs) == set(default_image_allowlist()), \
     "hydrate set must match the receiver-side allowlist"
 print(f"PASS: language-map image set ({len(imgs)} unique images == allowlist)")
 
+# --- Test 22b: local-LLM monolith wiring ---
+# The image ENTRYPOINT boots llama.cpp before user code, so the language entry
+# must NOT override the entrypoint (tiddlywiki-style `entrypoint: ''` would
+# replace the boot script with plain sh) and must not use `uv run` (the
+# two-stage dependency path re-invokes the payload as /deps/venv/bin/python -,
+# skipping the boot step). It also must stay usable under --network none.
+llm_cfg = resolve_runtime_config("llm")
+assert llm_cfg["image"] == "docker.io/tymills620/ephemeral-qwen-monolith:latest"
+assert llm_cfg.get("entrypoint") is None, "llm must inherit the image ENTRYPOINT"
+assert llm_cfg["cmd"] == ["python", "-"]
+assert llm_cfg["allow_network"] is False
+assert llm_cfg["allow_chain"] is False
+assert llm_cfg["image"] in imgs
+assert LANG_MAP["qwen"] == "llm" and LANG_MAP["local-llm"] == "llm"
+assert resolve_runtime_config("qwen")["image"] == llm_cfg["image"]
+print("PASS: local-LLM monolith wiring")
+
 # --- Test 23: Chaining is OFF by default ---
 md23 = "```python\nprint(1)\n```"
 blocks23 = parse_codeblocks(md23)
