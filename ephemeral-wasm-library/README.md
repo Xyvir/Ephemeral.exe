@@ -33,6 +33,18 @@ by default, or a self-hosted one.
   hover, so a name like `cjam` or `piet` is never just a mystery token. The
   built glue is committed under `web/wbg/` so the SPA runs without a Rust
   toolchain.
+
+  The folder button **adds** files to the document instead of replacing it
+  (✕ Clear is how you start over): Markdown is appended as a document, any
+  other file becomes a `name.ext [b64]` seedfile fence — text inlined, anything
+  else base64-encoded up to a 1,000,000-character cap (~750 KB of bytes). That
+  is the same shape the desktop tray's Ctrl+Win+X converter produces, so an
+  uploaded file stages into the job workdir exactly like a pasted one. A
+  seedfile pill folds its payload away to a one-line
+  `<80,000 chars; ~58.6 KB>` placeholder and back; the payload is kept in the
+  client and spliced back in for Run, Copy code, Export and Share, so the node
+  always receives the whole file. Clicking the placeholder line itself unfolds
+  it too — folding is pill-only, unfolding is either.
 - `build.sh` — rebuilds the wasm module (see its header for the toolchain
   requirements: stable Rust with `wasm32-unknown-unknown`, a wasm-capable
   clang for `ring`'s C files such as wasi-sdk, and the `wasm-bindgen` CLI

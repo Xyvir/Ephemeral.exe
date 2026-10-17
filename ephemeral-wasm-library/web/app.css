@@ -218,10 +218,14 @@ textarea { min-height: 150px; resize: vertical; }
    block in the editor while hovered/focused. */
 .lang-chip.rerun,
 .lang-chip.artifact-ready { cursor: pointer; }
+/* A seedfile pill is the fold toggle for its own block. */
+.lang-chip.foldable { cursor: pointer; }
 .lang-chip.rerun:hover,
 .lang-chip.rerun:focus-visible,
 .lang-chip.artifact-ready:hover,
-.lang-chip.artifact-ready:focus-visible {
+.lang-chip.artifact-ready:focus-visible,
+.lang-chip.foldable:hover,
+.lang-chip.foldable:focus-visible {
   border-color: var(--accent-hi);
   background: #14304a;
   color: #fff;
@@ -237,6 +241,19 @@ textarea { min-height: 150px; resize: vertical; }
 #editor .overtype-wrapper .overtype-preview .block-hover {
   background-color: rgba(30, 144, 255, 0.16) !important;
   box-shadow: inset 2px 0 0 var(--accent-hi) !important;
+}
+
+/* A folded seedfile body: the payload collapses to this one placeholder line
+   in OverType's preview, tinted blue so it reads as a summary of staged content
+   rather than as code. The !important is forced — OverType paints the fence
+   backgrounds itself. */
+#editor .overtype-preview pre.code-block.seed-fold {
+  background: #0f2130 !important;
+  border: 1px dashed #1e4a6e !important;
+}
+#editor .overtype-preview pre.code-block.seed-fold code {
+  color: #6db3ff !important;
+  font-style: italic;
 }
 
 /* Run-status overlay on the language pills while a run is in flight. */

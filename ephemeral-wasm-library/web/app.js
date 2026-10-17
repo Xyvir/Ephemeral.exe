@@ -49,6 +49,8 @@ let interleaved = false;
 // interleaves, "off" always shows results-only. Cycles on click.
 let interleaveMode = "auto";
 let lastMarkdown = "";
+// The raw (folds intact) document of that run, for the interleaved view.
+let lastDisplayMarkdown = "";
 let lastResultText = "";
 let lastOutputRaw = "";
 // stderr from the final job_done frame + its exit code, so the interleaved
@@ -166,6 +168,7 @@ function initEditor() {
       // fires synchronously after every replacement — no race.
       onRender: () => {
         highlightCodeHeaders();
+        styleSeedFolds(); // folded seedfile payloads get their accent treatment
         syncMoreHint(); // content grew/shrunk — re-check the fold indicator
       },
     });
@@ -246,9 +249,362 @@ function fenceInfo(markdown) {
       // verbatim (seed/file blocks and exec blocks alike).
       header: m[1].trim(),
       fence: "```",
+      // Byte offsets of the body in the raw document, so a seedfile payload
+      // can be folded away (and restored) with a surgical splice.
+      start: m.index,
+      bodyStart,
+      bodyEnd: closeIdx === -1 ? markdown.length : closeIdx,
     });
   }
   return out;
+}
+
+// ---------- seedfiles: append, import, fold --------------------------------
+// A seedfile fence (` ```name.ext [b64] ` + payload + closing fence) is staged
+// into the job's workdir by the node before any code runs: text rides inline,
+// everything else as base64 — the same contract the desktop tray's Ctrl+Win+X
+// clipboard converter writes.
+//
+// Base64 payloads are big enough to bury a document, so a seedfile's body can
+// fold down to a single placeholder line. The real body is kept in
+// `foldedSeeds` and spliced back in for run / copy / export / share, so folding
+// is purely a view — the node always receives the complete document.
+const SEED_B64_LIMIT = 1_000_000; // base64 characters (~750 KB of raw bytes)
+const SEED_TEXT_LIMIT = 512_000;  // characters of a plain-text seedfile
+const SEED_AUTO_FOLD = 500;       // body length that folds itself away on import
+// A folded body is exactly one size line and nothing else: `<80,000 chars; ~58.6 KB>`.
+// It has to live in the document (OverType's preview is an overlay whose lines
+// must match the invisible textarea, so hiding the payload in the DOM would
+// desync every caret below it). The payload itself is kept out of the document
+// in `foldedSeeds`, keyed by the fence name + that char count — both of which
+// the folded block still shows.
+const SEED_FOLD_RE = /^<(.+?) chars; ~(.+?)>$/;
+const MARKDOWN_FILE_RE = /\.(md|markdown|mdown|mkd|mdx)$/i;
+const FOLD_CACHE_LIMIT = 24;
+
+// `${fence name}\0${payload chars}` -> payload (without the outer newlines).
+// Editing the size line or the fence header unkeys a block, which only ever
+// loses the payload (a loud "re-add the file" on run) — never mixes two files
+// up, except for the pathological case of two same-named files of exactly the
+// same size, where the most recently folded one wins.
+const foldedSeeds = new Map();
+
+function isSeedFence(f) {
+  return !!f && !SUPPORTED_LANGUAGES.has(f.lang) && f.lang.includes(".");
+}
+
+function seedName(f) {
+  return (f.header || "").split(/\s+/)[0] || "seedfile";
+}
+
+function parseFoldLine(body) {
+  const first = String(body || "").trim().split("\n")[0].trim();
+  const m = SEED_FOLD_RE.exec(first);
+  if (!m) return null;
+  const chars = Number(m[1].replace(/\D/g, ""));
+  return Number.isFinite(chars) && chars > 0 ? { chars, size: m[2] } : null;
+}
+
+function isFoldedBody(body) {
+  return !!parseFoldLine(body);
+}
+
+function foldKey(f, chars) {
+  return f.lang + "\u0000" + chars;
+}
+
+// Seedfile bodies are counted the way the size line reads them: base64 ignores
+// whitespace (paste-wrapped base64 is still one payload), text counts chars.
+function payloadChars(payload, b64) {
+  return b64 ? payload.replace(/\s+/g, "").length : payload.length;
+}
+
+function formatBytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+// Folded payloads live in memory only, so a handful covers the undo/redo
+// round-trips — each one can be a megabyte.
+function rememberFold(key, payload) {
+  foldedSeeds.set(key, payload);
+  while (foldedSeeds.size > FOLD_CACHE_LIMIT) {
+    foldedSeeds.delete(foldedSeeds.keys().next().value);
+  }
+}
+
+function touchFold(key) {
+  const payload = foldedSeeds.get(key);
+  if (payload === undefined) return undefined;
+  foldedSeeds.delete(key);
+  foldedSeeds.set(key, payload);
+  return payload;
+}
+
+function foldPlaceholder(payload, b64) {
+  const chars = payloadChars(payload, b64);
+  const bytes = b64
+    ? Math.floor((chars * 3) / 4)
+    : new TextEncoder().encode(payload).length;
+  return `<${chars.toLocaleString("en-US")} chars; ~${formatBytes(bytes)}>`;
+}
+
+// Splice every folded payload back in (last fence first, so earlier offsets
+// stay valid). A block whose payload is gone — restored from a share link, or
+// its key edited — keeps its size line; the submit paths check lostFolds()
+// first and refuse to send that.
+function expandFolds(text) {
+  if (!foldedSeeds.size) return text;
+  const fences = fenceInfo(text);
+  for (let i = fences.length - 1; i >= 0; i--) {
+    const f = fences[i];
+    if (!isSeedFence(f)) continue;
+    const line = parseFoldLine(f.body);
+    if (!line) continue;
+    const payload = touchFold(foldKey(f, line.chars));
+    if (payload === undefined) continue;
+    text = text.slice(0, f.bodyStart) + "\n" + payload + "\n" + text.slice(f.bodyEnd);
+  }
+  return text;
+}
+
+// Names of folded seedfiles whose payloads are no longer available.
+function lostFolds(markdown) {
+  const lost = [];
+  for (const f of fenceInfo(markdown)) {
+    if (!isSeedFence(f)) continue;
+    const line = parseFoldLine(f.body);
+    if (!line) continue;
+    if (!foldedSeeds.has(foldKey(f, line.chars))) lost.push(seedName(f));
+  }
+  return lost;
+}
+
+// The document as the node (or a paste into the desktop app) must see it:
+// every folded payload restored.
+function liveMarkdown() {
+  return editor ? expandFolds(editor.getValue()) : "";
+}
+
+// Refresh everything the document drives. OverType's onChange covers typing,
+// but every programmatic edit (setValue, the splice below) has to call this
+// itself.
+function refreshEditorChrome() {
+  updateLangStatus();
+  highlightCodeHeaders();
+  styleSeedFolds();
+  syncCodeToUrl();
+}
+
+// Replace one fence's body in place. setRangeText edits the textarea by exact
+// character range (no clipboard/execCommand round-trip) and leaves the caret
+// and scroll position alone; the synthetic input event is what OverType listens
+// to, so the preview follows. Falls back to setValue if the range edit does not
+// land exactly, which keeps the document and the view in sync no matter what.
+function spliceEditorBody(fence, newBody) {
+  const doc = editor.getValue();
+  const next = doc.slice(0, fence.bodyStart) + newBody + doc.slice(fence.bodyEnd);
+  const ta = document.querySelector("#editor .overtype-input");
+  if (ta && typeof ta.setRangeText === "function") {
+    ta.setRangeText(newBody, fence.bodyStart, fence.bodyEnd, "end");
+    if (ta.value === next) {
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+      refreshEditorChrome();
+      return;
+    }
+    ta.value = doc; // undo a partial edit before taking the slow path
+  }
+  editor.setValue(next);
+  refreshEditorChrome();
+}
+
+// Clicking a folded payload's reminder line unfolds it. Folding stays the
+// pill's job; this is only the way back out. OverType's invisible textarea
+// covers the preview, so the click leaves a collapsed caret in it — unfold the
+// seedfile whose body contains it.
+$("editor").addEventListener("click", () => {
+  if (!editor) return;
+  const ta = document.querySelector("#editor .overtype-input");
+  if (!ta || ta.selectionStart !== ta.selectionEnd) return; // a drag-select
+  const pos = ta.selectionStart;
+  const idx = fenceInfo(editor.getValue()).findIndex(
+    (f) => isSeedFence(f) && isFoldedBody(f.body) && pos > f.bodyStart && pos <= f.bodyEnd
+  );
+  if (idx !== -1) toggleSeedFold(idx);
+});
+
+// Fold or unfold one seedfile block. Only seed/file fences get this — a
+// language pill's click re-runs its block instead.
+function toggleSeedFold(idx) {
+  if (!editor) return;
+  const fence = fenceInfo(editor.getValue())[idx];
+  if (!isSeedFence(fence)) return;
+  const line = parseFoldLine(fence.body);
+  if (line) {
+    const payload = touchFold(foldKey(fence, line.chars));
+    if (payload === undefined) {
+      appendOut(
+        `${seedName(fence)} is folded, but its contents are no longer in ` +
+        "memory — re-add the file.",
+        "err"
+      );
+      return;
+    }
+    spliceEditorBody(fence, "\n" + payload + "\n");
+    return;
+  }
+  const payload = fence.body.replace(/^\n+|\n+$/g, "");
+  if (!payload.trim()) return; // nothing to fold away
+  const b64 = /(^|\s)b64(\s|$)/i.test(fence.header);
+  rememberFold(foldKey(fence, payloadChars(payload, b64)), payload);
+  spliceEditorBody(fence, "\n" + foldPlaceholder(payload, b64) + "\n");
+}
+
+// Style folded payloads in OverType's preview: the placeholder is plain code,
+// so mark its block for the accent treatment in CSS. Runs after every render
+// (OverType rebuilds the preview DOM on each keystroke).
+function styleSeedFolds() {
+  const preview = document.querySelector("#editor .overtype-preview");
+  if (!preview) return;
+  for (const pre of preview.querySelectorAll("pre.code-block")) {
+    const code = pre.firstElementChild;
+    const first = ((code && code.textContent) || "").split("\n")[0].trim();
+    pre.classList.toggle("seed-fold", SEED_FOLD_RE.test(first));
+  }
+}
+
+// A header token only reads as a seedfile when it ends in a short alphanumeric
+// extension, so a sanitized basename must keep one — and a name must survive
+// being interpolated into a fence header and a shell heredoc.
+function seedFileName(filename) {
+  let base = String(filename || "").split(/[\\/]/).pop().trim();
+  base = base.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^[._]+/, "").slice(0, 64);
+  if (!base) base = "file";
+  if (!/\.[A-Za-z0-9]{1,8}$/.test(base)) base = base.replace(/\.+$/, "") + ".bin";
+  return base;
+}
+
+// `b64` is the parser's base64 marker; `origin=` keeps the original filename
+// readable when sanitizing changed it. Both are seedfile bookkeeping, not
+// language parameters.
+function seedHeaderFor(name, original, b64) {
+  const bits = [name];
+  if (b64) bits.push("b64");
+  const origin = String(original || "").replace(/[^A-Za-z0-9._-]+/g, "_");
+  if (origin && origin !== name) bits.push("origin=" + origin.slice(0, 96));
+  return bits.join(" ");
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+// UTF-8 text with no NUL bytes rides inline; anything else (images, archives,
+// PDFs, a binary that happens to decode) becomes base64.
+function decodeSeedText(bytes) {
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return text.includes("\u0000") ? null : text;
+  } catch (_) {
+    return null;
+  }
+}
+
+function seedFenceText(header, body) {
+  return "```" + header + "\n" + String(body || "").replace(/\n+$/, "") + "\n```";
+}
+
+// One uploaded file -> the markdown this client appends. Markdown documents
+// keep their own semantics (their code blocks stay runnable); every other file
+// becomes a seedfile the node stages into the workdir.
+async function fileToMarkdown(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (MARKDOWN_FILE_RE.test(file.name)) {
+    return new TextDecoder("utf-8").decode(bytes).replace(/^\uFEFF/, "");
+  }
+  const name = seedFileName(file.name);
+  const text = decodeSeedText(bytes);
+  if (text !== null) {
+    const body = text.replace(/^\uFEFF/, "").replace(/\n+$/, "");
+    if (body.length > SEED_TEXT_LIMIT) {
+      throw new Error(
+        `${body.length.toLocaleString()} characters is over the ` +
+        `${SEED_TEXT_LIMIT.toLocaleString()}-character text cap`
+      );
+    }
+    return seedFenceText(seedHeaderFor(name, file.name, false), body);
+  }
+  const b64 = bytesToBase64(bytes);
+  if (b64.length > SEED_B64_LIMIT) {
+    throw new Error(
+      `${formatBytes(bytes.length)} encodes to ${b64.length.toLocaleString()} ` +
+      `base64 characters, over the ${SEED_B64_LIMIT.toLocaleString()}-character cap`
+    );
+  }
+  return seedFenceText(seedHeaderFor(name, file.name, true), b64);
+}
+
+// Append to the document — never replace it (the ✕ Clear button is the way to
+// start over).
+function appendToEditor(snippet) {
+  const cur = editor.getValue();
+  const sep = !cur.trim()
+    ? ""
+    : cur.endsWith("\n\n") ? "" : cur.endsWith("\n") ? "\n" : "\n\n";
+  editor.setValue(cur + sep + snippet.replace(/\n+$/, "") + "\n");
+  refreshEditorChrome();
+}
+
+async function addFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length || !editor) return;
+  const firstFence = fenceInfo(editor.getValue()).length;
+  const parts = [];
+  const errors = [];
+  for (const file of files) {
+    try {
+      parts.push(await fileToMarkdown(file));
+    } catch (e) {
+      errors.push(`${file.name}: ${(e && e.message) || e}`);
+    }
+  }
+  // A rejected file is reported at the very END: everything before that point
+  // rebuilds the output panel (the live document preview), which would wipe
+  // the message straight back off the screen.
+  if (!parts.length) {
+    reportUploadErrors(errors);
+    return;
+  }
+  appendToEditor(parts.join("\n\n"));
+  // Fold the payloads that would otherwise bury the document. Fences are
+  // addressed by index and folding never adds or removes one, so walking
+  // backwards from the newest is safe even as each toggle rewrites the doc.
+  const fences = fenceInfo(editor.getValue());
+  for (let i = fences.length - 1; i >= firstFence; i--) {
+    const f = fences[i];
+    const body = f.body.replace(/^\n+|\n+$/g, "");
+    if (isSeedFence(f) && body.length > SEED_AUTO_FOLD) toggleSeedFold(i);
+  }
+  if (errors.length) reportUploadErrors(errors);
+}
+
+// Rejected uploads go to the header pill: the output panel is a live mirror of
+// the document and repaints a couple of hundred milliseconds after an edit, so
+// a line written there would vanish. The label carries the headline, the
+// tooltip the reason.
+function reportUploadErrors(errors) {
+  if (!errors.length) return;
+  setStatus(
+    errors.length === 1 ? "1 file was not added" : `${errors.length} files were not added`,
+    "err"
+  );
+  setDetail(errors.join("\n"));
 }
 
 // ---------- pill ↔ editor linking ------------------------------------------
@@ -334,6 +690,10 @@ function updateLangStatus() {
     // while a run is in flight, matched back to the fence via data-idx.
     const ok = SUPPORTED_LANGUAGES.has(f.lang);
     const isFile = !ok && f.lang.includes(".");
+    // A seedfile pill folds its payload away (and back): a megabyte of base64
+    // is unreadable inline, but the fence itself still has to be visible.
+    const foldable = isFile && !!f.body.trim();
+    const folded = foldable && isFoldedBody(f.body);
     // One pill per fence: the header is a single declaration, so the
     // language and its params share a pill ("llm chain" is one decision, not
     // two). Splitting them into a declaration pill plus a pill per param read
@@ -351,7 +711,15 @@ function updateLangStatus() {
     let unknownToken = false;
     for (const raw of f.params) {
       const p = raw.toLowerCase();
-      if (NETWORK_FLAGS.has(p) || NO_TIMEOUT_FLAGS.has(p)) {
+      if (isFile && (p === "b64" || p.startsWith("origin="))) {
+        // Seedfile bookkeeping, not a language parameter: `b64` says the body
+        // is base64, `origin=` remembers the uploaded filename. Neither is a
+        // warning.
+        if (p === "b64") {
+          labels.push(raw);
+          notes.push("staged as base64 — the node decodes it into the workdir before the run");
+        }
+      } else if (NETWORK_FLAGS.has(p) || NO_TIMEOUT_FLAGS.has(p)) {
         labels.push("✗ " + raw);
         notes.push(`'${raw}' is not honored on the distributed network — jobs run sandboxed, with a node-side timeout`);
         strippedToken = true;
@@ -379,7 +747,11 @@ function updateLangStatus() {
       ok
         ? "supported — click to run just this block"
         : isFile
-          ? "file/seed block — not a language"
+          ? foldable
+            ? folded
+              ? "seedfile (folded) — click to show its contents"
+              : "seedfile — click to fold its contents away"
+            : "seedfile — empty (nothing to stage)"
           : "not in the language map — this block will be rejected",
       ...notes,
     ].join("\n");
@@ -401,9 +773,26 @@ function updateLangStatus() {
         }
       });
     }
+    // A seedfile pill is also the fold toggle: keyboard-reachable, and it
+    // never submits anything (unlike a language pill's re-run).
+    if (foldable && !ok) {
+      chip.classList.add("foldable");
+      chip.setAttribute("role", "button");
+      chip.setAttribute("tabindex", "0");
+      chip.addEventListener("focus", () => setPreviewHighlight(i));
+      chip.addEventListener("blur", () => setPreviewHighlight(null));
+      chip.addEventListener("click", () => toggleSeedFold(i));
+      chip.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggleSeedFold(i);
+        }
+      });
+    }
     const runInd = document.createElement("span");
     runInd.className = "chip-run";
     chip.appendChild(runInd);
+    if (foldable && !ok) chip.appendChild(document.createTextNode(folded ? "▸ " : "▾ "));
     chip.appendChild(document.createTextNode([f.lang, ...labels].join(" ")));
     el.appendChild(chip);
     // Artifact chip: the block references /output, so the run is expected
@@ -893,8 +1282,10 @@ function renderProseSeg(seg) {
 // Falls back to the last submitted document when the editor is empty, so
 // clearing the code box doesn't blank the output panel.
 function displayDoc() {
+  // The RAW editor value: the output mirrors what is on screen, so a folded
+  // seedfile shows its placeholder line rather than a wall of base64.
   const live = editor ? editor.getValue() : "";
-  return live.trim() ? live : lastMarkdown;
+  return live.trim() ? live : (lastDisplayMarkdown || lastMarkdown);
 }
 
 // Identity of a runnable fence: header + body. Pairing on content (not
@@ -1454,7 +1845,9 @@ function syncCodeToUrl() {
   _urlSyncTimer = setTimeout(() => {
     _urlSyncTimer = null;
     try {
-      const val = editor ? editor.getValue() : "";
+      // A folded seedfile is a view, so the shared payload is the full
+      // document — the link has to run exactly what the editor means.
+      const val = editor ? liveMarkdown() : "";
       const b64 = btoa(val)
         .replace(/\+/g, "-")
         .replace(/\//g, "_")
@@ -1475,7 +1868,7 @@ function syncCodeToUrl() {
 // the debounced URL-bar sync above — the Share button copies this and the
 // printed "Try it here" footer links to it.
 function currentShareUrl() {
-  const val = editor ? editor.getValue() : "";
+  const val = editor ? liveMarkdown() : "";
   let url = location.origin + location.pathname;
   if (val) {
     try {
@@ -1840,9 +2233,20 @@ function mergeBlockResults() {
 
 async function run() {
   if ($("run").disabled) return; // already running — swallow re-entry
-  const markdown = editor.getValue();
+  // Submit the expanded document: a folded seedfile is only a view, and the
+  // node must receive every payload in full.
+  const markdown = liveMarkdown();
   if (!markdown.trim()) {
     setStatus("paste some Markdown with code blocks", "err");
+    return;
+  }
+  const lost = lostFolds(markdown);
+  if (lost.length) {
+    appendOut(
+      `Folded seedfile content is missing (${lost.join(", ")}) — add the file again before running.`,
+      "err"
+    );
+    setStatus("a folded seedfile lost its contents — re-add the file", "err");
     return;
   }
 
@@ -1880,6 +2284,7 @@ async function run() {
   leftoverArtifacts = [];
   outputRaw = "";
   lastMarkdown = markdown;
+  lastDisplayMarkdown = editor.getValue();
   lastResultText = "";
   lastStderr = "";
   lastExitCode = 0;
@@ -2052,7 +2457,7 @@ async function run() {
 async function rerunBlock(idx) {
   if ($("run").disabled) return; // a run is already in flight (single flight)
   if (!editor) return;
-  const markdown = editor.getValue();
+  const markdown = liveMarkdown();
   const fences = fenceInfo(markdown);
   const f = fences[idx];
   // Only an executable fence has a re-run affordance; seed/file blocks and
@@ -3089,33 +3494,23 @@ document.querySelectorAll('input[name="shareLinkMode"]').forEach((r) =>
   r.addEventListener("change", syncTryItHere)
 );
 $("copyCode").addEventListener("click", () => {
-  copyText(editor.getValue(), $("copyCode"), "Copy code");
+  // Folded seedfiles are a view: copy the payloads, not the placeholders.
+  copyText(liveMarkdown(), $("copyCode"), "Copy code");
 });
-// Import a .md/.txt file into the Run Code editor via the native file
-// picker — replaces whatever is currently there.
+// Add files to the Run Code editor via the native picker. Always APPENDS — the
+// ✕ Clear button is how you start over. Markdown documents are appended as
+// documents; every other file becomes a seedfile fence (text inline, anything
+// else base64), the same shape the desktop tray's convert hotkey produces.
 $("importCode").addEventListener("click", () => {
   const input = document.createElement("input");
   input.type = "file";
-  input.accept = ".md,.markdown,.txt,text/markdown,text/plain";
-  input.addEventListener("change", () => {
-    const file = input.files && input.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = String(reader.result || "");
-      if (!text) return;
-      editor.setValue(text);
-      updateLangStatus(); // setValue doesn't fire OverType's onChange
-      highlightCodeHeaders();
-      syncCodeToUrl();
-    };
-    reader.readAsText(file);
-  });
+  input.multiple = true;
+  input.addEventListener("change", () => addFiles(input.files));
   input.click();
 });
 // Export the Run Code editor as a timestamped .md file download.
 $("exportCode").addEventListener("click", () => {
-  const markdown = editor.getValue();
+  const markdown = liveMarkdown();
   if (!markdown.trim()) return;
   const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
   triggerDownload(blob, timestampedFileName("md"));
