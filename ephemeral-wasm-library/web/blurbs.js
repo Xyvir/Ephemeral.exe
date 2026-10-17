@@ -1,0 +1,55 @@
+// One-sentence "what is this?" descriptions for the (i) language popover.
+// Hovering a language there shows its blurb as a tooltip, so a beginner can
+// tell what a name like `cjam` or `piet` actually means before running it.
+//
+// Kept short on purpose: one sentence, plain language, no jargon that needs
+// its own explanation. The keys mirror CANONICAL_LANGUAGES in languages.js
+// (which is generated — this file is hand-written), and the popover falls
+// back to the plain click hint when an entry is missing.
+export const LANG_BLURBS = {
+  "05ab1e": "A golfing language that packs whole operations into single characters, so tiny programs do a lot.",
+  "actionlint": "A linter that checks GitHub Actions workflow files for mistakes before the workflow ever runs.",
+  "bash": "The standard Linux shell: small commands chained together to automate files, tools and processes.",
+  "bf": "An eight-command language where every character is an instruction — the barest possible model of a computer.",
+  "c": "A small, fast language that still underpins operating systems, drivers and many language runtimes.",
+  "cjam": "A stack-based golfing language built for writing the shortest possible program that solves a task.",
+  "clojure": "A modern Lisp where programs are built from immutable data and small, composable functions.",
+  "cobol": "A business language from 1959 built for record processing — still running banks and payrolls today.",
+  "cpp": "C with classes and powerful abstractions, used wherever speed and control over memory matter.",
+  "crystal": "A compiled language with Ruby-like syntax and static types, aiming for speed without the ceremony.",
+  "elixir": "A functional language on the Erlang VM, designed for many small processes that fail and recover on their own.",
+  "fortran": "The oldest high-level language still in use, built for numerical and scientific computing.",
+  "gh-runner": "An Ubuntu environment set up like a GitHub Actions runner, useful for testing workflow scripts.",
+  "go": "A small compiled language from Google with concurrency built in and very fast builds.",
+  "golfscript": "A stack-based language where brevity is the whole point — most programs are a single line.",
+  "haskell": "A purely functional language where functions are values and the type checker catches mistakes early.",
+  "html": "Not a programming language but the markup that gives every web page its structure.",
+  "java": "A compiled, object-oriented language built for portability: write once, run on any JVM.",
+  "julia": "A scientific language that reads like Python but compiles to fast numerical code.",
+  "latex": "A typesetting language for documents, especially mathematics and academic papers.",
+  "lisp": "One of the oldest languages, built from lists and parentheses, where code and data look the same.",
+  "llm": "A small local model (Qwen2.5-0.5B) plus a scientific Python data stack, served entirely inside one offline container.",
+  "lolcode": "A playful language written in internet-cat speak that still teaches parsing and control flow.",
+  "lua": "A tiny embeddable scripting language used inside games and applications for custom behaviour.",
+  "nim": "A compiled language with Python-like syntax that aims for C-level speed.",
+  "node": "JavaScript running outside the browser, powering servers, command-line tools and build scripts.",
+  "ocaml": "A functional language with strong static types and a reputation for reliable, fast compilers.",
+  "octave": "A numerical computing language, largely compatible with MATLAB, built around matrices.",
+  "pandoc": "A document converter: one input format in, dozens of formats out, from Markdown to PDF.",
+  "pandoc-docx": "Pandoc's Word output — turn plain Markdown into a shareable .docx file.",
+  "pandoc-pdf": "Pandoc's PDF output — Markdown typeset into a printable, shareable document.",
+  "perl": "A text-processing language famous for regular expressions and getting awkward files parsed fast.",
+  "php": "A server-side language that still powers much of the web, written directly inside pages.",
+  "piet": "A language whose programs are abstract paintings, where colour blocks and the paths between them are the instructions.",
+  "prolog": "A logic language: you state facts and rules and it works out the answers by searching.",
+  "pwsh": "PowerShell, a shell where commands pass structured objects instead of plain text.",
+  "python": "A readable general-purpose language, usually the first choice for scripting, data work and teaching.",
+  "pywine": "Python and Wine in one container, for exercises that need Windows-only modules from Linux.",
+  "r": "A language built for statistics and data visualisation, standard in research.",
+  "ruby": "A friendly object-oriented language designed to make programmers happy.",
+  "rust": "A compiled language that checks memory safety while it builds, so no garbage collector is needed.",
+  "science": "A scientific Python stack with NumPy and matplotlib preinstalled for numerical work and charts.",
+  "sql": "The language of databases: describe the rows you want and the engine works out how to fetch them.",
+  "tiddlywiki": "A personal wiki built into a single HTML file, with the notes and the app in one document.",
+  "verilog": "A hardware description language for designing and simulating digital circuits.",
+};

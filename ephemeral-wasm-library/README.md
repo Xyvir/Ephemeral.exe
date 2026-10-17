@@ -28,8 +28,11 @@ by default, or a self-hosted one.
   under the editor are live controls: hovering one highlights its fence in
   the editor, clicking a supported language pill re-runs **just that block**
   (the other blocks keep their results), and a pill for a returned artifact
-  downloads that single file. The built glue is committed under `web/wbg/`
-  so the SPA runs without a Rust toolchain.
+  downloads that single file. The trailing `i` pill lists every supported
+  language, each with a one-sentence explanation (from `web/blurbs.js`) on
+  hover, so a name like `cjam` or `piet` is never just a mystery token. The
+  built glue is committed under `web/wbg/` so the SPA runs without a Rust
+  toolchain.
 - `build.sh` — rebuilds the wasm module (see its header for the toolchain
   requirements: stable Rust with `wasm32-unknown-unknown`, a wasm-capable
   clang for `ring`'s C files such as wasi-sdk, and the `wasm-bindgen` CLI

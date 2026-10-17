@@ -9,6 +9,7 @@ import init, { EphemeralClient, base64_decode } from "./wbg/ephemeral_wasm_libra
 import { BOOTSTRAP } from "./config.js";
 import { SUPPORTED_LANGUAGES, CANONICAL_LANGUAGES, ALIAS_MAP, IMAGE_LANGUAGES } from "./languages.js";
 import { LANG_SNIPPETS } from "./snippets.js";
+import { LANG_BLURBS } from "./blurbs.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -2644,7 +2645,13 @@ function langHelpPillEl() {
     span.className = "lang-help-item";
     span.setAttribute("role", "button");
     span.setAttribute("tabindex", "0");
-    span.title = "Append a " + l + " demo to the Run Code editor";
+    // Tooltip: what the language IS (one sentence), then what clicking does.
+    // A bare name like `cjam` or `piet` tells a beginner nothing, so the
+    // blurb rides on the same hover they already get.
+    const blurb = LANG_BLURBS[l];
+    span.title =
+      (blurb ? blurb + "\n\n" : "") +
+      "Append a " + l + " demo to the Run Code editor";
     const code = document.createElement("code");
     code.textContent = l;
     span.appendChild(code);
