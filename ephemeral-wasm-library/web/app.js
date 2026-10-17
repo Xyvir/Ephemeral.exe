@@ -1518,6 +1518,54 @@ function buildBlockDocument(allFences, blockIdx) {
   return parts.join("\n") + "\n";
 }
 
+// A request with `chain` on any block runs strictly in document order, one
+// sub-job at a time, carrying each run's /output files into the next run as
+// `name b64` seed fences — the same contract the local executor uses
+// (chained_files + run). `nopipe` still overrides `chain` within one header,
+// exactly as the parser resolves it.
+function chainRequested(fences) {
+  return fences.some((f) => {
+    if (!SUPPORTED_LANGUAGES.has(f.lang) || f.lang.includes(".")) return false;
+    const params = f.params.map((p) => p.toLowerCase());
+    if (params.some((p) => NO_CHAIN_FLAGS.has(p))) return false;
+    return params.some((p) => CHAIN_FLAGS.has(p));
+  });
+}
+
+// A finished run's artifacts, rendered as seed fences for the run after it.
+// The node stages every `name b64` block into the workdir before the code
+// runs, so `import generated` (or `require`, or `sh generated.sh`) finds it.
+function chainedSeeds(artifacts) {
+  return (artifacts || [])
+    .filter((a) => a && a.name && a.b64)
+    .map((a) => "```" + a.name + " b64\n" + a.b64 + "\n```")
+    .join("\n");
+}
+
+// Submit chained sub-jobs one at a time, in document order: each run starts
+// only after the previous one has finished, and inherits its /output files.
+// A run that failed (or never started) carries nothing forward, matching the
+// core, where a failed container produces no chained files.
+async function submitChained(submissions) {
+  const results = [];
+  let carrying = "";
+  for (const sub of submissions) {
+    sub.state.status = "running";
+    applyBlockStatus(sub.state);
+    const doc = carrying ? carrying + "\n" + sub.doc : sub.doc;
+    try {
+      results.push({
+        status: "fulfilled",
+        value: await submitWithRetry({ ...sub, submit: () => sub.submit(doc) }),
+      });
+    } catch (e) {
+      results.push({ status: "rejected", reason: e });
+    }
+    carrying = sub.state.exitCode === 0 ? chainedSeeds(sub.state.artifacts) : "";
+  }
+  return results;
+}
+
 // Build a per-block event handler that routes incoming frames into the block's
 // state and updates its status chip in place. Routing is by construction: each
 // handler is attached to its own sub-job's stream, so frames can never land on
@@ -1796,8 +1844,9 @@ async function run() {
   // Each executable block becomes its own mini-markdown document submitted to
   // the best node whose warm images cover that block's language. Blocks that
   // share a language can land on the same node; the per-block status row still
-  // tracks each block independently. Artifact chaining stays off by default,
-  // so multi-block runs are independent and can run in parallel across peers.
+  // tracks each block independently. Blocks declaring `chain` are the
+  // exception: the request then runs in-order and each run hands its /output
+  // to the next one (see chainRequested/submitChained).
   const fences = fenceInfo(markdown);
   // Executable blocks with their fence index — blockStates is keyed by fence
   // index, so seed/file blocks that precede a run must not shift positions.
@@ -1854,26 +1903,38 @@ async function run() {
       state,
       idx,
       node: target,
-      submit: target.node_id && target.relay
-        ? () => client.submit_job_to_node(target.node_id, target.relay, b64encode(doc), 300, makeBlockEventHandler(idx))
-        : () => client.submit_job(target.ticket, b64encode(doc), 300, makeBlockEventHandler(idx)),
+      doc,
+      // Chained runs submit the block's document plus whatever the previous
+      // run produced, so `payload` is authoritative when one is passed.
+      submit: (payload = doc) => target.node_id && target.relay
+        ? client.submit_job_to_node(target.node_id, target.relay, b64encode(payload), 300, makeBlockEventHandler(idx))
+        : client.submit_job(target.ticket, b64encode(payload), 300, makeBlockEventHandler(idx)),
     };
     state.status = "queued";
     state.nodeId = target.node_id || (manual ? "(manual)" : null);
     submissions.push(sub);
   }
 
-  // Dispatch the status update for queued -> running as we submit.
-  for (const sub of submissions) {
-    sub.state.status = "running";
-    applyBlockStatus(sub.state);
+  // `chain` anywhere opts the whole request out of fan-out: blocks run in
+  // document order, one after the other, so the second block can use what the
+  // first one wrote (this is what makes generated-code chaining work).
+  const chained = chainRequested(fences);
+  if (!chained) {
+    // Unchained: they all start now, so queue -> running up front.
+    for (const sub of submissions) {
+      sub.state.status = "running";
+      applyBlockStatus(sub.state);
+    }
   }
 
-  // Run all submissions concurrently. Transport-level failures (relay drop,
-  // node unreachable) surface as promise rejections with no terminal frame, so
-  // map each result back to its block and mark it failed explicitly —
-  // Promise.allSettled swallows rejections, so the per-block status must too.
-  const results = await Promise.allSettled(submissions.map((s) => submitWithRetry(s)));
+  // Transport-level failures (relay drop, node unreachable) surface as promise
+  // rejections with no terminal frame, so map each result back to its block and
+  // mark it failed explicitly — Promise.allSettled swallows rejections, so the
+  // per-block status must too. Chained requests go through the sequential
+  // submitter, which returns the same {status, value|reason} shape.
+  const results = chained
+    ? await submitChained(submissions)
+    : await Promise.allSettled(submissions.map((s) => submitWithRetry(s)));
   setBusy(false);
   refreshPeers(); // re-sync the peer table after each run (non-blocking)
   for (let i = 0; i < submissions.length; i++) {
