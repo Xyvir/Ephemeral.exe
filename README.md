@@ -261,6 +261,8 @@ ask_code("Write a Python script that prints the first 10 primes.")
 import generated
 ```
 
+The code is also echoed to stdout, fenced in its own language, so the block's output shows the program the model wrote and the block after it shows what that program printed. Pass `echo=False` for the saved-file line alone.
+
 `save_code(reply)` does the same for a reply you already have, and `extract_code(reply)` returns just the code without touching the disk. The file is written verbatim, so it is also an ordinary `/output` artifact you can download and keep. Generated code is treated as a local module — `import generated` resolves from the workdir instead of sending `uv` to the package registry — so the chain works with no dependency resolution at all.
 
 > The one thing an import cannot do is fire a script's `if __name__ == "__main__":` guard. `ask_code` asks the model for top-level code for exactly that reason, and if a reply insists on a guard, `save_code` prints the `runpy.run_path("generated.py", run_name="__main__")` call that runs it anyway.

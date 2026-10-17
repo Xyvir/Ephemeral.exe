@@ -39,6 +39,10 @@ shell block does ``sh generated.sh``. A block the model left unlabelled is
 saved with no suffix at all. The code is written verbatim: nothing is rewritten,
 so what you run is exactly what the model said.
 
+The code is echoed to stdout by default (``echo=False`` to suppress it), fenced
+in its own language, so one block's output reads as "here is the program the
+model wrote" and the next block's output shows what it printed when it ran.
+
 The one thing import cannot do is fire a script's ``__main__`` guard, so
 :func:`ask_code` asks for top-level code; when a reply insists on a guard,
 :func:`save_code` prints the ``runpy.run_path(..., run_name="__main__")`` call
@@ -275,6 +279,7 @@ def save_code(
     lang: str | None = None,
     directory: str = DEFAULT_DIRECTORY,
     quiet: bool = False,
+    echo: bool = True,
 ) -> str:
     """Write the code from a model reply to ``directory`` and return its path.
 
@@ -282,6 +287,10 @@ def save_code(
     ``generated.js``, ``generated.sh``), or is omitted when the model named no
     language. With Ephemeral's ``chain`` flag the file is copied into the next
     container's working directory, so that block can run it directly.
+
+    ``echo`` prints the code itself, fenced, so the block's output shows the
+    program the model wrote above the result of running it. Pass ``echo=False``
+    for just the one-line confirmation, or ``quiet=True`` for neither.
     """
     code, label = _extract(reply, lang)
     filename = _filename(name, label)
@@ -294,6 +303,11 @@ def save_code(
         lines = max(1, code.count("\n"))
         kind = label or "code"
         print(f"[ephemeral-llm] saved {path} ({lines} lines, {kind})")
+        if echo:
+            # Fenced in the reply's own language: the core widens the wrapper
+            # around this output when the payload already contains fences, so
+            # the next block's result reads as code plus its result.
+            print(f"\n```{label or 'text'}\n{code.rstrip()}\n```")
         if _MAIN_GUARD.search(code):
             # runpy defaults to run_name="<run_path>", which would skip the
             # guard again; the run_name is what actually makes this work.
@@ -314,6 +328,7 @@ def ask_code(
     system: str | None = None,
     directory: str = DEFAULT_DIRECTORY,
     quiet: bool = False,
+    echo: bool = True,
     **kwargs,
 ) -> str:
     """Ask the model for a program, save it to ``directory``, return the path.
@@ -321,6 +336,12 @@ def ask_code(
     Same flow as ``save_code(chat(prompt))``, with a system prompt that asks for
     one labelled code block so the language (and therefore the suffix) is
     unambiguous. ``kwargs`` go to :func:`chat`.
+
+    The code is echoed to stdout by default, so the block's output shows the
+    program and the next block shows its result. ``echo=False`` prints only the
+    saved-file line.
     """
     reply = chat(prompt, system=system or _CODE_SYSTEM, **kwargs)
-    return save_code(reply, name=name, lang=lang, directory=directory, quiet=quiet)
+    return save_code(
+        reply, name=name, lang=lang, directory=directory, quiet=quiet, echo=echo
+    )

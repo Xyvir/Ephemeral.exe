@@ -519,10 +519,24 @@ with tempfile.TemporaryDirectory() as tmp31:
     with open(path31, encoding="utf-8") as fh31:
         assert fh31.read() == code31  # written verbatim
 
+    # By default the code itself is echoed, fenced in its own language, so one
+    # block shows the program and the next block shows what it printed.
     printed31 = io.StringIO()
     with redirect_stdout(printed31):
         llm.save_code("```bash\necho hi\n```", directory=tmp31)
     assert "generated.sh" in printed31.getvalue(), printed31.getvalue()
+    assert "```bash\necho hi\n```" in printed31.getvalue(), printed31.getvalue()
+
+    only_api31 = io.StringIO()
+    with redirect_stdout(only_api31):
+        llm.save_code(reply, directory=tmp31, echo=False)
+    assert "saved" in only_api31.getvalue(), only_api31.getvalue()
+    assert "def is_prime" not in only_api31.getvalue(), only_api31.getvalue()
+
+    silent31 = io.StringIO()
+    with redirect_stdout(silent31):
+        llm.save_code(reply, directory=tmp31, quiet=True)
+    assert silent31.getvalue() == "", silent31.getvalue()
 
     # Created on demand, and an unknown language still lands (no suffix).
     nested31 = os.path.join(tmp31, "nested")
@@ -531,7 +545,8 @@ with tempfile.TemporaryDirectory() as tmp31:
     # A __main__ guard doesn't fire on import — point at runpy instead.
     printed31 = io.StringIO()
     with redirect_stdout(printed31):
-        llm.save_code("```python\nif __name__ == '__main__':\n    print(4)\n```", directory=tmp31)    # runpy without run_name="__main__" would skip the guard as well.
+        llm.save_code("```python\nif __name__ == '__main__':\n    print(4)\n```", directory=tmp31)
+    # runpy without run_name="__main__" would skip the guard as well.
     assert "runpy.run_path" in printed31.getvalue(), printed31.getvalue()
     assert 'run_name="__main__"' in printed31.getvalue(), printed31.getvalue()
 

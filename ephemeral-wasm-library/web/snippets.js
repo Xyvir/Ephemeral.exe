@@ -149,7 +149,7 @@ export const LANG_SNIPPETS = {
     "```llm chain",
     "from ephemeral_llm import ask_code",
     "",
-    "# Saves the reply's code block to /output/generated.py.",
+    "# Prints the reply's code and saves it to /output/generated.py.",
     'ask_code("Write a Python script that prints the first 10 primes.")',
     "```",
     "",
