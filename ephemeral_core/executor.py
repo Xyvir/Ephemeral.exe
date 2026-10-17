@@ -22,7 +22,7 @@ import subprocess
 import tempfile
 import uuid
 
-from .config import LANG_MAP
+from .config import DEFAULT_TIMEOUT, LANG_MAP
 from .space import SpaceGuardError, ensure_space_for_pull
 
 logger = logging.getLogger(__name__)
@@ -528,11 +528,30 @@ def _local_module_names(run_blocks: list[dict]) -> set[str]:
     return names
 
 
+def _container_name() -> str:
+    """A deterministic name for one run, so a timed-out container can be killed."""
+    return f"ephemeral-{uuid.uuid4().hex[:12]}"
+
+
+def effective_timeout(config: dict, timeout: int | None) -> int | None:
+    """
+    The cap a run actually gets.
+
+    An explicit ``timeout`` always wins (the API and the swarm pass one). With
+    none, the run gets :data:`DEFAULT_TIMEOUT` unless its header declared
+    ``notimeout`` — which only local callers can ask for.
+    """
+    if timeout is not None:
+        return timeout
+    return None if config.get('ignore_timeout') else DEFAULT_TIMEOUT
+
+
 def _build_podman_cmd(
     config: dict,
     output_dir: str,
     extra_mounts: list[tuple[str, str]] | None = None,
-    network: bool | None = None
+    network: bool | None = None,
+    name: str | None = None
 ) -> list[str]:
     """
     Build the `podman run` command with Ephemeral's security flags.
@@ -542,6 +561,8 @@ def _build_podman_cmd(
     container's `allow_network` config flag decides.
     """
     podman_cmd = ['podman', 'run', '--rm', '-i', '-w', '/tmp']
+    if name:
+        podman_cmd.extend(['--name', name])
     if podman_supports_cgroup_limits():
         # Hard container limits — skipped (with a one-time warning) only
         # when the host genuinely can't enforce them (stock WSL2). Sizes
@@ -625,16 +646,37 @@ def _build_wrapper_script(
     return wrapper_script, block_markers
 
 
+def _stop_container(name: str | None) -> None:
+    """
+    Stop a container whose ``podman run`` client was just killed.
+
+    Killing the CLI does **not** stop the container — conmon keeps it running,
+    so a timed-out payload would carry on burning CPU and memory (for an
+    infinite loop, forever). ``--rm`` removes it once it actually exits.
+    """
+    if not name:
+        return
+    startupinfo = get_startupinfo()
+    for cmd in (['podman', 'kill', name], ['podman', 'rm', '-f', name]):
+        try:
+            subprocess.run(
+                cmd, capture_output=True, timeout=20, startupinfo=startupinfo
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
 def _run_podman_script(
     podman_cmd: list[str],
     script_code: bytes,
-    timeout: int | None
+    timeout: int | None,
+    container_name: str | None = None
 ) -> tuple[int | None, str, str]:
     """
     Run a podman container with ``script_code`` piped to its stdin.
 
     Returns ``(returncode, stdout, stderr)``; ``returncode`` is None when the
-    run exceeded ``timeout``.
+    run exceeded ``timeout``, in which case the container is killed too.
     """
     startupinfo = get_startupinfo()
     process = subprocess.Popen(
@@ -647,6 +689,7 @@ def _run_podman_script(
     except subprocess.TimeoutExpired:
         process.kill()
         process.communicate()
+        _stop_container(container_name)
         return None, "", f"Execution exceeded {timeout}s timeout."
 
     stdout = strip_ansi_codes(stdout_bytes.decode('utf-8', errors='replace'))
@@ -780,8 +823,11 @@ def _run_single_stage(
     script_lines, block_markers = _build_wrapper_script(run_blocks, config['cmd'])
     script_code = ("\n".join(script_lines) + "\n").encode('utf-8')
 
-    podman_cmd = _build_podman_cmd(config, output_dir)
-    returncode, stdout, stderr = _run_podman_script(podman_cmd, script_code, timeout)
+    name = _container_name()
+    podman_cmd = _build_podman_cmd(config, output_dir, name=name)
+    returncode, stdout, stderr = _run_podman_script(
+        podman_cmd, script_code, timeout, container_name=name
+    )
     tlang = _lang_title(lang)
 
     if returncode is None:
@@ -841,10 +887,14 @@ def _run_two_stage_python(
             + "\n"
         ).encode('utf-8')
 
+        stage_a_name = _container_name()
         stage_a_cmd = _build_podman_cmd(
-            config, output_dir, extra_mounts=[(deps_dir, '/deps')], network=True
+            config, output_dir, extra_mounts=[(deps_dir, '/deps')], network=True,
+            name=stage_a_name
         )
-        retcode, stdout, stderr = _run_podman_script(stage_a_cmd, install_script, timeout)
+        retcode, stdout, stderr = _run_podman_script(
+            stage_a_cmd, install_script, timeout, container_name=stage_a_name
+        )
         if retcode is None:
             return GroupResult(
                 stdout_formatted=f"## {tlang} Run {run_index} Timed Out\n{_md_fence(f'Dependency resolution exceeded {timeout}s timeout.')}\n",
@@ -866,10 +916,14 @@ def _run_two_stage_python(
         script_lines, block_markers = _build_wrapper_script(run_blocks, ['/deps/venv/bin/python', '-'])
         script_code = ("\n".join(script_lines) + "\n").encode('utf-8')
 
+        stage_c_name = _container_name()
         stage_c_cmd = _build_podman_cmd(
-            config, output_dir, extra_mounts=[(deps_dir, '/deps')], network=False
+            config, output_dir, extra_mounts=[(deps_dir, '/deps')], network=False,
+            name=stage_c_name
         )
-        retcode, stdout, stderr = _run_podman_script(stage_c_cmd, script_code, timeout)
+        retcode, stdout, stderr = _run_podman_script(
+            stage_c_cmd, script_code, timeout, container_name=stage_c_name
+        )
         if retcode is None:
             return GroupResult(
                 stdout_formatted=f"## {tlang} Run {run_index} Timed Out\n{_md_fence(f'Execution exceeded {timeout}s timeout.')}\n",
@@ -907,7 +961,11 @@ async def run_container_group(
     
     Delegates to _run_container_sync via asyncio.to_thread to avoid
     blocking the event loop during subprocess.communicate().
+
+    A caller that passes no timeout gets :data:`DEFAULT_TIMEOUT` rather than an
+    unbounded run, unless the block's header declared ``notimeout``.
     """
+    timeout = effective_timeout(config, timeout)
     return await asyncio.to_thread(
         _run_container_sync,
         config, run_blocks, lang, run_index, total_runs, output_dir, timeout

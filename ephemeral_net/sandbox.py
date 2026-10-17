@@ -7,6 +7,8 @@ document reaches ``ephemeral_core``, :class:`CoreJobExecutor` sanitizes it:
 * the ``unsafe`` network flag is stripped — a remote peer can never
   grant its own payload network access (the node operator decides via
   ``allow_network``)
+* the ``notimeout`` flag is stripped too — how long a remote payload may
+  hold the host is the node's decision, not the requester's
 * raw command-line overrides (``image=``, ``cmd=``, ``entrypoint=``)
   are dropped — a remote peer can never dictate what image runs or how
 * the resolved image must be on the node's allowlist (default: the
@@ -42,6 +44,10 @@ from .jobs import (
 
 #: Header tokens that grant capabilities a remote peer must not control.
 NETWORK_TOKENS = frozenset({"unsafe"})
+
+#: ``notimeout`` lifts the host's own time cap, so it is dropped here: a
+#: remote job always runs under the timeout the node decided on.
+NO_TIMEOUT_TOKENS = frozenset({"notimeout", "no-timeout"})
 
 #: Header ``key=value`` overrides a remote peer must not control.
 DANGEROUS_OVERRIDES = frozenset({"image", "cmd", "entrypoint"})
@@ -104,7 +110,7 @@ def sanitize_markdown(
         cleaned_tokens = []
         for token in header.split():
             low = token.lower()
-            if low in NETWORK_TOKENS:
+            if low in NETWORK_TOKENS or low in NO_TIMEOUT_TOKENS:
                 continue
             if token.startswith("-"):
                 continue  # stray flag tokens are inert, drop them

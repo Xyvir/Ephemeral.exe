@@ -10,7 +10,13 @@ import re
 import shlex
 import sys
 
-from .config import CHAIN_FLAGS, LANG_MAP, NETWORK_FLAGS, NO_CHAIN_FLAGS
+from .config import (
+    CHAIN_FLAGS,
+    LANG_MAP,
+    NETWORK_FLAGS,
+    NO_CHAIN_FLAGS,
+    NO_TIMEOUT_FLAGS,
+)
 
 
 # --- Python Dependency Inference (PEP 723) ---
@@ -293,6 +299,7 @@ def resolve_runtime_config(header_line: str) -> dict | None:
     #    (legacy) still win when both are present.
     network_enabled = False
     chain_enabled = False
+    no_timeout = False
     cleaned_tokens = []
 
     for token in tokens:
@@ -303,6 +310,10 @@ def resolve_runtime_config(header_line: str) -> dict | None:
             chain_enabled = True
         elif low in NO_CHAIN_FLAGS:
             chain_enabled = False
+        elif low in NO_TIMEOUT_FLAGS:
+            # Lifts the default 300 s cap for a local run; the swarm strips
+            # this token, so remote jobs stay capped.
+            no_timeout = True
         else:
             cleaned_tokens.append(token)
             
@@ -357,6 +368,7 @@ def resolve_runtime_config(header_line: str) -> dict | None:
     
     config['allow_network'] = network_enabled
     config['allow_chain'] = chain_enabled
+    config['ignore_timeout'] = no_timeout
     return config
 
 

@@ -188,6 +188,8 @@ function initEditor() {
 // nodes; chain/piping flags are honored.
 const NETWORK_FLAGS = new Set(["unsafe"]);
 const CHAIN_FLAGS = new Set(["chain", "pipe", "piping"]);
+// Lifts the core's default 300s cap; the swarm strips it, like `unsafe`.
+const NO_TIMEOUT_FLAGS = new Set(["notimeout", "no-timeout"]);
 const NO_CHAIN_FLAGS = new Set(["nopipe", "nopiping"]);
 const DROPPED_OVERRIDES = ["image", "cmd", "entrypoint"];
 
@@ -1991,6 +1993,22 @@ async function run() {
     note.textContent =
       "Note: the `unsafe` network flag is not supported on the distributed " +
       "network — jobs always run sandboxed with no network access.";
+    const box = $("output");
+    box.appendChild(note);
+    box.scrollTop = box.scrollHeight;
+  }
+  // `notimeout` lifts the core's 300s cap, but the node strips it before the
+  // document runs: how long a remote payload may hold the host is the node's
+  // decision. Say so instead of letting the flag look honored.
+  const triedNoTimeout = fenceInfo(markdown).some((f) =>
+    f.params.some((p) => NO_TIMEOUT_FLAGS.has(p.toLowerCase()))
+  );
+  if (triedNoTimeout) {
+    const note = document.createElement("div");
+    note.className = "unsafe-note";
+    note.textContent =
+      "Note: the `notimeout` flag is ignored on the distributed network — " +
+      "remote jobs are always capped at the node's timeout (300s).";
     const box = $("output");
     box.appendChild(note);
     box.scrollTop = box.scrollHeight;

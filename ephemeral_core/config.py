@@ -23,6 +23,16 @@ CHAIN_FLAGS = {'chain', 'piping', 'pipe'}
 # redundant, and `nopipe` still overrides `chain` when both appear.
 NO_CHAIN_FLAGS = {'nopipe', 'nopiping'}
 
+# Hard cap on one container, in seconds. Applied whenever the caller supplies
+# no timeout of its own (the tray's local path passes None), so a runaway
+# payload — an accidental `while True`, a model-written script, a network
+# retry loop — can never occupy a host indefinitely.
+DEFAULT_TIMEOUT = 300
+
+# Keywords that lift DEFAULT_TIMEOUT for a local run. The swarm strips them
+# exactly like `unsafe`: a remote job is always capped, whatever it asks for.
+NO_TIMEOUT_FLAGS = {'notimeout', 'no-timeout'}
+
 # Map languages to the 'Clean Slate' Image on Docker Hub
 LANG_MAP = {
     # --- Standard Interpreted ---

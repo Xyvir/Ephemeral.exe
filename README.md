@@ -276,6 +276,18 @@ If you copy raw text without a language tag (e.g., no ` ```python `), Ephemeral 
 * It remembers your last used language for rapid iteration.
 * Simply press **Enter** to use the default/last-used language.
 
+#### Time Limits
+
+Every container is capped at **300 s**. A payload that hits the cap is killed twice over: the run is reported as `Timed Out` (`Execution exceeded 300s timeout.`) and the container itself is stopped, so a runaway script cannot keep burning a core after the run has given up. That matters most for model-written code — a `while True` with no exit compiles fine, runs forever, and is exactly the failure mode a chained `llm` block produces when the reply has a bug.
+
+Add `notimeout` (or `no-timeout`) to a block header to lift the cap for local runs:
+
+```bash notimeout
+sleep 900   # allowed locally; still capped in the swarm
+```
+
+The distributed network always keeps the cap: the node strips the token before the document runs, the same way it strips `unsafe`, because how long a remote payload may occupy someone else's host is the node's decision. Ask the node operator for a longer cap rather than declaring one yourself. The HTTP API takes its cap from its own `timeout` field (1-600, default 300), which wins over the header.
+
 #### Smart Markdown Parsing
 
 Ephemeral is built to forgive messy clipboard copies. You don't need to perfectly select only the codeblock!

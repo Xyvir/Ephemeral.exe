@@ -46,17 +46,20 @@ def test_sanitize_strips_unsafe_and_overrides():
     from ephemeral_net.sandbox import sanitize_markdown
 
     md = f"""
-```python unsafe image=evil/evil:latest cmd=rm -rf / entrypoint=/bin/sh
+```python unsafe notimeout image=evil/evil:latest cmd=rm -rf / entrypoint=/bin/sh
 print('hi')
 ```
 """
     clean, images = sanitize_markdown(md)
     assert images == [PY_IMG], f"unexpected images: {images}"
     assert "unsafe" not in clean
+    # How long a remote payload may run is the node's decision, not the
+    # requester's, so the timeout opt-out is stripped like the network flag.
+    assert "notimeout" not in clean and "no-timeout" not in clean
     assert "evil" not in clean
     assert "cmd=" not in clean and "entrypoint=" not in clean
     assert "```python" in clean and "print('hi')" in clean
-    print("PASS: sanitize strips unsafe + image/cmd/entrypoint overrides")
+    print("PASS: sanitize strips unsafe + notimeout + image/cmd/entrypoint overrides")
 
 
 def test_sanitize_rejects_unknown_language():

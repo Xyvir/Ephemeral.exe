@@ -574,4 +574,29 @@ assert deps32 == [], deps32
 assert staged32["content"] == "import generated\nprint(generated.__name__)"
 print("PASS: staged modules (seeds, chained generated code) aren't PyPI deps")
 
-print("\n=== ALL 32 TESTS PASSED ===")
+# --- Test 33: every run gets a time cap, `notimeout` lifts it locally -----
+# A caller that passes no timeout (the tray's local path) used to get an
+# unbounded run, so one `while True` could hold the host forever. The core now
+# applies DEFAULT_TIMEOUT; only a local header can opt out, via a keyword the
+# swarm strips (see test_net's sanitizer test).
+from ephemeral_core.config import DEFAULT_TIMEOUT, NO_TIMEOUT_FLAGS
+from ephemeral_core.executor import effective_timeout
+
+assert DEFAULT_TIMEOUT == 300, DEFAULT_TIMEOUT
+assert resolve_runtime_config("python")["ignore_timeout"] is False
+for flag33 in sorted(NO_TIMEOUT_FLAGS):
+    cfg33 = resolve_runtime_config(f"python {flag33}")
+    assert cfg33["ignore_timeout"] is True, flag33
+    # The keyword is consumed, not passed through as a language or an override.
+    assert cfg33["image"].endswith("ephemeral-python-uv:latest"), cfg33
+    assert cfg33["cmd"] == ["uv", "run", "-"], cfg33
+
+# The cap fills in only where the caller left it open; explicit wins.
+assert effective_timeout({}, None) == DEFAULT_TIMEOUT
+assert effective_timeout({"ignore_timeout": False}, None) == DEFAULT_TIMEOUT
+assert effective_timeout({"ignore_timeout": True}, None) is None
+assert effective_timeout({"ignore_timeout": True}, 5) == 5
+assert effective_timeout({"ignore_timeout": False}, 60) == 60
+print("PASS: default time cap, with a local-only notimeout opt-out")
+
+print("\n=== ALL 33 TESTS PASSED ===")
