@@ -608,48 +608,43 @@ function syncWarningsButton(btn) {
 // highlighted HTML: result headers, step sub-headers, and code fences as
 // distinct blocks. Everything is HTML-escaped; highlight.js is applied
 // after insertion (gracefully skipped when the CDN is unreachable).
-function renderResult(text) {
+//
+// Fences follow CommonMark: a run of N>=3 backticks is closed only by a run
+// of at least N. Scanning for a literal ``` broke on output that contains
+// fences of its own (an LLM reply, a printed README) — the wrapper ended
+// early and the rest spilled out of the panel as loose lines. The core wraps
+// such a body in a longer fence (executor._md_fence); when the body still
+// contains fences it is re-rendered as markdown so the nested block gets its
+// own panel instead of one panel full of literal backticks.
+const RESULT_MAX_NESTING = 3;
+
+function renderResult(text, depth = 0) {
   const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const html = [];
-  let inFence = false;
-  let fenceLang = "";
-  let fenceBuf = [];
-  const fence = /^```([\w+-]*)\s*$/;
-  for (const line of text.split("\n")) {
-    const m = fence.exec(line);
-    if (m) {
-      if (!inFence) {
-        inFence = true;
-        fenceLang = m[1] || "text";
-        fenceBuf = [];
-      } else {
-        inFence = false;
-        // A failed run with no stdout ships an empty fence — the blank code
-        // box is just noise next to the error text, so skip it entirely.
-        if (fenceBuf.join("\n").trim()) {
-          html.push(`<pre class="code-block"><code class="hljs language-${esc(fenceLang)}">${esc(fenceBuf.join("\n"))}</code></pre>`);
+  for (const seg of splitMarkdown(text)) {
+    if (seg.type === "prose") {
+      for (const line of seg.text.split("\n")) {
+        if (/^### /.test(line)) html.push(`<div class="result-step">${esc(line.slice(4))}</div>`);
+        else if (/^## /.test(line)) {
+          const title = esc(line.slice(3));
+          // Failure envelopes ("## Python Run 1 Failed", "... Timed Out",
+          // "... Failed (dependency resolution)") render the title red.
+          const failed = /\b(Failed|Timed Out)\b/i.test(title);
+          html.push(`<div class="result-title${failed ? " failed" : ""}">${title}</div>`);
         }
+        else if (line.trim()) html.push(`<div class="result-line">${esc(line)}</div>`);
       }
       continue;
     }
-    if (inFence) {
-      fenceBuf.push(line);
+    // A failed run with no stdout ships an empty fence — the blank code box
+    // is just noise next to the error text, so skip it entirely.
+    if (!seg.code.trim()) continue;
+    if (depth < RESULT_MAX_NESTING && /^[ \t]*`{3,}/m.test(seg.code)) {
+      html.push(renderResult(seg.code, depth + 1));
       continue;
     }
-    if (/^### /.test(line)) html.push(`<div class="result-step">${esc(line.slice(4))}</div>`);
-    else if (/^## /.test(line)) {
-      const title = esc(line.slice(3));
-      // Failure envelopes ("## Python Run 1 Failed", "... Timed Out",
-      // "... Failed (dependency resolution)") render the title red.
-      const failed = /\b(Failed|Timed Out)\b/i.test(title);
-      html.push(`<div class="result-title${failed ? " failed" : ""}">${title}</div>`);
-    }
-    else if (line.trim()) html.push(`<div class="result-line">${esc(line)}</div>`);
-  }
-  if (inFence) {
-    if (fenceBuf.join("\n").trim()) {
-      html.push(`<pre class="code-block"><code class="hljs language-${esc(fenceLang)}">${esc(fenceBuf.join("\n"))}</code></pre>`);
-    }
+    const lang = esc(seg.lang || "text");
+    html.push(`<pre class="code-block"><code class="hljs language-${lang}">${esc(seg.code)}</code></pre>`);
   }
   return html.join("\n");
 }
@@ -739,7 +734,10 @@ function addCopyButtons(root) {
 // flagged so results are NOT paired with them.
 function splitMarkdown(md) {
   const segs = [];
-  const lines = md.split("\n");
+  // Normalise CRLF first: `.` never matches \r in JS, so a fence line ending
+  // in \r failed the open regex and a Windows-authored doc rendered as one
+  // wall of prose.
+  const lines = md.replace(/\r\n?/g, "\n").split("\n");
   let prose = [];
   const flushProse = () => {
     if (prose.length) { segs.push({ type: "prose", text: prose.join("\n") }); prose = []; }
