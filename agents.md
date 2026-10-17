@@ -78,9 +78,10 @@ Do NOT introduce a third surface, and don't toast error output — route it thro
 ### Build Pipeline
 
 GitHub Actions (`.github/workflows/build.yml`):
-1. `test` job — runs `test_core.py`, `test_space.py`, `test_api.py`, `test_net.py`, and `test_self_host.py` on ubuntu-latest (Python 3.10 + 3.12)
-2. `build-exe` job — builds Windows EXE via PyInstaller on windows-latest
-3. `release` job — creates GitHub Release (manual dispatch)
+1. `test` job — runs `test_core.py`, `test_space.py`, `test_api.py`, `test_net.py`, `test_self_host.py` and `test_ui.py` on ubuntu-latest (Python 3.10 + 3.12)
+2. `build-exe` job — builds Windows EXE via PyInstaller on windows-latest (plus `build-exe-distributed`, `build-exe-distributed-beta`, `build-linux-appimage`)
+3. `scan-artifacts` job — best-effort ClamAV canary over the Windows executables (`scripts/scan_artifacts.sh`). Warns only: it must never block a release, and it is deliberately not in the `release` job's `needs`
+4. `release` job — creates GitHub Release (manual dispatch)
 
 ---
 
@@ -107,3 +108,6 @@ Because the executable was:
   1. Add a benign dummy comment (e.g., `# Hash Shifter: v1`) to shift the resulting executable hash.
   2. Pin PyInstaller to an older, established version (e.g., `pyinstaller==6.6.0`), as bleeding-edge bootloaders are frequently blanket-flagged by Microsoft until whitelisted.
   3. Simplify the code to avoid triggering heuristic rules (e.g., fallback to generic filenames like `seed.png` rather than extracting the user's actual local filename).
+  4. Prefer an **onedir** bundle over `--onefile` for anything antivirus-sensitive: the onefile bootloader unpacks a `_MEI…` temp directory and runs Python from it at every launch, which is the single most-flagged packaging trait. Disable UPX (`upx=False`) and embed a version resource — see `packaging/ephemeral-distributed-beta.spec` and `packaging/version_info.txt`.
+
+**Never ship a privilege-escalating or service-installing feature from an unsigned build.** The first "always-on node" implementation re-launched the exe elevated (`ShellExecuteW` with `runas`) and registered `schtasks /SC ONSTART /RU SYSTEM`; the build was flagged. Its replacement, `ephemeral_ui.platform.NodeAutostart`, writes a **per-user login entry only** — no elevation, no service, no scheduled task, no copy of the exe — and is login-scoped by design (pre-login always-on is the Linux gateway's job, via `install_self_host.sh`). `test_ui.py` guards both invariants: the class's code must not contain `runas`, `ShellExecuteW`, `schtasks`, `SYSTEM`, `sc create`, `shutil.copy`, or `HKEY_LOCAL_MACHINE`, and the beta spec must stay onedir without UPX.

@@ -88,7 +88,7 @@ Running a node takes minutes and requires nothing beyond the app itself:
 
   Optionally, turn your node into a **super-seed** that already has every language image warm: run `python scripts/hydrate_images.py` once — or, on the distributed tray, right-click → **Distributed → Pre-hydrate All Images** (it estimates the download size, checks your free disk space, and warns before pulling). Budget roughly **17–28 GB** of disk for the full set — most of it is the big science and typesetting images (Anaconda and the TeX-enabled pandoc image are a few GB each), plus ≈ 2.3 GB for the local-LLM monolith. Pull just the common languages with `python scripts/hydrate_images.py --only python,node` if space is tight; nodes pull images lazily anyway, so hydrating is purely a performance boost.
 
-* **Desktop / Windows users:** just run **`Ephemeral-Distributed.exe`** — it runs its own per-user compute node (one stable identity per user account), available while you're logged in or the PC is locked. For an always-on node that keeps serving even when no one is logged in, self-host the Linux gateway below.
+* **Desktop / Windows users:** just run **`Ephemeral-Distributed.exe`** — it runs its own per-user compute node (one stable identity per user account), available while you're logged in or the PC is locked. Keep the node serving after you quit the tray with **Distributed → Run Node on Login** (per-user, no admin prompt — see [Classroom deployment](#classroom-deployment--three-privacy-dials)). For an always-on node that keeps serving even when no one is logged in, self-host the Linux gateway below. If Windows Defender flags the one-file EXE, use the onedir beta bundle from the release instead ([Release artifacts](#release-artifacts)).
 
 That's it — no configuration. Your node fetches the live swarm list, joins the network, and the next scheduled refresh (within ~6 h) writes it into `docs/swarm.json`, where it starts carrying jobs and offloading for other nodes.
 
@@ -674,12 +674,13 @@ The desktop tray clients are cross-platform: the same code builds a Windows EXE 
 
 ### Release artifacts
 
-The CI workflow (`/.github/workflows/build.yml`) builds and attaches **seven artifacts** to each release (triggered via the `workflow_dispatch` → *Create a new release* checkbox, or a push to `main`):
+The CI workflow (`/.github/workflows/build.yml`) builds and attaches **eight artifacts** to each release (triggered via the `workflow_dispatch` → *Create a new release* checkbox, or a push to `main`):
 
 | Artifact | Tier | Notes |
 |---|---|---|
 | `Ephemeral.exe` | local (Windows) | one-file EXE |
 | `Ephemeral-Distributed.exe` | distributed (Windows) | one-file EXE, bundles `iroh` |
+| `Ephemeral-Distributed-Beta-win64.zip` | distributed (Windows, beta) | onedir **folder**, no UPX, Win32 version resource |
 | `ephemeral-local-x86_64.AppImage` | local (Linux) | portable tray app |
 | `ephemeral-distributed-x86_64.AppImage` | distributed (Linux) | portable tray app, bundles `iroh` |
 | `ephemeral-wasm-library.tar.gz` | web (browser) | SPA + wasm glue + crate source to rebuild |
@@ -687,6 +688,10 @@ The CI workflow (`/.github/workflows/build.yml`) builds and attaches **seven art
 | `ephemeral-self-host.tar.gz` | self-host (local API server) | plain REST gateway (`main_api.py`, no networking tier) + `Dockerfile.api` — the build bundled by Lithic-UK |
 
 Run an AppImage like any executable: `chmod +x ephemeral-distributed-x86_64.AppImage && ./ephemeral-distributed-x86_64.AppImage` (configure the cluster via `EPHEMERAL_SEEDS`/`EPHEMERAL_RELAY`/`EPHEMERAL_SECRET`/`EPHEMERAL_ALLOW_NETWORK` environment variables, as with the Windows build). The AppImage needs a desktop with a StatusNotifier/AppIndicator host (most GNOME/KDE setups) or an X11 session (pystray's Xorg backend); on hosts without FUSE, run it with `APPIMAGE_EXTRACT_AND_RUN=1`.
+
+**Why a beta bundle exists.** Both stable Windows builds are PyInstaller `--onefile` self-extractors, and that packaging trait (plus UPX) is the most common cause of antivirus false positives against Python apps — including this one, which is why the tray's first "install as a service" option got flagged. `Ephemeral-Distributed-Beta-win64.zip` is the same distributed app built as an **onedir folder** with UPX disabled and a Win32 version resource (`packaging/ephemeral-distributed-beta.spec`), smoke-tested in CI. Unzip it and run `Ephemeral-Distributed-Beta.exe` from the folder — keep the `_internal` directory beside it. Use it on machines where the one-file build trips Defender. It is not a code-signed build: if it is still detected, submit the exact file to Microsoft with the detection name rather than recommending an antivirus exclusion.
+
+CI also runs a **best-effort ClamAV canary** over the built Windows executables (`scripts/scan_artifacts.sh`, job `scan-artifacts`). It is a smoke signal, not a gate: it reports what a single engine sees (clean / detection / did-not-run) into the job summary, refuses to report "not scanned" as "clean", scans the ~28 MB one-file builds that clamscan's 25 MB default would silently skip, and always exits 0 — an antivirus opinion never blocks a release.
 
 ### Install the self-host server in one line
 
@@ -770,7 +775,7 @@ https://xyvir.github.io/Ephemeral.exe/#seed=<the node's seed ticket>
 
 Nothing to paste and no self-hosting needed: students open it in any browser and get the no-install loop — paste a codeblock, hit run, get the result.
 
-**Need it always-on?** The tray node serves while you're logged in (or the PC is locked) — for a classroom node that survives logout, use the server way below.
+**Need it always-on?** Right-click the tray icon → **Distributed → Run Node on Login** starts the node (headless, `--node`) whenever you log in: no administrator prompt, no Windows service, no scheduled task — just a per-user login command (a Run-key entry on Windows, a `~/.config/autostart` entry on Linux), visible and removable with the same menu click. It is deliberately login-scoped, because pre-login always-on from an unsigned desktop app is exactly the persistence pattern antivirus heuristics flag; a classroom that must serve with nobody logged in needs the server way below. This is separate from **Install && Run on Boot**, which starts the tray UI rather than the node.
 
 **The server way — for sysadmins.** A headless Linux gateway keeps the classroom node running even when no desktop is on:
 

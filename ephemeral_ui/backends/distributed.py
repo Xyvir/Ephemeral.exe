@@ -265,6 +265,10 @@ class DistributedBackend(Backend):
         )
         self._cluster_start_lock = threading.Lock()
 
+        # Always-on-node login autostart (the "Run Node on Login" menu item).
+        # Per-user, no elevation, no service — see platform.NodeAutostart.
+        self.node_autostart = platform.NodeAutostart(self.app_key, self.display_name)
+
     # --- identity --------------------------------------------------------
 
     def about(self) -> str:
@@ -284,6 +288,8 @@ class DistributedBackend(Backend):
     def _node_status(self) -> str:
         """Current cluster state (node id, peers, warm images)."""
         lines = ["Mode: per-user node (tray)"]
+        if self.check_node_autostart():
+            lines.append("Login autostart: on (starts when this user logs in)")
         lines.append(self.cluster.info())
         return "\n".join(lines)
 
@@ -1168,9 +1174,11 @@ class DistributedBackend(Backend):
             content = platform.get_clipboard()
 
         # Safety check: reject previous Ephemeral output (same as local client).
-        if (re.search(r"^## (Run|Result) .*[\r\n]+```text", content.strip(), re.MULTILINE)
+        # `{3,}` because a result fence grows past three backticks whenever its
+        # body contains ``` of its own (see executor._md_fence).
+        if (re.search(r"^## (Run|Result) .*[\r\n]+`{3,}text", content.strip(), re.MULTILINE)
                 or re.search(r"^Result \(.*\):[\r\n]+---[\r\n]+", content.strip(), re.MULTILINE)
-                or re.search(r"^--- Run \d+ \(.*\) ---\n```text", content.strip(), re.MULTILINE)):
+                or re.search(r"^--- Run \d+ \(.*\) ---\n`{3,}text", content.strip(), re.MULTILINE)):
             icon.notify("Clipboard contains previous results. Execution halted.", title="Ephemeral Safety")
             return
 
@@ -1258,12 +1266,82 @@ class DistributedBackend(Backend):
     def setup_tray(self, icon):
         pass  # warmup already started in start_background()
 
+    # --- always-on node (login autostart, per-user) -----------------------
+
+    def check_node_autostart(self) -> bool:
+        """True when the headless node is registered to start at login."""
+        return self.node_autostart.check_node_autostart()
+
+    def toggle_node_autostart(self, icon, item_unused=None):
+        """Enable/disable starting the headless node when this user logs in.
+
+        Per-user and unprivileged on purpose: it writes the login entry and
+        nothing else — no elevation, no Windows service, no SYSTEM task. See
+        :class:`ephemeral_ui.platform.NodeAutostart` for why, including the
+        honest limit that a per-user app cannot start before anyone logs in.
+        """
+        enabling = not self.check_node_autostart()
+        self.node_autostart.set_node_autostart(enabling, icon)
+
+    def run_node_forever(self) -> int:
+        """Headless idle node (``--node``) — what "Run Node on Login" starts.
+
+        No tray icon and no hotkeys: just the cluster node, retried forever so a
+        login-time network race can't leave a classroom without a node. Logs to
+        ``<state dir>/node.log`` and blocks until killed.
+        """
+        log_path = default_state_dir() / "node.log"
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            logging.basicConfig(
+                filename=str(log_path), level=logging.INFO,
+                format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+            )
+        except OSError as e:
+            print(f"ephemeral: could not open node log {log_path}: {e}")
+        log = logging.getLogger("ephemeral.node")
+        log.info("node mode starting (relay=%s private=%s)",
+                 self.cluster.relay, self.private_checked())
+        while True:
+            try:
+                self._ensure_cluster()
+                break
+            except Exception as e:
+                log.warning("node start failed (%s); retrying in 30s", e)
+                time.sleep(30)
+        node_id = self.cluster.node.node_id() if self.cluster.node else "?"
+        log.info("node ready: node_id=%s", node_id)
+        # flush: a GUI-subsystem exe (console=False) buffers redirected stdout,
+        # and this process is normally killed rather than exited cleanly.
+        print(f"NODE READY node_id={node_id}", flush=True)
+        if self.private_checked():
+            url = self.current_student_url()
+            if url:
+                log.info("private student URL: %s", url)
+                print(f"SWARM PRIVATE URL {url}", flush=True)
+        try:
+            while True:
+                time.sleep(60)
+                if self.cluster.node is None:
+                    log.warning("node is gone; restarting")
+                    try:
+                        self._ensure_cluster()
+                    except Exception as e:
+                        log.warning("node restart failed (%s); retrying in 30s", e)
+                        time.sleep(30)
+        except KeyboardInterrupt:
+            log.info("node mode interrupted")
+            self.cluster.stop()
+            return 0
+
     def extra_menu_items(self, icon) -> tuple:
         # Node status moved into About — no separate "Cluster Status" item.
         return (
             platform.item('Distributed', platform.pystray.Menu(
                 platform.item('Private Mode', lambda icon, i: self.toggle_private(icon, i),
                               checked=self.private_checked),
+                platform.item('Run Node on Login', lambda icon, i: self.toggle_node_autostart(icon, i),
+                              checked=lambda i: self.check_node_autostart()),
                 platform.item('Pre-hydrate All Images', lambda icon, i: self.on_prehydrate_all(icon, i)),
             )),
         )

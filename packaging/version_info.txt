@@ -1,0 +1,44 @@
+# UTF-8
+#
+# Win32 version resource for the Ephemeral Windows builds.
+#
+# PyInstaller reads this file via ``EXE(version=...)``. It gives the packaged
+# executable an accurate, inspectable identity (product, file description,
+# version, publisher) — the "truthful metadata" half of not looking like a
+# dropper to antivirus heuristics. It is NOT a signature and does not make the
+# binary trusted on its own.
+#
+# The literal string "Version number (injected from the github workflow)" is
+# replaced by the CI build version (date + short SHA), exactly like the About
+# text in ephemeral_ui/backends/*.py, and the fixed-version tuples are
+# replaced with the build date so the resource is numerically truthful too.
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(0, 0, 0, 0),
+    prodvers=(0, 0, 0, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        '040904B0',
+        [
+          StringStruct('CompanyName', 'Ephemeral'),
+          StringStruct('FileDescription', 'Ephemeral distributed tray client (beta build)'),
+          StringStruct('FileVersion', 'Version number (injected from the github workflow)'),
+          StringStruct('InternalName', 'Ephemeral-Distributed-Beta'),
+          StringStruct('LegalCopyright', 'MIT License'),
+          StringStruct('OriginalFilename', 'Ephemeral-Distributed-Beta.exe'),
+          StringStruct('ProductName', 'Ephemeral'),
+          StringStruct('ProductVersion', 'Version number (injected from the github workflow)')
+        ]
+      )
+    ]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
