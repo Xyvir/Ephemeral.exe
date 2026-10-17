@@ -317,4 +317,261 @@ finally:
     executor_mod.subprocess.check_output = _saved_check_output
 print("PASS: foreign cached images are excluded from native warm-image routing")
 
-print("\n=== ALL 28 TESTS PASSED ===")
+# --- Test 29: result fences outgrow the payload's own backticks -----------
+# Block output is arbitrary text, and a model reply routinely contains its own
+# ``` fences. A fixed three-backtick wrapper ends at the first of those, so the
+# rest of the result spills out of its panel and renders as stray markdown.
+# CommonMark closes a fence only with a run at least as long, so the wrapper
+# must be one backtick longer than the longest run inside the payload.
+import re
+from ephemeral_core.executor import _md_fence
+
+assert _md_fence("42") == "```text\n42\n```", _md_fence("42")
+assert _md_fence("a ``` b") == "````text\na ``` b\n````", _md_fence("a ``` b")
+assert _md_fence("`````") == "``````text\n`````\n``````", _md_fence("`````")
+
+
+def _scan_one(text):
+    """CommonMark-style scan: the body of the single outermost fence."""
+    lines = text.split("\n")
+    opened = re.match(r"^(`{3,})", lines[0])
+    assert opened, lines[0]
+    width = len(opened.group(1))
+    closers = [i for i, line in enumerate(lines[1:], 1) if re.fullmatch(rf"`{{{width},}}", line)]
+    assert len(closers) == 1, closers
+    return "\n".join(lines[1:closers[0]])
+
+
+for payload in ["plain", "```python\nprint(1)\n```", "````css\nx\n````", "inline `code` only"]:
+    assert _scan_one(_md_fence(payload)) == payload, payload
+
+# The envelope the executor actually returns for a reply that contains a
+# fenced block: four backticks around the whole payload, so the inner ```python
+# cannot close it.
+import tempfile
+from ephemeral_core.executor import _format_success_result
+
+_out_dir = tempfile.mkdtemp()
+_envelope = _format_success_result(
+    "MARK\n```python\nprint(1)\n```\n", "", [(0, "MARK", "llm")],
+    "llm", 1, 1, True, _out_dir, False,
+).stdout_formatted
+assert _envelope.startswith("## Llm Result\n\n````text\n"), repr(_envelope)
+assert _envelope.rstrip("\n").endswith("\n````"), repr(_envelope)
+assert _scan_one(_envelope.split("\n", 2)[2].rstrip("\n")) == "```python\nprint(1)\n```", repr(_envelope)
+
+# The "this is already a result" safety guard must still recognise a widened
+# fence, or a pasted result would be executed a second time.
+assert re.search(r"^## (Run|Result) .*[\r\n]+`{3,}text", "## Run 1\n" + _md_fence("```"), re.MULTILINE)
+print("PASS: result fences outgrow the payload's own backticks")
+
+# --- Test 30: llm blocks are chat boxes that stay Python -------------------
+# Bare prose becomes print(chat("...")) and `chat`/`client` are injected, so
+# an llm block needs no boilerplate. Real Python still runs as Python, blocks
+# that import the helper themselves are untouched, and nothing here touches a
+# non-monolith image (plain `python` blocks keep their own behaviour).
+import json
+from ephemeral_core.parser import (
+    is_local_llm_config,
+    prepare_llm_block,
+    reads_as_python,
+)
+
+
+def _llm(content):
+    return prepare_llm_block({"type": "code", "header": "llm", "content": content, "config": {}})["content"]
+
+
+prompt = "Can you write a small python script to calculate the first 10 primes?"
+assert _llm(prompt) == (
+    "from ephemeral_llm import chat, client\n"
+    'print(chat("Can you write a small python script to calculate the first 10 primes?"))\n'
+), _llm(prompt)
+
+# Multi-line prose, quotes and newlines arrive intact in one valid literal.
+prose = 'Explain "groupby" in\none sentence.'
+wrapped = _llm(prose)
+assert wrapped.startswith("from ephemeral_llm import chat, client\nprint(chat("), wrapped
+assert json.loads(wrapped.split("print(chat(", 1)[1].rsplit("))\n", 1)[0]) == prose
+
+# Code keeps running as code, with the names injected.
+code30 = 'df = pd.DataFrame({"n": [1]})\nprint(chat("sum?", max_tokens=8))'
+assert _llm(code30) == "from ephemeral_llm import chat, client\n" + code30
+
+# Explicit imports are respected (no duplicate preamble), and blank is a no-op.
+own = 'from ephemeral_llm import chat\nprint(chat("hi"))'
+assert _llm(own) == own
+assert _llm("   \n") == "   \n"
+
+# Prose vs program: the heuristic that decides which branch a block takes.
+for source in (prompt, "hello", "summarise this please:"):
+    assert not reads_as_python(source), source
+for source in ('print("hi")', "1 + 1", "x = 1", "import pandas as pd", "def f():\n    return 1"):
+    assert reads_as_python(source), source
+
+# Image gating: only the monolith gets the rewrite.
+assert is_local_llm_config({"image": "docker.io/tymills620/ephemeral-qwen-monolith:latest"})
+assert not is_local_llm_config({"image": "docker.io/tymills620/ephemeral-python-uv:latest"})
+assert not is_local_llm_config({})
+
+# Idempotent: a re-prepared (already rewritten) block is left alone.
+once = _llm(prompt)
+assert prepare_llm_block({"type": "code", "content": once})["content"] == once
+print("PASS: llm bare prompts and implicit chat()/client()")
+
+# --- Test 31: generated code is saved for the next container --------------
+# The image's helper strips the prose off a model reply and writes the code to
+# /output, where `chain` stages it into the following container. The suffix
+# follows whatever language the model fenced (not Python specifically), so the
+# next block can import/require/run it in its own language.
+import importlib.util
+import io
+import pathlib
+import sys
+import tempfile
+import types
+from contextlib import redirect_stdout
+
+ROOT = pathlib.Path(__file__).resolve().parent
+LLM_MODULE = ROOT / "dockerfiles" / "ephemeral-qwen-monolith" / "ephemeral_llm.py"
+
+try:  # the image's module imports the OpenAI SDK; stub it when absent
+    import openai  # noqa: F401
+    _openai_stub = False
+except ImportError:
+    _stub = types.ModuleType("openai")
+
+    class _OpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    _stub.OpenAI = _OpenAI
+    sys.modules["openai"] = _stub
+    _openai_stub = True
+
+_spec = importlib.util.spec_from_file_location("ephemeral_llm_under_test", LLM_MODULE)
+llm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(llm)
+
+reply = (
+    "Certainly! Here's a small Python script:\n\n"
+    "```python\n"
+    "def is_prime(n):\n"
+    "    return n > 1 and all(n % i for i in range(2, int(n ** 0.5) + 1))\n"
+    "\n"
+    "print([n for n in range(2, 30) if is_prime(n)][:10])\n"
+    "```\n\n"
+    "Run it anywhere.\n"
+)
+code31 = llm.extract_code(reply)
+assert code31.startswith("def is_prime"), code31
+assert "Certainly" not in code31 and "Run it anywhere" not in code31
+assert code31.endswith("\n") and not code31.endswith("\n\n")
+
+# Code-agnostic: the fence label, not Python, decides the file's suffix.
+assert llm.extract_code("Here you go:\n\n```js\nconsole.log('hi');\n```\n") == "console.log('hi');\n"
+assert llm._filename("generated", "javascript") == "generated.js"
+assert llm._filename("generated", "bash") == "generated.sh"
+assert llm._filename("generated", "") == "generated"
+assert llm._filename("generated", "piet") == "generated"  # unknown label, no suffix
+assert llm._filename("primes.py", "python") == "primes.py"
+assert llm._filename("../../etc/passwd", "python") == "passwd.py"
+
+# Fence selection: first labelled block by default, the requested one on ask.
+mixed = (
+    "First the shell step:\n\n```bash\necho hi\n```\n\n"
+    "Then the Python:\n\n```python\nprint(1)\n```\n"
+)
+assert llm.extract_code(mixed) == "echo hi\n"
+assert llm.extract_code(mixed, lang="python") == "print(1)\n"
+assert llm.extract_code(mixed, lang="py") == "print(1)\n"  # alias
+try:
+    llm.extract_code(mixed, lang="ruby")
+    raise AssertionError("a missing language must not silently save another")
+except ValueError as exc31:
+    assert "bash" in str(exc31) and "python" in str(exc31), str(exc31)
+
+# A wider fence keeps an inner ```python``` intact as code.
+assert llm.extract_code("Look:\n\n````markdown\n```python\nprint(1)\n```\n````\n") == (
+    "```python\nprint(1)\n```\n"
+)
+assert llm.extract_code("~~~{.js}\nlet x = 1;\n~~~") == "let x = 1;\n"
+
+# Unlabelled fences follow the caller's language — but only if they're code.
+assert llm.extract_code("```\nprint(2)\n```", lang="python") == "print(2)\n"
+try:
+    llm.extract_code("```\nnot python at all here.\n```", lang="python")
+    raise AssertionError("an unlabelled prose block must not become Python")
+except ValueError:
+    pass
+
+# Unfenced replies: bare code is accepted, prose is not.
+assert llm.extract_code("print(3)\n") == "print(3)\n"
+try:
+    llm.extract_code("I can't help with that.")
+    raise AssertionError("a prose-only reply must not be written as code")
+except ValueError as exc31:
+    assert "can't help" in str(exc31), str(exc31)
+
+with tempfile.TemporaryDirectory() as tmp31:
+    path31 = llm.save_code(reply, directory=tmp31)
+    assert os.path.basename(path31) == "generated.py", path31
+    with open(path31, encoding="utf-8") as fh31:
+        assert fh31.read() == code31  # written verbatim
+
+    printed31 = io.StringIO()
+    with redirect_stdout(printed31):
+        llm.save_code("```bash\necho hi\n```", directory=tmp31)
+    assert "generated.sh" in printed31.getvalue(), printed31.getvalue()
+
+    # Created on demand, and an unknown language still lands (no suffix).
+    nested31 = os.path.join(tmp31, "nested")
+    assert llm.save_code("```piet\nnope\n```", directory=nested31, quiet=True).endswith("generated")
+
+    # A __main__ guard doesn't fire on import — point at runpy instead.
+    printed31 = io.StringIO()
+    with redirect_stdout(printed31):
+        llm.save_code("```python\nif __name__ == '__main__':\n    print(4)\n```", directory=tmp31)    # runpy without run_name="__main__" would skip the guard as well.
+    assert "runpy.run_path" in printed31.getvalue(), printed31.getvalue()
+    assert 'run_name="__main__"' in printed31.getvalue(), printed31.getvalue()
+
+    # ask_code = chat + save in one call.
+    llm.chat = lambda *a, **k: "```python\nprint(5)\n```"
+    asked31 = llm.ask_code("write a script", directory=tmp31, quiet=True)
+    with open(asked31, encoding="utf-8") as fh31:
+        assert fh31.read() == "print(5)\n"
+
+if _openai_stub:
+    del sys.modules["openai"]
+print("PASS: model replies become runnable, code-agnostic files")
+
+# --- Test 32: locally staged modules are not PyPI requirements ------------
+# Seeds and chained /output files are written into the workdir before the code
+# runs, so `import generated` (or `import helpers` from a seeded file) must
+# resolve locally instead of sending uv to the package registry.
+from ephemeral_core.executor import _local_module_names
+
+assert _local_module_names([]) == set()
+seeds32 = [
+    {"type": "seed", "name": "generated.py"},
+    {"type": "seed", "name": "pkg/__init__.py"},
+    {"type": "seed", "name": "data.json"},
+    {"type": "seed", "name": "lib\\util.py"},  # windows-style separator
+    {"type": "code", "name": "ignored.py"},
+]
+local32 = _local_module_names(seeds32)
+assert local32 == {"generated", "pkg", "util"}, local32
+
+assert infer_python_dependencies("import generated\nimport pandas as pd") == ["generated", "pandas"]
+assert infer_python_dependencies("import generated\nimport pandas as pd", local32) == ["pandas"]
+assert infer_python_dependencies("from generated import first_n_primes", {"generated"}) == []
+
+# No PEP 723 header is injected for a locally staged module.
+staged32, deps32 = prepare_python_block(
+    {"type": "code", "content": "import generated\nprint(generated.__name__)"}, local_modules=local32
+)
+assert deps32 == [], deps32
+assert staged32["content"] == "import generated\nprint(generated.__name__)"
+print("PASS: staged modules (seeds, chained generated code) aren't PyPI deps")
+
+print("\n=== ALL 32 TESTS PASSED ===")

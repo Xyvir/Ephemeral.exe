@@ -218,14 +218,22 @@ PHP, Piet, PowerShell, Prolog, Python, R, Ruby, Rust, Science Python, SQLite, Ve
 `llm` blocks (aliases `local-llm`, `localmodel`, `qwen`) run in a single self-contained image: llama.cpp serving **Qwen2.5-0.5B-Instruct** on `127.0.0.1:12434`, plus numpy, pandas, polars, pyarrow, duckdb, scipy, scikit-learn and matplotlib. That is deliberately against container orthodoxy — but Ephemeral's cycle is pull-and-run, with no volume mount or sidecar pod to hang a GGUF on, so the ~470 MB of weights ride inside the image and "use a local model" stays the same one-line workflow as every other language.
 
 ```llm
-from ephemeral_llm import chat
+Explain what a pandas DataFrame is in one sentence.
+```
 
-print(chat("Explain what a pandas DataFrame is in one sentence."))
+A block that is plain prose *is* the prompt: it is sent to the model and the reply is printed. Anything that parses as Python runs as Python instead, with `chat` and `client` already in scope — no import needed:
+
+```llm
+import pandas as pd
+
+df = pd.DataFrame({"n": [21, 9]})
+print("sum:", int(df.n.sum()))
+print(chat("What did 21 and 9 add up to? One short sentence.", max_tokens=40))
 ```
 
 * **Offline by design.** The server boots from the image entrypoint *before* your block runs, binds loopback only, and dies with the container. No `unsafe` flag, no network, no API key — the block still runs under `--network none`.
-* **Data and model in one run.** pandas/duckdb/scipy are already installed, so a single block can shape a table, ask the model about it, and save a plot to `/output` with no dependency resolution.
-* **OpenAI-compatible.** `from ephemeral_llm import client` gives a normal `openai.OpenAI` pointed at `http://127.0.0.1:12434/v1` for streaming, tools, or response formats. Model name: `local`.
+* **Data and model in one run.** pandas/duckdb/scipy are already installed, so a single block can shape a table, ask the model about it, and save a plot to `/output` with no dependency resolution. The plain `python` language stays available for work that never touches the model.
+* **OpenAI-compatible.** `client()` returns a normal `openai.OpenAI` pointed at `http://127.0.0.1:12434/v1` for streaming, tools, or response formats. Model name: `local`.
 * **Sized for the sandbox.** Q4_K_M plus a 4096-token context fits Ephemeral's 2 GB default (and the scaled ~1 GB limit on small hosts) next to the Python stack. `EPHEMERAL_LLM_CTX` / `EPHEMERAL_LLM_THREADS` override context and thread count, and `EPHEMERAL_LLM_DISABLE=1` boots the image without the model for plain data work.
 * **Swap the model at build time** (weights are a build arg, checksummed against Hugging Face):
 
@@ -238,6 +246,24 @@ print(chat("Explain what a pandas DataFrame is in one sentence."))
   ```
 
   A 1.5B model needs a larger `EPHEMERAL_MEMORY_LIMIT` (e.g. `3g`) on the node running it.
+
+##### Generated code, run in the next block
+
+`ask_code()` asks for a program, drops the prose, and writes the code to `/output/generated`. The stem is fixed — the extension follows the language the model actually fenced (`generated.py`, `generated.js`, `generated.sh`, or no suffix when it names none), so the next block can run it in its own language. Put `chain` on the header and that file is staged into the *next* container's working directory:
+
+```llm chain
+from ephemeral_llm import ask_code
+
+ask_code("Write a Python script that prints the first 10 primes.")
+```
+
+```python
+import generated
+```
+
+`save_code(reply)` does the same for a reply you already have, and `extract_code(reply)` returns just the code without touching the disk. The file is written verbatim, so it is also an ordinary `/output` artifact you can download and keep. Generated code is treated as a local module — `import generated` resolves from the workdir instead of sending `uv` to the package registry — so the chain works with no dependency resolution at all.
+
+> The one thing an import cannot do is fire a script's `if __name__ == "__main__":` guard. `ask_code` asks the model for top-level code for exactly that reason, and if a reply insists on a guard, `save_code` prints the `runpy.run_path("generated.py", run_name="__main__")` call that runs it anyway.
 
 > **Distributed note:** the language is in `LANG_MAP`, so it is automatically part of every node's allowlist and hydrate set — `python scripts/hydrate_images.py --only llm` warms a node (≈ 2.3 GB, of which ~470 MB is the model), and jobs only route to nodes that already advertise the image.
 

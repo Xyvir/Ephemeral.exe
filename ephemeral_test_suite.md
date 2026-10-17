@@ -266,10 +266,16 @@ endmodule
 
 ````
 ```llm
-import pandas as pd
-from ephemeral_llm import chat
+Reply with exactly: bare prompt works
+```
+````
 
-# Deterministic data check, then a round-trip to the in-container model
+````
+```llm
+import pandas as pd
+
+# Deterministic data check, then a round-trip to the in-container model. No
+# import of the helper: every llm block already has chat/client in scope.
 df = pd.DataFrame({"n": [21, 9]})
 print(f"Markdown: Local LLM (Qwen2.5-0.5B) | Data Check: {int(df.n.sum())} - OK")
 print(chat("In one short sentence, what did 21 and 9 just add up to?", max_tokens=64))

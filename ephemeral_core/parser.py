@@ -4,6 +4,8 @@ Ephemeral Markdown parser: codeblock extraction and runtime resolution.
 Extracted verbatim from the original ephemeral.py (lines 179-380).
 No GUI, HTTP, or platform-specific code exists in this module.
 """
+import ast
+import json
 import re
 import shlex
 import sys
@@ -71,15 +73,20 @@ def _clean_import_name(name: str) -> str:
     return name.split(".")[0]
 
 
-def infer_python_dependencies(code: str) -> list[str]:
+def infer_python_dependencies(code: str, local_modules=()) -> list[str]:
     """
     Infer third-party PyPI packages from the import statements in Python code.
 
     Only the top-level package of each import is returned (e.g. `import
     pandas.core` yields ``pandas``), and standard-library modules are excluded.
+
+    ``local_modules`` names modules that will already exist in the container's
+    working directory (seed blocks and chained `/output` files), so `import
+    generated` is not mistaken for a PyPI distribution.
     Returns a sorted, de-duplicated list suitable for PEP 723 metadata or
     ``pip install``.
     """
+    local = {str(m) for m in local_modules}
     deps = set()
     for match in _IMPORT_STATEMENT_RE.finditer(code or ""):
         if match.group(1):
@@ -88,7 +95,7 @@ def infer_python_dependencies(code: str) -> list[str]:
             for part in match.group(2).split(","):
                 if part.strip():
                     deps.add(_clean_import_name(part))
-    return sorted(d for d in deps if d and d not in STDLIB_MODULES)
+    return sorted(d for d in deps if d and d not in STDLIB_MODULES and d not in local)
 
 
 def build_python_dependency_header(deps: list[str]) -> str:
@@ -149,13 +156,15 @@ def inject_python_dependency_metadata(code: str, deps: list[str]) -> str:
     return header + code
 
 
-def prepare_python_block(block: dict) -> tuple[dict, list[str]]:
+def prepare_python_block(block: dict, local_modules=()) -> tuple[dict, list[str]]:
     """
     Prepare a Python code block for execution with dependency resolution.
 
     If the block already declares PEP 723 metadata, its declared dependencies
     are authoritative and the block is returned untouched. Otherwise, third-party
     imports are inferred and a PEP 723 header is injected into the block content.
+    ``local_modules`` are names staged into the workdir by seeds/chaining; they
+    are never inferred as dependencies.
 
     Returns ``(block, deps)`` where ``deps`` is the list of packages that must be
     resolvable before the payload runs.
@@ -165,12 +174,79 @@ def prepare_python_block(block: dict) -> tuple[dict, list[str]]:
     # declared (even an empty `dependencies = []`), never infer or re-inject.
     if has_pep723_metadata(content):
         return block, extract_declared_dependencies(content)
-    deps = infer_python_dependencies(content)
+    deps = infer_python_dependencies(content, local_modules)
     if deps:
         new_block = dict(block)
         new_block["content"] = inject_python_dependency_metadata(content, deps)
         return new_block, deps
     return block, []
+
+
+# --- Local LLM monolith: implicit helpers + bare-prompt shorthand ---
+
+# The image bakes `ephemeral_llm.py` onto the interpreter's path, so every
+# `llm` block can see `chat` and `client` without importing them. Both the
+# preamble and the bare-prompt rewrite are applied at execution time (never by
+# parse_codeblocks), so the document keeps exactly what the user typed.
+LLM_IMAGE_PREFIX = "docker.io/tymills620/ephemeral-qwen-monolith"
+LLM_PREAMBLE = "from ephemeral_llm import chat, client\n"
+_LLM_IMPORT_RE = re.compile(
+    r"^\s*(?:from\s+ephemeral_llm\b|import\s+ephemeral_llm\b)", re.MULTILINE
+)
+
+
+def is_local_llm_config(config: dict) -> bool:
+    """True when this run's image is the self-contained local-LLM monolith."""
+    return str(config.get("image", "")).startswith(LLM_IMAGE_PREFIX)
+
+
+def reads_as_python(source: str) -> bool:
+    """
+    True if ``source`` looks like a program rather than a prose prompt.
+
+    Prose is almost always a syntax error, so `ast.parse` carries most of the
+    decision. The exception is a lone bare word (`hello`), which parses as a
+    name expression but is clearly a prompt; anything with a call, operator,
+    literal structure, assignment, import or control flow is code.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return False
+    for stmt in tree.body:
+        if not isinstance(stmt, ast.Expr):
+            return True  # assignment, import, def, loop, with, try, ...
+        if not isinstance(stmt.value, ast.Name):
+            return True  # a call, arithmetic, subscription, f-string, ...
+    return False
+
+
+def prepare_llm_block(block: dict) -> dict:
+    """
+    Make an `llm` block runnable without boilerplate.
+
+    * Prose (anything that isn't Python) becomes ``print(chat("..."))``, so the
+      language doubles as a chat box: the block's text *is* the prompt.
+    * Real Python keeps running as Python, with ``chat`` and ``client`` already
+      in scope, so a block can loop, shape a DataFrame, or drive the OpenAI
+      client for streaming and multi-turn work.
+
+The rewrite is idempotent: a block that already imports `ephemeral_llm` is
+left alone, and wrapped output is valid Python from then on.
+    """
+    content = block.get("content", "")
+    if not content.strip():
+        return block
+
+    code = content
+    if not reads_as_python(content):
+        # json.dumps gives a valid Python literal for any text: quotes,
+        # newlines, backslashes and non-ASCII all arrive intact.
+        code = f"print(chat({json.dumps(content.strip())}))\n"
+
+    if _LLM_IMPORT_RE.search(code):
+        return block if code == content else {**block, "content": code}
+    return {**block, "content": LLM_PREAMBLE + code}
 
 
 def strip_ansi_codes(text: str) -> str:

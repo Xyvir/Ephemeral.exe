@@ -28,7 +28,9 @@ from .space import SpaceGuardError, ensure_space_for_pull
 logger = logging.getLogger(__name__)
 from .models import ExecutionResult, GroupResult
 from .parser import (
+    is_local_llm_config,
     parse_codeblocks,
+    prepare_llm_block,
     prepare_python_block,
     resolve_runtime_config,
     strip_ansi_codes,
@@ -428,6 +430,10 @@ def _run_container_sync(
     the `unsafe` keyword, the run is split into two container stages:
     resolve the dependencies into a shared venv with the network up, then
     execute the payload with the network removed (see _run_two_stage_python).
+
+    `llm` blocks get the mirror treatment: prose becomes `print(chat("..."))`
+    and `chat`/`client` are injected, so the language reads like a chat box
+    while real Python still runs as Python (see prepare_llm_block).
     
     Args:
         config: Runtime configuration dict (image, cmd, entrypoint, flags)
@@ -460,15 +466,28 @@ def _run_container_sync(
     prepared_blocks = run_blocks
     python_deps: list[str] = []
     if uses_uv_python:
+        # Seeds (declared files and the previous run's chained /output files)
+        # are staged into the workdir before the payload runs, so their module
+        # names are importable locally and must not become PyPI requirements.
+        local_modules = _local_module_names(run_blocks)
         prepared_blocks = []
         for b in run_blocks:
             if b['type'] == 'code':
-                prepared, deps = prepare_python_block(b)
+                prepared, deps = prepare_python_block(b, local_modules=local_modules)
                 prepared_blocks.append(prepared)
                 python_deps.extend(deps)
             else:
                 prepared_blocks.append(b)
         python_deps = sorted(set(python_deps))
+    elif is_local_llm_config(config):
+        # Local-LLM monolith: bare prose becomes `print(chat("..."))`, and
+        # `chat` / `client` are injected so a code-shaped block needs no
+        # import. Applied here (not in the parser) so the document shown in
+        # the UI stays exactly what the user wrote.
+        prepared_blocks = [
+            prepare_llm_block(b) if b['type'] == 'code' else b
+            for b in run_blocks
+        ]
 
     # Two-stage execution: dependencies need the network, the payload doesn't.
     if uses_uv_python and python_deps and not config.get('allow_network', False):
@@ -482,6 +501,31 @@ def _run_container_sync(
         config, prepared_blocks, lang,
         run_index, total_runs, output_dir, timeout, is_single_step
     )
+
+
+def _local_module_names(run_blocks: list[dict]) -> set[str]:
+    """
+    Module names a Python block can import from the container's workdir.
+
+    Every seed becomes a file in ``/tmp`` before the code runs — including the
+    files chained forward from the previous run, which is how a generated
+    script reaches the next block. Without this, `import generated` is inferred
+    as a PyPI dependency and the run dies resolving a package that does not
+    exist.
+    """
+    names: set[str] = set()
+    for b in run_blocks:
+        if b.get('type') != 'seed':
+            continue
+        name = str(b.get('name', '')).replace('\\', '/').strip('/')
+        parts = [p for p in name.split('/') if p]
+        if not parts:
+            continue
+        if parts[-1] == '__init__.py' and len(parts) > 1:
+            names.add(parts[-2])
+        elif parts[-1].endswith('.py'):
+            names.add(parts[-1][:-3])
+    return names
 
 
 def _build_podman_cmd(
@@ -622,6 +666,24 @@ def _lang_title(lang: str) -> str:
     return first.capitalize()
 
 
+def _md_fence(body: str, info: str = "text") -> str:
+    """
+    Wrap ``body`` in a backtick fence the payload cannot close early.
+
+    Block output is arbitrary text: a model reply or a printed README often
+    contains its own ``` fences. A fixed three-backtick wrapper ends at the
+    first of those, so the rest of the result spills out of its panel and
+    renders as stray markdown. CommonMark lets a fence be any run of three or
+    more backticks and only closes it with a run at least that long, so the
+    wrapper is one backtick longer than the longest run inside the payload.
+    Plain output still gets exactly three, so the common case stays
+    byte-identical (older clients that only know ```text keep working).
+    """
+    longest = max((len(run) for run in re.findall(r"`+", body)), default=0)
+    ticks = "`" * max(3, longest + 1)
+    return f"{ticks}{info}\n{body}\n{ticks}"
+
+
 def _format_success_result(
     stdout: str,
     stderr: str,
@@ -685,11 +747,11 @@ def _format_success_result(
         block_output = outputs.get(step_idx, "").strip('\r\n')
 
         if is_single_step:
-            result_parts.append(f"```text\n{block_output}\n```")
+            result_parts.append(_md_fence(block_output))
         else:
             if not block_output:
                 block_output = ""
-            result_parts.append(f"### Step {step_idx} ({block_lang})\n```text\n{block_output}\n```")
+            result_parts.append(f"### Step {step_idx} ({block_lang})\n{_md_fence(block_output)}")
 
     result_str = "\n\n".join(result_parts) + "\n"
     artifact_paths = [os.path.join(output_dir, f) for f in files]
@@ -724,7 +786,7 @@ def _run_single_stage(
 
     if returncode is None:
         return GroupResult(
-            stdout_formatted=f"## {tlang} Run {run_index} Timed Out\n```text\nExecution exceeded {timeout}s timeout.\n```\n",
+            stdout_formatted=f"## {tlang} Run {run_index} Timed Out\n{_md_fence(f'Execution exceeded {timeout}s timeout.')}\n",
             stderr=f"Timeout after {timeout} seconds",
             exit_code=-1
         )
@@ -737,7 +799,7 @@ def _run_single_stage(
 
     full_error = f"Exit Code: {returncode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
     return GroupResult(
-        stdout_formatted=f"## {tlang} Run {run_index} Failed\n```text\n{stderr.strip()}\n```\n",
+        stdout_formatted=f"## {tlang} Run {run_index} Failed\n{_md_fence(stderr.strip())}\n",
         stderr=full_error,
         exit_code=returncode
     )
@@ -785,7 +847,7 @@ def _run_two_stage_python(
         retcode, stdout, stderr = _run_podman_script(stage_a_cmd, install_script, timeout)
         if retcode is None:
             return GroupResult(
-                stdout_formatted=f"## {tlang} Run {run_index} Timed Out\n```text\nDependency resolution exceeded {timeout}s timeout.\n```\n",
+                stdout_formatted=f"## {tlang} Run {run_index} Timed Out\n{_md_fence(f'Dependency resolution exceeded {timeout}s timeout.')}\n",
                 stderr=f"Dependency resolution timed out after {timeout} seconds",
                 exit_code=-1
             )
@@ -795,7 +857,7 @@ def _run_two_stage_python(
                 f"Exit Code: {retcode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
             )
             return GroupResult(
-                stdout_formatted=f"## {tlang} Run {run_index} Failed (dependency resolution)\n```text\n{stderr.strip()}\n```\n",
+                stdout_formatted=f"## {tlang} Run {run_index} Failed (dependency resolution)\n{_md_fence(stderr.strip())}\n",
                 stderr=full_error,
                 exit_code=retcode
             )
@@ -810,7 +872,7 @@ def _run_two_stage_python(
         retcode, stdout, stderr = _run_podman_script(stage_c_cmd, script_code, timeout)
         if retcode is None:
             return GroupResult(
-                stdout_formatted=f"## {tlang} Run {run_index} Timed Out\n```text\nExecution exceeded {timeout}s timeout.\n```\n",
+                stdout_formatted=f"## {tlang} Run {run_index} Timed Out\n{_md_fence(f'Execution exceeded {timeout}s timeout.')}\n",
                 stderr=f"Timeout after {timeout} seconds",
                 exit_code=-1
             )
@@ -823,7 +885,7 @@ def _run_two_stage_python(
 
         full_error = f"Exit Code: {retcode}\n\nSTDERR:\n{stderr}\n\nSTDOUT:\n{stdout}"
         return GroupResult(
-            stdout_formatted=f"## {tlang} Run {run_index} Failed\n```text\n{stderr.strip()}\n```\n",
+            stdout_formatted=f"## {tlang} Run {run_index} Failed\n{_md_fence(stderr.strip())}\n",
             stderr=full_error,
             exit_code=retcode
         )
@@ -1011,9 +1073,11 @@ async def parse_and_execute(
     """
     # Safety check: reject clipboard containing previous Ephemeral output
     stripped = markdown_text.strip()
-    if (re.search(r"^## (Run|Result) .*[\r\n]+```text", stripped, re.MULTILINE)
+    # Result envelopes may use a longer fence when the body itself contains
+    # ``` lines (`{3,}` below), so this must not assume exactly three.
+    if (re.search(r"^## (Run|Result) .*[\r\n]+`{3,}text", stripped, re.MULTILINE)
             or re.search(r"^Result \(.*\):[\r\n]+---[\r\n]+", stripped, re.MULTILINE)
-            or re.search(r"^--- Run \d+ \(.*\) ---\n```text", stripped, re.MULTILINE)):
+            or re.search(r"^--- Run \d+ \(.*\) ---\n`{3,}text", stripped, re.MULTILINE)):
         raise ValueError("Input contains previous Ephemeral results. Execution halted for safety.")
 
     blocks = parse_codeblocks(markdown_text)

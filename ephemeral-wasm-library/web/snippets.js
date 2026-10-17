@@ -138,15 +138,25 @@ export const LANG_SNIPPETS = {
     '(format t "Markdown: Common Lisp (SBCL) | Math Check: ~d - OK~%" (+ 27 3))'
   ),
   // The monolith's server is already running on loopback by the time this
-  // executes, so the demo only needs the one-shot helper.
-  llm: fence(
-    "llm",
-    [
-      "from ephemeral_llm import chat",
-      "",
-      'print(chat("In one sentence, what is a pandas DataFrame?"))',
-    ].join("\n")
-  ),
+  // executes, and a block that is plain prose IS the prompt (the core rewrites
+  // it to print(chat("..."))). This demo takes the other branch: ask the model
+  // for a program, save its code block to /output, then let the next block run
+  // it. `chain` stages /output into the following container, so plain `python`
+  // can `import generated` — the model writes `.py` (or `.js`, `.sh` … to
+  // match the language it answered in), and `python` stays available for work
+  // that never touches the model.
+  llm: [
+    "```llm chain",
+    "from ephemeral_llm import ask_code",
+    "",
+    "# Saves the reply's code block to /output/generated.py.",
+    'ask_code("Write a Python script that prints the first 10 primes.")',
+    "```",
+    "",
+    "```python",
+    "import generated",
+    "```",
+  ].join("\n"),
   lolcode: fence(
     "lolcode",
     ['HAI 1.2', 'VISIBLE "Markdown: Lolcode | Math Check: 14 - OK"', "KTHXBYE"].join("\n")
