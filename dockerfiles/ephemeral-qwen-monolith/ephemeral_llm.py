@@ -43,6 +43,22 @@ The code is echoed to stdout by default (``echo=False`` to suppress it), fenced
 in its own language, so one block's output reads as "here is the program the
 model wrote" and the next block's output shows what it printed when it ran.
 
+Reproducible replies
+--------------------
+llama.cpp honours a ``seed`` but never reports the one it used — with no seed
+the server randomises internally and the reply is unrepeatable. So every
+:func:`chat` picks a seed itself (unless you pass one, or set
+``EPHEMERAL_LLM_SEED``), sends it, and prints what it used::
+
+    [ephemeral-llm] seed=1837465283 temperature=0.8 (reproduce: pass both to chat())
+
+Pass those back (``chat(prompt, seed=1837465283, temperature=0.8)``) and the
+reply repeats exactly, as long as the same image is running:
+:func:`last_call` also carries the response's ``system_fingerprint``, which
+changes when the server build or weights do — that, not the seed, is what
+breaks reproduction between builds. ``temperature=0`` makes the seed
+irrelevant for anyone who wants greedy, boring determinism.
+
 The one thing import cannot do is fire a script's ``__main__`` guard, so
 :func:`ask_code` asks for top-level code; when a reply insists on a guard,
 :func:`save_code` prints the ``runpy.run_path(..., run_name="__main__")`` call
@@ -52,13 +68,22 @@ that runs it anyway.
 from __future__ import annotations
 
 import ast
+import json
 import os
+import random
 import re
+import urllib.request
 
 from openai import OpenAI
 
 MODEL = os.environ.get("EPHEMERAL_LLM_MODEL_NAME", "local")
 BASE_URL = os.environ.get("EPHEMERAL_LLM_BASE_URL", "http://127.0.0.1:12434/v1")
+
+#: Where the server's own metadata endpoints live (``/props`` is not under /v1).
+SERVER_ROOT = BASE_URL[:-3] if BASE_URL.endswith("/v1") else BASE_URL
+
+#: Pin every reply in a run to one seed, e.g. `EPHEMERAL_LLM_SEED=1234 python -`.
+SEED_ENV = "EPHEMERAL_LLM_SEED"
 
 #: Default stem for :func:`save_code` / :func:`ask_code`.
 DEFAULT_NAME = "generated"
@@ -76,22 +101,140 @@ def client(**kwargs) -> OpenAI:
     return OpenAI(**kwargs)
 
 
-def chat(prompt: str, system: str | None = None, **kwargs) -> str:
+#: The server's sampler defaults, read once from /props.
+_server_params: dict | None = None
+
+#: Seed/temperature/model of the most recent call, for reuse.
+_last_call: dict | None = None
+
+#: Last fingerprint seen, so a changed build can be called out.
+_last_fingerprint: str | None = None
+
+
+def server_params() -> dict:
+    """
+    The sampler defaults this server is running with.
+
+    Read once from ``/props``: llama.cpp's OpenAI-compatible endpoint does not
+    report the parameters it applied, so a truthful "temperature used" line
+    has to ask for the defaults separately.
+    """
+    global _server_params
+    if _server_params is None:
+        try:
+            with urllib.request.urlopen(f"{SERVER_ROOT}/props", timeout=10) as resp:
+                payload = json.load(resp) or {}
+            _server_params = (
+                (payload.get("default_generation_settings") or {}).get("params") or {}
+            )
+        except Exception:  # data-only block, or the server is still waking up
+            _server_params = {}
+    return _server_params
+
+
+def new_seed() -> int:
+    """
+    A fresh 32-bit seed, or ``EPHEMERAL_LLM_SEED`` when that is set.
+
+    llama.cpp's own default is -1: it randomises internally and never reports
+    which seed it drew, so a reply could not be reproduced afterwards. Picking
+    the seed here is what makes the printed value reusable.
+    """
+    pinned = os.environ.get(SEED_ENV, "").strip()
+    if pinned:
+        try:
+            return int(pinned)
+        except ValueError:
+            pass
+    return random.SystemRandom().randrange(0, 2 ** 31)
+
+
+def last_call() -> dict | None:
+    """Seed, temperature, model and fingerprint of the last chat()/ask_code()."""
+    return dict(_last_call) if _last_call else None
+
+
+def _default_temperature() -> float | None:
+    value = server_params().get("temperature")
+    return round(float(value), 4) if isinstance(value, (int, float)) else None
+
+
+def _remember(prompt, system, model, seed, temperature, fingerprint, reply) -> None:
+    global _last_call
+    _last_call = {
+        "prompt": prompt,
+        "system": system,
+        "model": model,
+        "seed": seed,
+        "temperature": temperature,
+        "system_fingerprint": fingerprint,
+        "reply": reply,
+    }
+
+
+def _report_lines(seed: int, temperature: float | None, fingerprint: str | None):
+    """The provenance line, plus a note when the server build changed."""
+    global _last_fingerprint
+    reuse = f"seed={seed}"
+    head = f"seed={seed}"
+    if temperature is not None:
+        head += f" temperature={temperature:g}"
+        reuse += f", temperature={temperature:g}"
+    lines = [f"[ephemeral-llm] {head} (reproduce: chat(prompt, {reuse}))"]
+    if fingerprint and _last_fingerprint and fingerprint != _last_fingerprint:
+        lines.append(
+            f"[ephemeral-llm] note: the server build changed "
+            f"({_last_fingerprint} -> {fingerprint}); a seed reproduces within "
+            "one build only"
+        )
+    if fingerprint:
+        _last_fingerprint = fingerprint
+    return lines
+
+
+def chat(
+    prompt: str,
+    system: str | None = None,
+    seed: int | None = None,
+    temperature: float | None = None,
+    report: bool = True,
+    **kwargs,
+) -> str:
     """Send one user message (with an optional system prompt) and return the reply text.
 
-    Extra keyword arguments are passed through to
-    ``chat.completions.create`` — ``temperature``, ``max_tokens``, ``model``,
-    etc.
+    Extra keyword arguments are passed through to ``chat.completions.create`` —
+    ``max_tokens``, ``top_k``, ``model``, etc.
+
+    A seed is always chosen and sent, and what was used is printed, so any reply
+    can be reproduced: ``chat(prompt, seed=..., temperature=...)``. Pass
+    ``report=False`` (or ``EPHEMERAL_LLM_REPORT=0``) to keep the output to the
+    reply alone; :func:`last_call` reads the same values programmatically.
     """
+    if os.environ.get("EPHEMERAL_LLM_REPORT", "1") == "0":
+        report = False
+
+    seed = new_seed() if seed is None else int(seed)
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
     model = kwargs.pop("model", MODEL)
-    response = client().chat.completions.create(
-        model=model, messages=messages, **kwargs
-    )
-    return response.choices[0].message.content or ""
+
+    request = {"model": model, "messages": messages, "seed": seed}
+    if temperature is not None:
+        request["temperature"] = temperature
+    request.update(kwargs)
+
+    response = client().chat.completions.create(**request)
+    reply = response.choices[0].message.content or ""
+
+    used_temperature = temperature if temperature is not None else _default_temperature()
+    fingerprint = getattr(response, "system_fingerprint", None) or None
+    _remember(prompt, system, model, seed, used_temperature, fingerprint, reply)
+    if report:
+        for line in _report_lines(seed, used_temperature, fingerprint):
+            print(line)
+    return reply
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +472,9 @@ def ask_code(
     directory: str = DEFAULT_DIRECTORY,
     quiet: bool = False,
     echo: bool = True,
+    seed: int | None = None,
+    temperature: float | None = None,
+    report: bool = True,
     **kwargs,
 ) -> str:
     """Ask the model for a program, save it to ``directory``, return the path.
@@ -340,8 +486,18 @@ def ask_code(
     The code is echoed to stdout by default, so the block's output shows the
     program and the next block shows its result. ``echo=False`` prints only the
     saved-file line.
+
+    ``seed`` and ``temperature`` go to :func:`chat`, and the seed that was used
+    is printed above the code, so the same script can be regenerated exactly.
     """
-    reply = chat(prompt, system=system or _CODE_SYSTEM, **kwargs)
+    reply = chat(
+        prompt,
+        system=system or _CODE_SYSTEM,
+        seed=seed,
+        temperature=temperature,
+        report=report,
+        **kwargs,
+    )
     return save_code(
         reply, name=name, lang=lang, directory=directory, quiet=quiet, echo=echo
     )

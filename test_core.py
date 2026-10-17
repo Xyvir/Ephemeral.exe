@@ -550,9 +550,14 @@ with tempfile.TemporaryDirectory() as tmp31:
     assert "runpy.run_path" in printed31.getvalue(), printed31.getvalue()
     assert 'run_name="__main__"' in printed31.getvalue(), printed31.getvalue()
 
-    # ask_code = chat + save in one call.
+    # ask_code = chat + save in one call (chat is stubbed, then restored so the
+    # tests below exercise the real one).
+    _real_chat31 = llm.chat
     llm.chat = lambda *a, **k: "```python\nprint(5)\n```"
-    asked31 = llm.ask_code("write a script", directory=tmp31, quiet=True)
+    try:
+        asked31 = llm.ask_code("write a script", directory=tmp31, quiet=True)
+    finally:
+        llm.chat = _real_chat31
     with open(asked31, encoding="utf-8") as fh31:
         assert fh31.read() == "print(5)\n"
 
@@ -614,4 +619,103 @@ assert effective_timeout({"ignore_timeout": True}, 5) == 5
 assert effective_timeout({"ignore_timeout": False}, 60) == 60
 print("PASS: default time cap, with a local-only notimeout opt-out")
 
-print("\n=== ALL 33 TESTS PASSED ===")
+# --- Test 34: every reply reports the seed that produced it ---------------
+# llama.cpp honours `seed` but never reports the one it used, so the helper
+# picks one itself and prints it — that is what makes a reply reproducible.
+class _Msg34:
+    content = "Five."
+
+
+class _Choice34:
+    message = _Msg34()
+
+
+class _Resp34:
+    choices = [_Choice34()]
+    system_fingerprint = "b11706-f74e2fa6a"
+
+
+class _Completions34:
+    def __init__(self, seen):
+        self.seen = seen
+
+    def create(self, **kwargs):
+        self.seen.append(kwargs)
+        return _Resp34()
+
+
+class _Chat34:
+    def __init__(self, seen):
+        self.completions = _Completions34(seen)
+
+
+class _Client34:
+    def __init__(self, seen):
+        self.chat = _Chat34(seen)
+
+
+seen34 = []
+llm.client = lambda **kw: _Client34(seen34)
+llm._server_params = {"temperature": 0.800000011920929}  # as /props reports it
+llm._last_call = None
+llm._last_fingerprint = None
+
+buf34 = io.StringIO()
+with redirect_stdout(buf34):
+    reply34 = llm.chat("hi")
+request34 = seen34[-1]
+assert reply34 == "Five.", reply34
+assert isinstance(request34["seed"], int) and 0 <= request34["seed"] < 2 ** 31
+assert f"seed={request34['seed']}" in buf34.getvalue(), buf34.getvalue()
+# The temperature reported is the server's own default, not an invention.
+assert "temperature=0.8 (reproduce: chat(prompt, seed=" in buf34.getvalue(), buf34.getvalue()
+assert llm.last_call()["seed"] == request34["seed"]
+assert llm.last_call()["temperature"] == 0.8
+assert llm.last_call()["system_fingerprint"] == "b11706-f74e2fa6a"
+
+# An explicit seed and temperature go through unchanged.
+buf34 = io.StringIO()
+with redirect_stdout(buf34):
+    llm.chat("hi", seed=12345, temperature=0.25)
+assert seen34[-1]["seed"] == 12345 and seen34[-1]["temperature"] == 0.25
+assert "seed=12345 temperature=0.25" in buf34.getvalue(), buf34.getvalue()
+
+# report=False (or EPHEMERAL_LLM_REPORT=0) leaves the output to the reply.
+buf34 = io.StringIO()
+with redirect_stdout(buf34):
+    llm.chat("hi", seed=1, report=False)
+assert buf34.getvalue() == "", buf34.getvalue()
+os.environ[llm.SEED_ENV] = "777"
+buf34 = io.StringIO()
+with redirect_stdout(buf34):
+    llm.chat("hi")
+assert seen34[-1]["seed"] == 777, seen34[-1]
+assert llm.new_seed() == 777
+del os.environ[llm.SEED_ENV]
+os.environ["EPHEMERAL_LLM_REPORT"] = "0"
+buf34 = io.StringIO()
+with redirect_stdout(buf34):
+    llm.chat("hi")
+assert buf34.getvalue() == "", buf34.getvalue()
+del os.environ["EPHEMERAL_LLM_REPORT"]
+
+# A new server build is called out: the seed only reproduces within one build.
+buf34 = io.StringIO()
+with redirect_stdout(buf34):
+    llm.chat("hi", seed=1)
+    _Resp34.system_fingerprint = "other-build-123"
+    llm.chat("hi", seed=1)
+assert "server build changed" in buf34.getvalue(), buf34.getvalue()
+
+# ask_code forwards the seed and still saves the code.
+with tempfile.TemporaryDirectory() as tmp34:
+    buf34 = io.StringIO()
+    with redirect_stdout(buf34):
+        llm.chat = lambda *a, **k: "```python\nprint(6)\n```"
+        path34 = llm.ask_code("write a script", seed=99, directory=tmp34)
+    with open(path34, encoding="utf-8") as fh34:
+        assert fh34.read() == "print(6)\n"
+    assert path34.endswith("generated.py")
+print("PASS: reported seed/temperature make a reply reproducible")
+
+print("\n=== ALL 34 TESTS PASSED ===")

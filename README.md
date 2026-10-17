@@ -267,6 +267,38 @@ The code is also echoed to stdout, fenced in its own language, so the block's ou
 
 > The one thing an import cannot do is fire a script's `if __name__ == "__main__":` guard. `ask_code` asks the model for top-level code for exactly that reason, and if a reply insists on a guard, `save_code` prints the `runpy.run_path("generated.py", run_name="__main__")` call that runs it anyway.
 
+##### Reproducible replies
+
+Qwen the *weights* have no seed; the seed belongs to llama.cpp's sampler. Its OpenAI-compatible endpoint accepts a `seed` but never reports the one it used — with no seed it draws one internally and the reply can never be repeated. So the helper owns it: every `chat()` / `ask_code()` picks a seed (or uses the one you pass), sends it, and prints what it used:
+
+```text
+[ephemeral-llm] seed=1575985648 temperature=0.8 (reproduce: chat(prompt, seed=1575985648, temperature=0.8))
+```
+
+Pass those two back and the reply repeats exactly — same prompt, same seed, same temperature, same image:
+
+```llm
+from ephemeral_llm import ask_code
+
+ask_code("Write a Python script that prints the first 10 primes.",
+         seed=1575985648, temperature=0.8)
+```
+
+* **Temperature is read from the server, not guessed.** llama.cpp does not echo applied sampler settings either, so the default is fetched once from `/props` (0.8 in the shipped image); the printed value is what the server actually used.
+* **`temperature=0` is the boring option.** Greedy decoding always takes the single most likely token, so the seed stops mattering at all. Use it when you want the same answer, not just a repeatable one.
+* **`last_call()`** returns `seed`, `temperature`, `model` and `system_fingerprint` programmatically, so a block can print or checkpoint its own provenance:
+
+  ```llm
+  from ephemeral_llm import chat, last_call
+
+  print(chat("Name one prime number. One word.", max_tokens=16))
+  print(last_call())
+  ```
+
+* **Pin a whole run** with `EPHEMERAL_LLM_SEED=1234` — useful when an artefact should be stable across every block in the document. `EPHEMERAL_LLM_REPORT=0` (or `report=False`) silences the line while the values stay available from `last_call()`.
+
+> A seed reproduces *within one build*: `system_fingerprint` changes when the llama.cpp build or the weights do, and the helper prints a note rather than pretending otherwise. Same image, same seed, same words.
+
 > **Distributed note:** the language is in `LANG_MAP`, so it is automatically part of every node's allowlist and hydrate set — `python scripts/hydrate_images.py --only llm` warms a node (≈ 2.3 GB, of which ~470 MB is the model), and jobs only route to nodes that already advertise the image.
 
 ### Features
