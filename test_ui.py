@@ -26,6 +26,7 @@ import ast
 import inspect
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -486,6 +487,144 @@ def test_ci_clamav_canary_cannot_gate_a_release():
     print("PASS: the ClamAV canary is CI-wired, non-blocking, and cannot silently skip files")
 
 
+# --- MSI: machine-wide install of the distributed beta -------------------
+
+MSI_DIR = ROOT / "packaging" / "msi"
+
+
+def _msi_text(name):
+    return (MSI_DIR / name).read_text(encoding="utf-8")
+
+
+def test_msi_is_machine_wide_and_declarative():
+    """The installer must serve every user, and change nothing it cannot undo."""
+    wxs = _msi_text("Ephemeral.Distributed.Beta.wxs")
+
+    assert 'InstallScope="perMachine"' in wxs, "the MSI must install machine-wide"
+    assert 'InstallPrivileges="elevated"' in wxs, (
+        "machine-wide needs the privileges up front; without them the install "
+        "fails halfway through a write to %ProgramFiles%")
+    assert "ProgramFiles64Folder" in wxs, "the app belongs in %ProgramFiles%"
+    assert "LocalAppDataFolder" not in wxs, (
+        "a per-user install dir is what made this per-user in the first place")
+
+    # One login entry for the whole machine, so the node starts for ANY user.
+    assert "HKEY_CURRENT_USER" not in wxs and 'Root="HKCU"' not in wxs, (
+        "every registry value must be HKLM: HKCU would only cover whoever ran "
+        "the installer")
+    marker = wxs.index('Name="Ephemeral-Distributed-Node"')
+    entry = wxs[marker:marker + 400]
+    assert "--node" in entry, "the machine-wide login entry must start the node"
+    assert "[INSTALLDIR]Ephemeral-Distributed-Beta.exe" in entry, (
+        "the entry must point at the installed exe, not a copy")
+
+    # Declarative only: no custom actions, no service, no scheduled task.
+    # Checked against markup, not prose: the comments above explain what is
+    # deliberately absent and must not be able to fail (or satisfy) this.
+    markup = re.sub(r"<!--.*?-->", "", wxs, flags=re.S)
+    assert "<CustomAction" not in markup, (
+        "custom actions that write the registry or launch processes are the "
+        "shape installer heuristics hunt for")
+    for forbidden in ("ServiceInstall", "ServiceControl", "schtasks", "sc create"):
+        assert forbidden not in markup, f"{forbidden} must not appear in the installer"
+    assert "UpgradeCode=\"00B73DB1-B66B-4A71-9AE7-3C3E9E1C6971\"" in wxs, (
+        "the UpgradeCode must stay stable or upgrades duplicate the product")
+    # CI must actually build it, prove it installs, and ship it with the release.
+    workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
+    assert "packaging/msi/build_msi.sh" in workflow, "CI must build the MSI"
+    assert "msiexec /i dist/Ephemeral-Distributed-Beta.msi /qn" in workflow, (
+        "CI must prove the MSI installs, not just that it links")
+    assert "msiexec /x dist/Ephemeral-Distributed-Beta.msi /qn" in workflow, (
+        "...and that it uninstalls again, or the smoke test leaks an install")
+    assert "--artifact dist/Ephemeral-Distributed-Beta.msi" in workflow, (
+        "the MSI's hash must reach the build manifest consumers verify against")
+    assert "dist/Ephemeral-Distributed-Beta.msi" in workflow, (
+        "the MSI must be among the release's uploaded files")
+    print("PASS: the MSI installs machine-wide, per-machine resources only, declaratively")
+
+
+def test_msi_suppresses_only_the_per_user_shortcut_checks():
+    """Exactly two ICE checks are waived, and they must not silently grow."""
+    script = _msi_text("build_msi.sh")
+    # Comments explain the suppressions; only real command lines count.
+    code = "\n".join(
+        line for line in script.splitlines() if not line.lstrip().startswith("#"))
+
+    suppressed = set()
+    for line in code.splitlines():
+        for flag in line.replace("\\", " ").split():
+            if flag.startswith("-sice:"):
+                suppressed.add(flag.split(":", 1)[1])
+    assert suppressed == {"ICE43", "ICE57"}, (
+        f"suppressions changed: {sorted(suppressed)} - ICE43/ICE57 are the two "
+        "that assume a per-user install; anything else needs its own reason")
+    assert "-sval" not in code, "validation must never be switched off wholesale"
+
+    # The version rules Windows Installer enforces, checked in the build script.
+    assert "major<256" in script and "build<65536" in script, (
+        "Windows Installer rejects out-of-range versions; the script must say so")
+    assert "finalize_harvest.py" in script, "the harvest post-processor must run"
+    print("PASS: only ICE43/ICE57 are waived, with validation otherwise on")
+
+
+def test_msi_harvest_postprocessor_covers_every_directory():
+    """Heat emits no RemoveFolder rows; the post-processor must add them all."""
+    harvest = """<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <DirectoryRef Id="INSTALLDIR">
+      <Directory Id="dirInternal" Name="_internal">
+        <Directory Id="dirEmptyParent" Name="tcl8">
+          <Directory Id="dirChild" Name="8.6" />
+        </Directory>
+      </Directory>
+    </DirectoryRef>
+  </Fragment>
+  <Fragment>
+    <ComponentGroup Id="HarvestedFiles">
+      <Component Id="cmpExe" Directory="INSTALLDIR" Guid="*">
+        <File Id="filExe" KeyPath="yes" Source="$(var.SourceDir)\\app.exe" />
+      </Component>
+      <Component Id="cmpDll" Directory="dirInternal" Guid="*">
+        <File Id="filDll" KeyPath="yes" Source="$(var.SourceDir)\\_internal\\a.dll" />
+      </Component>
+      <Component Id="cmpLeaf" Directory="dirChild" Guid="*">
+        <File Id="filLeaf" KeyPath="yes" Source="$(var.SourceDir)\\_internal\\tcl8\\8.6\\init.tcl" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>
+"""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = pathlib.Path(tmp) / "Harvested.wxs"
+        path.write_text(harvest, encoding="utf-8")
+        script = MSI_DIR / "finalize_harvest.py"
+
+        def run():
+            return subprocess.run(
+                [sys.executable, str(script), str(path)],
+                capture_output=True, text=True,
+            )
+
+        proc = run()
+        assert proc.returncode == 0, proc.stderr
+        out = path.read_text(encoding="utf-8")
+
+        for directory in ("INSTALLDIR", "dirInternal", "dirEmptyParent", "dirChild"):
+            assert f'Id="rmf_{directory}"' in out, f"{directory} would survive uninstall"
+        # A parent that owns no component keeps its entry on the root component
+        # and must name itself, or uninstall would remove the install root twice.
+        orphan = out.split('Id="rmf_dirEmptyParent"')[1].split("/>")[0]
+        assert 'Directory="dirEmptyParent"' in orphan, (
+            "a borrowed RemoveFolder must name its directory explicitly")
+
+        # Idempotent: running twice must not duplicate rows.
+        assert run().returncode == 0
+        again = path.read_text(encoding="utf-8")
+        assert again.count('Id="rmf_dirInternal"') == 1
+    print("PASS: every harvested directory gets a RemoveFolder, idempotently")
+
+
 def main():
     test_node_command_runs_the_app_in_place()
     test_node_command_prefers_the_appimage_path()
@@ -507,6 +646,9 @@ def main():
     test_ci_builds_and_ships_the_beta_bundle()
     test_clamav_canary_is_soft_and_reports_honestly()
     test_ci_clamav_canary_cannot_gate_a_release()
+    test_msi_is_machine_wide_and_declarative()
+    test_msi_suppresses_only_the_per_user_shortcut_checks()
+    test_msi_harvest_postprocessor_covers_every_directory()
     print("\n=== ALL TRAY / NODE TESTS PASSED ===")
 
 

@@ -242,6 +242,32 @@ jobs:
         print("wrote", out, os.path.getsize(out), "bytes")
         PY
 
+    - name: Build machine-wide MSI
+      shell: bash
+      run: |
+        # Windows Installer version fields are numeric and range-limited, so the
+        # date+SHA version the other artifacts carry cannot be used: pass a
+        # date-derived x.y.z (YY.M.D) that increases for the life of this
+        # installer. WiX v3 ships on the runner; build_msi.sh finds it.
+        VERSION="$(date +'%y.%-m.%-d')"
+        echo "MSI product version: $VERSION"
+        MSYS2_ARG_CONV_EXCL='*' bash packaging/msi/build_msi.sh \
+          dist/Ephemeral-Distributed-Beta \
+          dist/Ephemeral-Distributed-Beta.msi "$VERSION"
+
+    - name: Smoke test - install and remove the MSI
+      shell: bash
+      run: |
+        # A machine-wide install writes %ProgramFiles% and the HKLM Run key, so
+        # it needs elevation - the runner has it, and /qn keeps it unattended.
+        # MSYS2_ARG_CONV_EXCL stops Git Bash turning /i into a path.
+        export MSYS2_ARG_CONV_EXCL='*'
+        msiexec /i dist/Ephemeral-Distributed-Beta.msi /qn /l*v msi-install.log
+        ls -la "$PROGRAMFILES/Ephemeral-Distributed-Beta/Ephemeral-Distributed-Beta.exe"
+        msiexec /x dist/Ephemeral-Distributed-Beta.msi /qn /l*v msi-uninstall.log
+        test ! -d "$PROGRAMFILES/Ephemeral-Distributed-Beta"
+        echo "MSI install + uninstall smoke passed"
+
     - name: Generate build manifest
       shell: bash
       run: |
@@ -252,7 +278,8 @@ jobs:
           --output dist/Ephemeral-Distributed-Beta-build-manifest.json \
           --build-version "$VERSION" \
           --build-command 'pyinstaller --noconfirm packaging/ephemeral-distributed-beta.spec' \
-          --artifact dist/Ephemeral-Distributed-Beta-win64.zip
+          --artifact dist/Ephemeral-Distributed-Beta-win64.zip \
+          --artifact dist/Ephemeral-Distributed-Beta.msi
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -260,6 +287,7 @@ jobs:
         name: Ephemeral-Distributed-Beta-Windows-onedir
         path: |
           dist/Ephemeral-Distributed-Beta-win64.zip
+          dist/Ephemeral-Distributed-Beta.msi
           dist/Ephemeral-Distributed-Beta-build-manifest.json
 
   # ── Linux AppImages: local + distributed ──────────────────────
@@ -481,6 +509,7 @@ jobs:
         name: Release ${{ env.TAG }}
         files: |
           dist/Ephemeral-Distributed-Beta-win64.zip
+          dist/Ephemeral-Distributed-Beta.msi
           dist/Ephemeral.exe
           dist/Ephemeral-Distributed.exe
           dist/ephemeral-local-x86_64.AppImage

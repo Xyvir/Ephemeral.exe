@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WiX authoring for the Ephemeral Distributed (beta) MSI.
+
+  The design rules below are deliberate, and test_ui.py guards them:
+
+  * Per-machine, installed for every user. The point of this installer is a
+    machine that serves the cluster, so the app goes in %ProgramFiles% with one
+    Common Start Menu shortcut, and the node it starts is registered under the
+    machine-wide Run key (HKLM) rather than one user's (HKCU). That is why the
+    install raises a UAC prompt: writing %ProgramFiles% and HKLM is exactly what
+    administrator rights are for. It happens once, visibly, with the user's
+    consent — the app itself still never self-elevates and ships no service,
+    scheduled task or SYSTEM component (see NodeAutostart in platform.py, and
+    the tests that keep it that way).
+  * No custom actions. Deferred custom actions that write the registry or
+    launch processes are what installer malware detection looks for, so
+    everything here is a declarative Windows Installer resource: the installer
+    changes nothing it has not declared, and uninstall removes exactly what
+    install created.
+  * The optional "serve this PC" feature writes an HKLM Run value, so the node
+    starts when *any* user logs in — including a professor who is not the
+    account that installed it. Its component keypath is a separate marker
+    value, so a user who turns the node off in the tray does not have Windows
+    Installer repair silently switch it back on.
+  * Staying per-machine also keeps MSI honest: file-keyed components are the
+    supported model, and ICE38/ICE91 (which only apply to user-profile
+    directories) simply do not arise, so validation needs no suppressions.
+  * Application files arrive as one harvested ComponentGroup (see
+    build_msi.sh for the heat invocation), so the payload is a plain file
+    install rather than an archive unpacked by code at install time.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="Ephemeral Distributed (beta)"
+           Language="1033"
+           Version="$(var.ProductVersion)"
+           Manufacturer="Ephemeral"
+           UpgradeCode="00B73DB1-B66B-4A71-9AE7-3C3E9E1C6971">
+
+    <!-- Per-machine is the default scope; stating it keeps the intent explicit
+         and testable. InstallPrivileges="elevated" is the matching half: the
+         installer asks for the rights it needs up front instead of failing
+         halfway through a write to %ProgramFiles%.
+
+         Do not "simplify" this to perUser + ALLUSERS/MSIINSTALLPERUSER: that
+         combination only supports one user's copy under %LOCALAPPDATA% and
+         Windows Installer ignores the property on a no-elevation package. -->
+    <Package Id="*"
+             InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine"
+             InstallPrivileges="elevated"
+             Platform="x64"
+             Description="Ephemeral distributed tray client (beta)"
+             Comments="Sandboxed code execution: one-shot containers, no daemon." />
+
+    <!-- ProductCode is new per build (Id="*"); the stable UpgradeCode plus
+         AllowSameVersionUpgrades lets a professor re-run the installer over an
+         older build without an "already installed" error. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of Ephemeral Distributed (beta) is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <UIRef Id="WixUI_FeatureTree" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <!-- %ProgramFiles%: one copy for the whole machine, readable by every
+           user, writable only by an administrator. The app keeps per-user
+           state in %LOCALAPPDATA% at runtime, so nothing needs write access
+           here. -->
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="Ephemeral-Distributed-Beta">
+          <Component Id="NodeAtLogin" Guid="D891E1CD-BA75-4995-AB2C-9C7262BC3EC2">
+            <!-- Keypath is a marker value nobody toggles, not the Run value. -->
+            <RegistryValue Root="HKLM"
+                           Key="Software\Ephemeral\Ephemeral-Distributed-Beta"
+                           Name="NodeAtLogin" Type="integer" Value="1"
+                           KeyPath="yes" />
+            <!-- Machine-wide login entry: every user login on this PC starts a
+                 node. Visible as-is in regedit at
+                 HKLM\Software\Microsoft\Windows\CurrentVersion\Run. -->
+            <RegistryValue Root="HKLM"
+                           Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                           Name="Ephemeral-Distributed-Node" Type="string"
+                           Value="&quot;[INSTALLDIR]Ephemeral-Distributed-Beta.exe&quot; --node"
+                           KeyPath="no" />
+          </Component>
+
+          <!-- Shortcut component lives in %ProgramFiles% and keys on HKLM;
+               only the .lnk itself points into the Start Menu, which for this
+               ALLUSERS=1 package is the all-users menu. See build_msi.sh for
+               the two ICE checks this deliberately overrides. -->
+          <Component Id="StartMenuShortcut" Guid="68B8D107-4566-4643-8413-292D96A175E8">
+            <Shortcut Id="AppShortcut"
+                      Directory="ProgramMenuFolder"
+                      Name="Ephemeral Distributed (beta)"
+                      Description="Run clipboard codeblocks in sandboxed containers"
+                      Target="[INSTALLDIR]Ephemeral-Distributed-Beta.exe"
+                      WorkingDirectory="INSTALLDIR" />
+            <RegistryValue Root="HKLM"
+                           Key="Software\Ephemeral\Ephemeral-Distributed-Beta"
+                           Name="StartMenuShortcut" Type="integer" Value="1"
+                           KeyPath="yes" />
+          </Component>
+
+        </Directory>
+      </Directory>
+      <!-- ProgramMenuFolder, not CommonProgramsFolder: on an ALLUSERS=1
+           package Windows Installer resolves ProgramMenuFolder to the common
+           (all users) Start Menu, while CommonProgramsFolder resolved to C:\
+           in the install log and dropped the shortcut at the drive root.
+
+           The shortcut points here and MSI writes it into the all-users
+           menu, but no component is located here: a component inside a Start
+           Menu folder would have to key on HKCU, which a machine-wide package
+           must not do. -->
+      <Directory Id="ProgramMenuFolder" />
+    </Directory>
+
+    <Feature Id="ApplicationFiles" Title="Ephemeral Distributed (beta)"
+             Level="1" Display="1"
+             Description="The tray client: clipboard runs, the Distributed menu, and the pre-hydration console.">
+      <ComponentGroupRef Id="HarvestedFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+    <!-- Default-on: the installer exists so this machine serves the cluster,
+         but Absent="allow" makes it a real checkbox in the feature tree, and
+         `msiexec ADDLOCAL=ApplicationFiles` skips it for a silent install that
+         should not serve. -->
+    <Feature Id="NodeAtLogin" Title="Serve this machine to students"
+             Level="1" Display="2"
+             Absent="allow"
+             Description="Start the compute node whenever anyone logs in, so a class can run codeblocks through this machine. Machine-wide, with no Windows service and no SYSTEM task. Remove it later with REMOVE=NodeAtLogin.">
+      <ComponentRef Id="NodeAtLogin" />
+    </Feature>
+  </Product>
+</Wix>

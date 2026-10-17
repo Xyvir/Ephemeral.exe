@@ -746,13 +746,14 @@ The desktop tray clients are cross-platform: the same code builds a Windows EXE 
 
 ### Release artifacts
 
-The CI workflow (`/.github/workflows/build.yml`) builds and attaches **eight artifacts** to each release (triggered via the `workflow_dispatch` → *Create a new release* checkbox, or a push to `main`):
+The CI workflow (`/.github/workflows/build.yml`) builds and attaches **nine artifacts** to each release (triggered via the `workflow_dispatch` → *Create a new release* checkbox, or a push to `main`):
 
 | Artifact | Tier | Notes |
 |---|---|---|
 | `Ephemeral.exe` | local (Windows) | one-file EXE |
 | `Ephemeral-Distributed.exe` | distributed (Windows) | one-file EXE, bundles `iroh` |
 | `Ephemeral-Distributed-Beta-win64.zip` | distributed (Windows, beta) | onedir **folder**, no UPX, Win32 version resource |
+| `Ephemeral-Distributed-Beta.msi` | distributed (Windows, beta) | machine-wide MSI installer for the beta bundle |
 | `ephemeral-local-x86_64.AppImage` | local (Linux) | portable tray app |
 | `ephemeral-distributed-x86_64.AppImage` | distributed (Linux) | portable tray app, bundles `iroh` |
 | `ephemeral-wasm-library.tar.gz` | web (browser) | SPA + wasm glue + crate source to rebuild |
@@ -761,7 +762,24 @@ The CI workflow (`/.github/workflows/build.yml`) builds and attaches **eight art
 
 Run an AppImage like any executable: `chmod +x ephemeral-distributed-x86_64.AppImage && ./ephemeral-distributed-x86_64.AppImage` (configure the cluster via `EPHEMERAL_SEEDS`/`EPHEMERAL_RELAY`/`EPHEMERAL_SECRET`/`EPHEMERAL_ALLOW_NETWORK` environment variables, as with the Windows build). The AppImage needs a desktop with a StatusNotifier/AppIndicator host (most GNOME/KDE setups) or an X11 session (pystray's Xorg backend); on hosts without FUSE, run it with `APPIMAGE_EXTRACT_AND_RUN=1`.
 
+**Installing it like an application (`Ephemeral-Distributed-Beta.msi`).** Double-click the MSI and approve the one UAC prompt: it installs the onedir bundle to `%ProgramFiles%\Ephemeral-Distributed-Beta`, adds an all-users Start Menu entry, and registers in Apps & Features. It installs **machine-wide, not per user** — every account on the PC gets the app, and the optional "Serve this machine to students" feature (on by default) writes a machine-wide `Run` value (`HKLM\...\CurrentVersion\Run`), so the node starts when **any** user logs in, not only the account that ran the installer. Unattended forms: `msiexec /i Ephemeral-Distributed-Beta.msi /qn` (needs an elevated shell or deployment tool), `... ADDLOCAL=ApplicationFiles` to skip the node, `... REMOVE=NodeAtLogin` to drop it later, and `msiexec /x ... /qn` to remove everything.
+
+**What it is not:** a boot-time service. The node starts at login, so it is absent between power-on and the first logon. That is a deliberate limit of the platform rather than of the installer: Podman on Windows is a per-user WSL2 machine, WSL distributions are per user, and WSL cannot be launched from session 0 — so a service starting before anyone logs in would accept jobs and be unable to run a single container. For genuinely pre-login always-on, use the Linux gateway (`install_self_host.sh`) below. The MSI also contains no custom actions, no service, no scheduled task and no `SYSTEM` component: everything it changes is declared in the Windows Installer tables, and uninstall removes all of it.
+
 **Why a beta bundle exists.** Both stable Windows builds are PyInstaller `--onefile` self-extractors, and that packaging trait (plus UPX) is the most common cause of antivirus false positives against Python apps — including this one, which is why the tray's first "install as a service" option got flagged. `Ephemeral-Distributed-Beta-win64.zip` is the same distributed app built as an **onedir folder** with UPX disabled and a Win32 version resource (`packaging/ephemeral-distributed-beta.spec`), smoke-tested in CI. Unzip it and run `Ephemeral-Distributed-Beta.exe` from the folder — keep the `_internal` directory beside it. Use it on machines where the one-file build trips Defender. It is not a code-signed build: if it is still detected, submit the exact file to Microsoft with the detection name rather than recommending an antivirus exclusion.
+
+**Verifying a download — these builds are not code-signed.** Each release attaches a `*-build-manifest.json` that records the SHA-256 of every artifact the workflow produced (the MSI included). Check an artifact against it before running it:
+
+```powershell
+Get-FileHash .\Ephemeral-Distributed-Beta.msi -Algorithm SHA256
+certutil -hashfile Ephemeral-Distributed-Beta.msi SHA256   # same thing, no PowerShell
+```
+
+```bash
+sha256sum Ephemeral-Distributed-Beta.msi
+```
+
+The printed value must equal the `sha256` for that file in `Ephemeral-Distributed-Beta-build-manifest.json`. Be precise about what that proves: a match means the file is byte-for-byte what CI built, which catches a truncated download or a swapped file. It does **not** prove who built it — nothing here is signed, so anyone able to replace the released artifact could replace the manifest alongside it. If publisher identity matters for your deployment, obtain the hash through a separate channel, and treat code signing (below) as the real fix. If Defender flags an artifact, submit that exact file to Microsoft with the detection name rather than recommending an antivirus exclusion.
 
 CI also runs a **best-effort ClamAV canary** over the built Windows executables (`scripts/scan_artifacts.sh`, job `scan-artifacts`). It is a smoke signal, not a gate: it reports what a single engine sees (clean / detection / did-not-run) into the job summary, refuses to report "not scanned" as "clean", scans the ~28 MB one-file builds that clamscan's 25 MB default would silently skip, and always exits 0 — an antivirus opinion never blocks a release.
 

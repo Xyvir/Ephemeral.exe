@@ -80,6 +80,7 @@ Do NOT introduce a third surface, and don't toast error output — route it thro
 GitHub Actions (`.github/workflows/build.yml`):
 1. `test` job — runs `test_core.py`, `test_space.py`, `test_api.py`, `test_net.py`, `test_self_host.py` and `test_ui.py` on ubuntu-latest (Python 3.10 + 3.12)
 2. `build-exe` job — builds Windows EXE via PyInstaller on windows-latest (plus `build-exe-distributed`, `build-exe-distributed-beta`, `build-linux-appimage`)
+   - `build-exe-distributed-beta` also wraps the onedir bundle in a **machine-wide MSI** (`packaging/msi/`: WiX v3, preinstalled on the runner) and installs/uninstalls it silently as a smoke test. The MSI installs to `%ProgramFiles%`, adds an all-users Start Menu shortcut, and writes a machine-wide `Run` entry so the node starts at any user's login. It contains **no custom actions, no service, no scheduled task and no `SYSTEM` component** — only declarative Windows Installer tables. A pre-login *service* is deliberately not offered: Podman on Windows is a per-user WSL2 machine and WSL cannot run from session 0, so such a service could not execute jobs. `test_ui.py` guards the WXS invariants (`packaging/msi/Ephemeral.Distributed.Beta.wxs`).
 3. `scan-artifacts` job — best-effort ClamAV canary over the Windows executables (`scripts/scan_artifacts.sh`). Warns only: it must never block a release, and it is deliberately not in the `release` job's `needs`
 4. `release` job — creates GitHub Release (manual dispatch)
 
