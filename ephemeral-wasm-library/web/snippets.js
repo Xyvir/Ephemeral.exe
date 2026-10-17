@@ -253,6 +253,31 @@ export const LANG_SNIPPETS = {
       'print("chart saved to /output/chart.png")',
     ].join("\n")
   ),
+  // SQL ships as a pair: a JSON seed that becomes the `students` table, then
+  // the query. Clicking `sql` in the (i) popover appends both, so the demo is
+  // runnable without the user having to invent a dataset first.
+  sql: [
+    fence(
+      "students.json",
+      [
+        "[",
+        '  {"id": 1, "name": "Ada",   "major": "CS",   "gpa": 3.9},',
+        '  {"id": 2, "name": "Grace", "major": "Math", "gpa": 3.7},',
+        '  {"id": 3, "name": "Linus", "major": "CS",   "gpa": 3.2}',
+        "]",
+      ].join("\n")
+    ),
+    fence(
+      "sql",
+      [
+        "-- students.json is already a table; query it directly",
+        "SELECT major, round(avg(gpa), 2) AS avg_gpa, count(*) AS students",
+        "FROM students",
+        "GROUP BY major",
+        "ORDER BY avg_gpa DESC;",
+      ].join("\n")
+    ),
+  ].join("\n\n"),
   tiddlywiki: fence(
     "tiddlywiki",
     [

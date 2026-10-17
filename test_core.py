@@ -184,6 +184,11 @@ assert len(imgs) == len(set(imgs)), "mapped_images must dedupe (gcc backs c/cpp/
 assert "docker.io/tymills620/ephemeral-python-uv:latest" in imgs
 assert "docker.io/library/node:18-alpine" in imgs
 assert "docker.io/library/gcc:latest" in imgs
+# SQL: the image must have a shell (executor appends `sh`) and the aliases
+# must point at the real entry, or ```sql/sqlite3 silently resolves to nothing.
+assert "docker.io/keinos/sqlite3:latest" in imgs
+assert LANG_MAP["sqlite"] == "sql" and LANG_MAP["sqlite3"] == "sql"
+assert LANG_MAP["sql"]["cmd"][0] == "sh"
 
 from ephemeral_net.sandbox import default_image_allowlist
 

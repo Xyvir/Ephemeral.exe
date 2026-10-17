@@ -60,6 +60,39 @@ LANG_MAP = {
     'r':       {'image': 'docker.io/library/r-base:latest',           'cmd': ['R', '--vanilla', '--slave', '-f', '/dev/stdin']},
     'julia':   {'image': 'docker.io/library/julia:alpine',            'cmd': ['julia']},
 
+    # --- Databases ---
+    # SQLite: a ~10 MB image with a shell (the official duckdb CLI image ships
+    # none, so it cannot host the wrapper that stages seed files). A JSON seed
+    # block is materialised as a table named after its file — `students.json`
+    # becomes `students` — so a lesson can ship its dummy data in the same
+    # document. `readfile()` is DIRECTONLY in SQLite, so seeds must be real
+    # tables, not views. Every sql block in one run shares /tmp/ephemeral.sqlite,
+    # so block 2 sees block 1's CREATE TABLE. -box/-header make the CLI print a
+    # readable table instead of pipe-delimited rows, and -bail turns a syntax
+    # error into a non-zero exit instead of silently continuing.
+    'sql': {
+        'image': 'docker.io/keinos/sqlite3:latest',
+        'cmd': ['sh', '-c', r"""
+DB=/tmp/ephemeral.sqlite
+if [ ! -f "$DB" ]; then
+  for f in /tmp/*.json; do
+    [ -f "$f" ] || continue
+    name=$(basename "$f" .json)
+    doc="CASE WHEN json_type(readfile('$f'))='object' THEN '[' || readfile('$f') || ']' ELSE readfile('$f') END"
+    cols=$(sqlite3 :memory: <<SQL
+SELECT group_concat('json_extract(value, ''$.' || replace(key, '"', '') || ''') AS "' || replace(key, '"', '') || '"') FROM json_each($doc, '\$[0]');
+SQL
+)
+    [ -n "$cols" ] || continue
+    sqlite3 "$DB" <<SQL
+CREATE TABLE "$name" AS SELECT $cols FROM json_each($doc, '\$');
+SQL
+  done
+fi
+exec sqlite3 -bail -box -header "$DB"
+""".strip()],
+    },
+
     # --- Systems & Compiled (Compile-and-Run Chains) ---
     'c':       {'image': 'docker.io/library/gcc:latest', 'cmd': ['sh', '-c', 'gcc -x c - -o /tmp/run && /tmp/run']},
     'cpp':     {'image': 'docker.io/library/gcc:latest', 'cmd': ['sh', '-c', 'g++ -x c++ - -o /tmp/run && /tmp/run']},
@@ -141,6 +174,7 @@ LANG_MAP = {
     'md': 'pandoc', 'markdown': 'pandoc',
     'htm': 'html', 'svg': 'html',
     'runner': 'gh-runner', 'ubuntu-latest': 'gh-runner',
+    'sqlite': 'sql', 'sqlite3': 'sql',
     'lint-action': 'actionlint'
 }
 

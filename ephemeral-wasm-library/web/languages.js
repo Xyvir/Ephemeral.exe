@@ -82,6 +82,9 @@ export const SUPPORTED_LANGUAGES = new Set([
   "sbcl",
   "science",
   "sh",
+  "sql",
+  "sqlite",
+  "sqlite3",
   "svg",
   "swipl",
   "tex",
@@ -135,6 +138,7 @@ export const CANONICAL_LANGUAGES = [
   "ruby",
   "rust",
   "science",
+  "sql",
   "tiddlywiki",
   "verilog"
 ];
@@ -233,6 +237,10 @@ export const ALIAS_MAP = {
     "runner",
     "ubuntu-latest"
   ],
+  "sql": [
+    "sqlite",
+    "sqlite3"
+  ],
   "actionlint": [
     "lint-action"
   ]
@@ -324,6 +332,12 @@ export const IMAGE_LANGUAGES = {
   ],
   "docker.io/hdlc/iverilog:latest": [
     "verilog"
+  ],
+  "docker.io/keinos/sqlite3": [
+    "sql"
+  ],
+  "docker.io/keinos/sqlite3:latest": [
+    "sql"
   ],
   "docker.io/library/alpine": [
     "bash"

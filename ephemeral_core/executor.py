@@ -617,6 +617,8 @@ def _lang_title(lang: str) -> str:
     first = lang.split()[0]
     if first.lower() == "bf":
         return "BF"  # brainfuck is shown as 'bf' in the PWA (kid-friendly)
+    if first.lower() == "sql":
+        return "SQL"  # acronym, not a title-cased word
     return first.capitalize()
 
 

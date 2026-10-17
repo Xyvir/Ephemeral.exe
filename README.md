@@ -207,7 +207,9 @@ MCP is deliberately absent from the public bastion and public distributed mode. 
 
 05ab1e, Bash, Brainfuck, C, C++, CJam, Clojure, Common Lisp, Crystal, Elixir, Fortran, FreeBASIC,
 Go, GolfScript, Haskell, Java, Julia, Lolcode, Lua, Nim, Node.js, OCaml, Octave, Perl, PHP, Piet,
-PowerShell, Prolog, Python, R, Ruby, Rust, Science Python, Verilog.
+PowerShell, Prolog, Python, R, Ruby, Rust, Science Python, SQLite, Verilog.
+
+> **SQLite = SQL for teaching** — `sql`, `sqlite`, and `sqlite3` blocks run in a ~10 MB container. Seed a lesson's dummy data as JSON blocks in the same document and each file becomes a queryable table named after it (`students.json` → `students`), so a student can start with `SELECT * FROM students;` on the first line. Blocks that run together share one database (no `chain` flag — chaining starts a fresh container per run), so `CREATE TABLE` in the first block is visible in the second. JSON seeds must be a top-level array of objects (or a single object).
 
 > **Octave = MATLAB-compatible** for the intro tier — scripts, functions, and plots run as-is; licensed toolboxes and Simulink still need real MATLAB (usually on lab machines anyway). Define your own helper functions as a seeded `.m` block (see [Seed Files](#seed-files--binary-data)). Science Python resolves numpy/scipy/matplotlib on demand through the lighter default image, so you rarely need the full Anaconda pull.
 
@@ -440,6 +442,31 @@ Hello from seed file!
 Image exists: True
 ```
 ````
+
+**Example (JSON seeds as SQL tables):** A `.json` seed becomes a table named after the file whenever the document also has an `sql` block — no import step, no schema to declare:
+````text
+```students.json
+[
+  {"id": 1, "name": "Ada",   "major": "CS",   "gpa": 3.9},
+  {"id": 2, "name": "Grace", "major": "Math", "gpa": 3.7}
+]
+```
+
+```courses.json
+[
+  {"student_id": 1, "course": "DB 101", "grade": "A"},
+  {"student_id": 2, "course": "DB 101", "grade": "B+"}
+]
+```
+
+```sql
+CREATE TABLE honors AS SELECT id, name, gpa FROM students WHERE gpa >= 3.5;
+SELECT s.name, c.course, c.grade
+FROM honors s JOIN courses c ON s.id = c.student_id;
+```
+````
+
+The CLI runs with `.headers`/box output so results read as tables, and a syntax error fails the block with a non-zero exit instead of continuing silently. Seeds are built once per run, so a later block can freely `INSERT`, `UPDATE`, or `DROP` and the change sticks.
 
 #### No Local File Mounting
 
