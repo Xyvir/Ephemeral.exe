@@ -196,9 +196,9 @@ textarea { min-height: 150px; resize: vertical; }
 .lang-status[hidden] { display: none; }
 
 /* Per-block run status lives INSIDE the language pills: grey + spinner while
-   queued/running, green check on success, yellow triangle on warnings (clean
-   exit with stderr), red x on failure — see the .lang-chip.running/done/
-   warn/err rules below.
+   running, "..." while a chained block waits for the one above it, green check
+   on success, yellow triangle on warnings (clean exit with stderr), red x on
+   failure - see the .lang-chip.waiting/running/done/warn/err rules below.
 */
 .lang-chip {
   font: 12px ui-monospace, Consolas, monospace;
@@ -212,6 +212,23 @@ textarea { min-height: 150px; resize: vertical; }
 .lang-chip.invalid { border-color: #8a5a1e; color: #ffb86b; }
 .lang-chip.file { border-color: #444; color: var(--muted); }
 .lang-chip.artifact { border-color: #1e4a6e; color: #6db3ff; }
+
+/* Pills that belong to one fence (the language declaration plus the
+   artifact pills it writes) form a group: their shared edge is squared
+   off and the 1px borders overlap, so the row reads as one block's
+   declaration + outputs rather than as unrelated controls. A lone pill
+   keeps its rounded shape; a middle pill in a three-pill group ends up
+   rectangular, sharing both of its edges. */
+.pill-group { display: inline-flex; }
+.pill-group > .lang-chip { border-radius: 0; position: relative; }
+.pill-group > .lang-chip + .lang-chip { margin-left: -1px; }
+.pill-group > .lang-chip:first-child { border-radius: 10px 0 0 10px; }
+.pill-group > .lang-chip:last-child { border-radius: 0 10px 10px 0; }
+.pill-group > .lang-chip:only-child { border-radius: 10px; }
+/* The overlapped border belongs to the pill under the pointer: keep it
+   on top, or the neighbour paints its own border over the highlight. */
+.pill-group > .lang-chip:hover,
+.pill-group > .lang-chip:focus-visible { z-index: 1; }
 
 /* Pills are affordances: a supported language pill re-runs just its block,
    and a ready artifact pill downloads that one file — both highlight their
@@ -274,6 +291,12 @@ textarea { min-height: 150px; resize: vertical; }
   animation: chip-spin 0.8s linear infinite;
 }
 @keyframes chip-spin { to { transform: rotate(360deg); } }
+
+/* A chained run queues blocks behind the one in flight. The "..." pill says
+   "waiting for the block above me" instead of looking idle or already busy. */
+.lang-chip.waiting { border-color: #3a3a3a; color: var(--muted); background: #1e1e1e; }
+.lang-chip.waiting .chip-run { animation: chip-wait 1.4s ease-in-out infinite; }
+@keyframes chip-wait { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
 
 /* Disclaimer directly under the Run buttons. */
 .run-note {

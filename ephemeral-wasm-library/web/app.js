@@ -682,6 +682,9 @@ function updateLangStatus() {
   const el = $("langStatus");
   el.textContent = "";
   const fences = fenceInfo(editor.getValue());
+  // A chained document cannot re-run one block in isolation (it would miss the
+  // files handed down from above), so its pills replay from the root instead.
+  const chainedDoc = chainRequested(fences);
   for (let i = 0; i < fences.length; i++) {
     const f = fences[i];
     // Language pill: blue for a supported language, orange for an unknown
@@ -745,7 +748,9 @@ function updateLangStatus() {
           : "valid");
     chip.title = [
       ok
-        ? "supported — click to run just this block"
+        ? chainedDoc
+          ? "supported — chained: click to replay from the root through this block"
+          : "supported — click to run just this block"
         : isFile
           ? foldable
             ? folded
@@ -794,22 +799,28 @@ function updateLangStatus() {
     chip.appendChild(runInd);
     if (foldable && !ok) chip.appendChild(document.createTextNode(folded ? "▸ " : "▾ "));
     chip.appendChild(document.createTextNode([f.lang, ...labels].join(" ")));
-    el.appendChild(chip);
-    // Artifact chip: the block references /output, so the run is expected
-    // to return a downloadable artifact (single images preview inline).
+    // A fence's pills share a straight edge (see .pill-group): the declaration
+    // and the artifacts it writes read as one group, not as loose controls.
+    const group = document.createElement("span");
+    group.className = "pill-group";
+    group.appendChild(chip);
+    // Artifact pills: the block references /output, so the run is expected to
+    // return a downloadable artifact (single images preview inline). One pill
+    // per declared name, so two outputs give three edge-sharing pills.
     const artifactNames = artifactNamesFromScript(f.body);
     if (/(?<![\w/])\/output(?=[/'"\s]|$)/.test(f.body || "")) {
-      const achip = document.createElement("span");
-      achip.className = "lang-chip artifact";
-      achip.textContent = artifactNames.length
-        ? "📦 " + artifactNames.join(", ")
-        : "📦 artifact";
-      achip.title = artifactNames.length
-        ? `writes ${artifactNames.join(", ")} to /output — returned as a downloadable artifact after the run (images preview inline)`
-        : "writes to /output — returned as a downloadable artifact after the run (images preview inline)";
-      linkPillToBlock(achip, i);
-      el.appendChild(achip);
+      for (const name of artifactNames.length ? artifactNames : [null]) {
+        const achip = document.createElement("span");
+        achip.className = "lang-chip artifact";
+        achip.textContent = name ? "📦 " + name : "📦 artifact";
+        achip.title = name
+          ? `writes ${name} to /output — returned as a downloadable artifact after the run (images preview inline)`
+          : "writes to /output — returned as a downloadable artifact after the run (images preview inline)";
+        linkPillToBlock(achip, i);
+        group.appendChild(achip);
+      }
     }
+    el.appendChild(group);
   }
   // The (i) help pill is always the trailing chip — even with no fences,
   // so it's a static affordance, not tied to whatever the doc declares.
@@ -1949,6 +1960,36 @@ function chainedSeeds(artifacts) {
     .join("\n");
 }
 
+// One sub-job for a single fence: the block's mini-document (seeds above it
+// included) submitted to its target node. Shared by a full run's fan-out, a
+// lone pill re-run and a chained replay so every path submits identically.
+function blockSubmission(fences, idx, state, target) {
+  const doc = buildBlockDocument(fences, idx);
+  return {
+    state,
+    idx,
+    node: target,
+    doc,
+    // Chained runs submit the block's document plus whatever the previous
+    // run produced, so `payload` is authoritative when one is passed.
+    submit: (payload = doc) => target.node_id && target.relay
+      ? client.submit_job_to_node(target.node_id, target.relay, b64encode(payload), 300, makeBlockEventHandler(idx))
+      : client.submit_job(target.ticket, b64encode(payload), 300, makeBlockEventHandler(idx)),
+  };
+}
+
+// Clear the per-run results of one block before it (re)runs.
+function resetBlockRun(state) {
+  state.warn = false;
+  state.logs = [];
+  state.stdout = "";
+  state.stderr = "";
+  state.exitCode = null;
+  state.errors = [];
+  state.artifacts = [];
+  state.frames = 0;
+}
+
 // Submit chained sub-jobs one at a time, in document order: each run starts
 // only after the previous one has finished, and inherits its /output files.
 // A run that failed (or never started) carries nothing forward, matching the
@@ -2046,6 +2087,9 @@ function initBlockStates(fences) {
       // fence is unchanged (see rerunBlock).
       key: f.header + "\u0000" + f.body,
       exec,
+      // Chained runs queue every block behind the one in flight; the pill
+      // shows "..." while a block waits for the one above it.
+      chained: false,
       warn: false,
       status: exec ? "queued" : "skip",
       nodeId: null,
@@ -2065,7 +2109,12 @@ function initBlockStates(fences) {
 // while in flight, green check on success, yellow triangle when the block
 // exited 0 but wrote warnings (stderr), red x on failure or no match.
 function blockStatusVisual(state) {
-  if (state.status === "queued" || state.status === "running") {
+  if (state.status === "queued") {
+    // A queued chain block is not working yet: it is waiting for the block
+    // above it, so it gets a "..." instead of the running spinner.
+    return { cls: "waiting", icon: "..." };
+  }
+  if (state.status === "running") {
     return { cls: "running", icon: "" }; // spinner drawn via CSS
   }
   if (state.status === "done") {
@@ -2081,7 +2130,9 @@ function blockStatusVisual(state) {
 
 // Tooltip text for a block's live state.
 function statusLabel(state) {
-  if (state.status === "queued") return "queued";
+  if (state.status === "queued") {
+    return state.chained ? "waiting for the previous block to finish" : "queued";
+  }
   if (state.status === "running") {
     const node =
       state.nodeId == null ? "—" :
@@ -2128,7 +2179,7 @@ function applyBlockStatus(state) {
   const chip = document.querySelector(`#langStatus .lang-chip.lang-name[data-idx="${state.idx}"]`);
   if (!chip) return;
   const { cls, icon } = blockStatusVisual(state);
-  chip.classList.remove("running", "done", "warn", "err");
+  chip.classList.remove("waiting", "running", "done", "warn", "err");
   if (cls) chip.classList.add(cls);
   const ind = chip.querySelector(".chip-run");
   if (ind) ind.textContent = icon;
@@ -2266,6 +2317,10 @@ async function run() {
   // exception: the request then runs in-order and each run hands its /output
   // to the next one (see chainRequested/submitChained).
   const fences = fenceInfo(markdown);
+  // `chain` anywhere opts the whole request out of fan-out: blocks run in
+  // document order, one after the other, so the second block can use what the
+  // first one wrote (this is what makes generated-code chaining work).
+  const chained = chainRequested(fences);
   // Executable blocks with their fence index — blockStates is keyed by fence
   // index, so seed/file blocks that precede a run must not shift positions.
   const codeBlocks = [];
@@ -2317,33 +2372,22 @@ async function run() {
       applyBlockStatus(state);
       continue;
     }
-    const doc = buildBlockDocument(fences, idx);
-    const sub = {
-      state,
-      idx,
-      node: target,
-      doc,
-      // Chained runs submit the block's document plus whatever the previous
-      // run produced, so `payload` is authoritative when one is passed.
-      submit: (payload = doc) => target.node_id && target.relay
-        ? client.submit_job_to_node(target.node_id, target.relay, b64encode(payload), 300, makeBlockEventHandler(idx))
-        : client.submit_job(target.ticket, b64encode(payload), 300, makeBlockEventHandler(idx)),
-    };
     state.status = "queued";
+    state.chained = chained;
     state.nodeId = target.node_id || (manual ? "(manual)" : null);
-    submissions.push(sub);
+    submissions.push(blockSubmission(fences, idx, state, target));
   }
 
-  // `chain` anywhere opts the whole request out of fan-out: blocks run in
-  // document order, one after the other, so the second block can use what the
-  // first one wrote (this is what makes generated-code chaining work).
-  const chained = chainRequested(fences);
   if (!chained) {
     // Unchained: they all start now, so queue -> running up front.
     for (const sub of submissions) {
       sub.state.status = "running";
       applyBlockStatus(sub.state);
     }
+  } else {
+    // Chained: only the first block is live; the rest show "..." until
+    // submitChained flips each one to running in turn.
+    for (const sub of submissions) applyBlockStatus(sub.state);
   }
 
   // Transport-level failures (relay drop, node unreachable) surface as promise
@@ -2465,11 +2509,34 @@ async function rerunBlock(idx) {
   if (!f || !SUPPORTED_LANGUAGES.has(f.lang) || f.lang.includes(".")) return;
 
   const manual = $("ticket").value.trim();
-  const target = pickBlockTarget(f.lang) ||
-    (manual ? { node_id: null, relay: null, ticket: manual } : null);
-  if (!target) {
-    setStatus("no compute nodes discovered — paste a seed ticket", "err");
-    return;
+  // `chain` anywhere makes every block depend on the ones above it, so a
+  // dependent pill can never run on its own (it would fail for want of the
+  // files chained into it). Clicking one replays the chain from its root (the
+  // first executable block) through the clicked block.
+  const chained = chainRequested(fences);
+  const runIdxs = [];
+  if (chained) {
+    for (let i = 0; i <= idx; i++) {
+      const b = fences[i];
+      if (SUPPORTED_LANGUAGES.has(b.lang) && !b.lang.includes(".")) runIdxs.push(i);
+    }
+  } else {
+    runIdxs.push(idx);
+  }
+
+  // Route each block the same way a full run does: warm-image peer, then the
+  // best global node, then a pasted ticket. A chain stops at the first block
+  // that cannot be placed, since everything after it depends on that run.
+  const targets = new Map();
+  for (const i of runIdxs) {
+    const lang = fences[i].lang;
+    const target = pickBlockTarget(lang) ||
+      (manual ? { node_id: null, relay: null, ticket: manual } : null);
+    if (!target) {
+      setStatus(`no compute nodes discovered for ${lang} - paste a seed ticket`, "err");
+      return;
+    }
+    targets.set(i, target);
   }
   localStorage.setItem("ephemeral.ticket", manual);
   localStorage.setItem("ephemeral.relay", $("relay").value.trim());
@@ -2493,7 +2560,7 @@ async function rerunBlock(idx) {
     state.errors = old.errors;
     state.artifacts = old.artifacts;
   }
-  // Blocks that never ran stay idle: this re-run is scoped to one fence.
+  // Blocks that never ran stay idle: this re-run is scoped to the chain.
   for (const state of blockStates.values()) {
     if (state.exec && state.status === "queued") state.status = "idle";
   }
@@ -2503,57 +2570,74 @@ async function rerunBlock(idx) {
     if (state.exec && state.status !== "idle") applyBlockStatus(state);
   }
 
-  const state = blockStates.get(idx);
-  state.status = "running";
-  state.nodeId = target.node_id || (manual ? "(manual)" : null);
-  state.warn = false;
-  state.logs = [];
-  state.stdout = "";
-  state.stderr = "";
-  state.exitCode = null;
-  state.errors = [];
-  state.artifacts = [];
-  state.frames = 0;
-  applyBlockStatus(state);
+  // Queue exactly what this click runs: the clicked block alone, or a chained
+  // replay from the root. Only the first is live; the rest wait their turn
+  // and say so with a "..." pill (submitChained flips them in order).
+  for (const i of runIdxs) {
+    const state = blockStates.get(i);
+    resetBlockRun(state);
+    state.chained = chained;
+    state.status = "queued";
+    state.nodeId = targets.get(i).node_id || (manual ? "(manual)" : null);
+    // A lone re-run flips straight to running in submitChained; the waiting
+    // "..." is only meaningful for the blocks queued behind a chain.
+    if (chained) applyBlockStatus(state);
+  }
+  if (chained) {
+    // Replaying the chain replaced the inputs every later block ran on, so
+    // their results are stale: drop them (back to "not run") rather than
+    // leaving output that no longer matches the document.
+    for (let i = idx + 1; i < fences.length; i++) {
+      const state = blockStates.get(i);
+      if (!state.exec) continue;
+      resetBlockRun(state);
+      state.status = "idle";
+      applyBlockStatus(state);
+    }
+  }
 
-  const doc = buildBlockDocument(fences, idx);
-  const sub = {
-    state,
-    idx,
-    node: target,
-    submit: target.node_id && target.relay
-      ? () => client.submit_job_to_node(target.node_id, target.relay, b64encode(doc), 300, makeBlockEventHandler(idx))
-      : () => client.submit_job(target.ticket, b64encode(doc), 300, makeBlockEventHandler(idx)),
-  };
+  const submissions = runIdxs.map((i) =>
+    blockSubmission(fences, i, blockStates.get(i), targets.get(i))
+  );
 
   // Single flight: the Run button spins (and is disabled) exactly as during a
-  // full run, so a second pill click can't start a concurrent job.
+  // full run, so a second pill click can't start a concurrent job. The
+  // sequential submitter is used even for one block so a lone re-run and a
+  // chained replay share the same status transitions.
   runInFlight = true; // streamed logs own the box until the re-render below
   setBusy(true);
   try {
-    await submitWithRetry(sub);
-  } catch (e) {
-    const msg = String((e && e.message) || e || "connection failed");
-    const node = target.node_id ? ` on node ${shortId(target.node_id)}` : "";
-    state.status = "failed";
-    state.exitCode = state.exitCode ?? 1;
-    state.errors.push(msg + node);
-    applyBlockStatus(state);
+    const results = await submitChained(submissions);
+    for (let i = 0; i < submissions.length; i++) {
+      const r = results[i];
+      if (r.status !== "rejected") continue;
+      const sub = submissions[i];
+      const reason = r.reason;
+      const msg = String((reason && reason.message) || reason || "connection failed");
+      const node = sub.node && sub.node.node_id ? ` on node ${shortId(sub.node.node_id)}` : "";
+      sub.state.status = "failed";
+      sub.state.exitCode = sub.state.exitCode ?? 1;
+      sub.state.errors.push(msg + node);
+      applyBlockStatus(sub.state);
+    }
   } finally {
     setBusy(false);
   }
   refreshPeers(); // re-sync the peer table after the job (non-blocking)
 
-  // These results belong to the document as it is now — pairing (interleaved
+  // These results belong to the document as it is now - pairing (interleaved
   // view) reads lastMarkdown, so keep it in step with the editor.
   lastMarkdown = markdown;
   const { failed } = mergeBlockResults();
   paintMergedOutput();
   syncArtifactChips();
+  const what = chained && submissions.length > 1
+    ? `${submissions.length}-block chain from the root`
+    : `${f.lang} block`;
   setDetail(
     failed === 0
-      ? `${f.lang} block re-ran — exit 0`
-      : `${f.lang} block re-ran — exit ${lastExitCode}`
+      ? `${what} re-ran - exit 0`
+      : `${what} re-ran - exit ${lastExitCode}`
   );
 }
 
@@ -2589,10 +2673,11 @@ function syncArtifactChips() {
     if (!state.exec || !state.artifacts.length) continue;
     const chip = document.querySelector(`#langStatus .lang-chip.lang-name[data-idx="${idx}"]`);
     if (!chip) continue;
-    // The declaration-time placeholder is redundant once the real names are
-    // known (and it must go before the per-file pills are inserted).
-    const placeholder = document.querySelector(`#langStatus .lang-chip.artifact[data-idx="${idx}"]`);
-    if (placeholder) placeholder.remove();
+    // The declaration-time placeholders are redundant once the real names are
+    // known (and they must go before the per-file pills are inserted).
+    for (const ph of document.querySelectorAll(
+      `#langStatus .lang-chip.artifact:not(.artifact-ready)[data-idx="${idx}"]`
+    )) ph.remove();
     const lang = String(state.lang).replace(/[^a-zA-Z0-9]/g, "_");
     let anchor = chip;
     for (const a of state.artifacts) {

@@ -28,7 +28,14 @@ by default, or a self-hosted one.
   under the editor are live controls: hovering one highlights its fence in
   the editor, clicking a supported language pill re-runs **just that block**
   (the other blocks keep their results), and a pill for a returned artifact
-  downloads that single file. The trailing `i` pill lists every supported
+  downloads that single file. A block's declaration pill and its artifact
+  pills are drawn as one joined group with shared straight edges, so a row
+  reads as that block's declaration plus its outputs. In a `chain` document
+  one block cannot run in isolation, so a pill click replays the chain from
+  its root instead (and drops the now-stale results below it); while a
+  chain run is in flight the queued pills show a `...` waiting marker
+  instead of the running spinner. The trailing `i` pill lists every
+  supported
   language, each with a one-sentence explanation (from `web/blurbs.js`) on
   hover, so a name like `cjam` or `piet` is never just a mystery token. The
   built glue is committed under `web/wbg/` so the SPA runs without a Rust
