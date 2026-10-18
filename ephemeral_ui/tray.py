@@ -7,8 +7,8 @@ calling only the generic :class:`~ephemeral_ui.backends.base.Backend`
 interface. The build mode is selected explicitly by ``ephemeral_ui.app``;
 the front end never infers it from an executable filename.
 
-Entry points (``main_local.py``, ``main_distributed_client.py``) are
-thin mode selectors:
+Entry points (``main_local.py``, ``main_distributed_client.py``,
+``main_distributed_instructor.py``) are thin mode selectors:
 
     from ephemeral_ui.app import run
     run("local")

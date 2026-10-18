@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  WiX authoring for the Ephemeral Distributed (beta) MSI.
+  WiX authoring for the Ephemeral Distributed (Instructor) MSI.
 
   The design rules below are deliberate, and test_ui.py guards them:
 
@@ -13,11 +13,21 @@
     consent — the app itself still never self-elevates and ships no service,
     scheduled task or SYSTEM component (see NodeAutostart in platform.py, and
     the tests that keep it that way).
-  * No custom actions. Deferred custom actions that write the registry or
-    launch processes are what installer malware detection looks for, so
-    everything here is a declarative Windows Installer resource: the installer
-    changes nothing it has not declared, and uninstall removes exactly what
-    install created.
+  * Exactly one custom action, and it does one thing: start the app that was
+    just installed, once. An MSI cannot launch a program declaratively, and the
+    classroom link a teacher actually needs only exists once the app runs (it
+    creates this machine's private swarm and prints the student URL, see
+    InstructorBackend), so the installer does it in the least
+    interesting shape available: the installed exe and nothing else, no script
+    and no shell, no elevation, in the user's own context, fire-and-forget,
+    after InstallFinalize, on a fresh install, and never for a silent
+    `msiexec /qn` deployment. It writes no registry value, needs no cleanup,
+    and uninstall does not depend on it. Everything else stays declarative:
+    custom actions that write the registry or elevate are what installer
+    malware detection hunts for, and there are none of those here. (An opt-in
+    "launch when setup finishes" checkbox on the Finish dialog is the other
+    standard pattern; it needs the WixUtilExtension and a custom dialog, and it
+    would leave a teacher without the link unless they ticked it.)
   * The optional "serve this PC" feature writes an HKLM Run value, so the node
     starts when *any* user logs in — including a professor who is not the
     account that installed it. Its component keypath is a separate marker
@@ -32,7 +42,7 @@
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product Id="*"
-           Name="Ephemeral Distributed (beta)"
+           Name="Ephemeral Distributed (Instructor)"
            Language="1033"
            Version="$(var.ProductVersion)"
            Manufacturer="Ephemeral"
@@ -52,14 +62,14 @@
              InstallScope="perMachine"
              InstallPrivileges="elevated"
              Platform="x64"
-             Description="Ephemeral distributed tray client (beta)"
+             Description="Ephemeral distributed instructor client"
              Comments="Sandboxed code execution: one-shot containers, no daemon." />
 
     <!-- ProductCode is new per build (Id="*"); the stable UpgradeCode plus
          AllowSameVersionUpgrades lets a professor re-run the installer over an
          older build without an "already installed" error. -->
     <MajorUpgrade AllowSameVersionUpgrades="yes"
-                  DowngradeErrorMessage="A newer version of Ephemeral Distributed (beta) is already installed." />
+                  DowngradeErrorMessage="A newer version of Ephemeral Distributed (Instructor) is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
     <UIRef Id="WixUI_FeatureTree" />
@@ -71,11 +81,11 @@
            state in %LOCALAPPDATA% at runtime, so nothing needs write access
            here. -->
       <Directory Id="ProgramFiles64Folder">
-        <Directory Id="INSTALLDIR" Name="Ephemeral-Distributed-Beta">
+        <Directory Id="INSTALLDIR" Name="Ephemeral-Distributed-Instructor">
           <Component Id="NodeAtLogin" Guid="D891E1CD-BA75-4995-AB2C-9C7262BC3EC2">
             <!-- Keypath is a marker value nobody toggles, not the Run value. -->
             <RegistryValue Root="HKLM"
-                           Key="Software\Ephemeral\Ephemeral-Distributed-Beta"
+                           Key="Software\Ephemeral\Ephemeral-Distributed-Instructor"
                            Name="NodeAtLogin" Type="integer" Value="1"
                            KeyPath="yes" />
             <!-- Machine-wide login entry: every user login on this PC starts a
@@ -84,7 +94,7 @@
             <RegistryValue Root="HKLM"
                            Key="Software\Microsoft\Windows\CurrentVersion\Run"
                            Name="Ephemeral-Distributed-Node" Type="string"
-                           Value="&quot;[INSTALLDIR]Ephemeral-Distributed-Beta.exe&quot; --node"
+                           Value="&quot;[INSTALLDIR]Ephemeral-Distributed-Instructor.exe&quot; --node"
                            KeyPath="no" />
           </Component>
 
@@ -95,12 +105,12 @@
           <Component Id="StartMenuShortcut" Guid="68B8D107-4566-4643-8413-292D96A175E8">
             <Shortcut Id="AppShortcut"
                       Directory="ProgramMenuFolder"
-                      Name="Ephemeral Distributed (beta)"
+                      Name="Ephemeral Distributed (Instructor)"
                       Description="Run clipboard codeblocks in sandboxed containers"
-                      Target="[INSTALLDIR]Ephemeral-Distributed-Beta.exe"
+                      Target="[INSTALLDIR]Ephemeral-Distributed-Instructor.exe"
                       WorkingDirectory="INSTALLDIR" />
             <RegistryValue Root="HKLM"
-                           Key="Software\Ephemeral\Ephemeral-Distributed-Beta"
+                           Key="Software\Ephemeral\Ephemeral-Distributed-Instructor"
                            Name="StartMenuShortcut" Type="integer" Value="1"
                            KeyPath="yes" />
           </Component>
@@ -119,7 +129,7 @@
       <Directory Id="ProgramMenuFolder" />
     </Directory>
 
-    <Feature Id="ApplicationFiles" Title="Ephemeral Distributed (beta)"
+    <Feature Id="ApplicationFiles" Title="Ephemeral Distributed (Instructor)"
              Level="1" Display="1"
              Description="The tray client: clipboard runs, the Distributed menu, and the pre-hydration console.">
       <ComponentGroupRef Id="HarvestedFiles" />
@@ -136,5 +146,35 @@
              Description="Start the compute node whenever anyone logs in, so a class can run codeblocks through this machine. Machine-wide, with no Windows service and no SYSTEM task. Remove it later with REMOVE=NodeAtLogin.">
       <ComponentRef Id="NodeAtLogin" />
     </Feature>
+
+    <!-- Launch the installed app once, as the user who installed it.
+
+         Type 34 needs the full path in ExeCommand (Directory is only the
+         working directory), and the exe name is quoted for the same reason:
+         Windows Installer resolves it at run time. Only the app is launched:
+         no cmd.exe, no PowerShell, no script host. asyncNoWait means a
+         tray that fails to start cannot wedge the installer. -->
+    <CustomAction Id="LaunchInstructorFirstRun"
+                  Directory="INSTALLDIR"
+                  ExeCommand="&quot;[INSTALLDIR]Ephemeral-Distributed-Instructor.exe&quot; --first-run"
+                  Execute="immediate"
+                  Impersonate="yes"
+                  Return="asyncNoWait" />
+
+    <!-- The setup bundle installs this package quietly (that is how Burn runs
+         an MSI), so UILevel is 2 there and the silent guard would suppress the
+         launch precisely when a teacher is watching setup finish. The bundle
+         therefore passes LAUNCHFIRSTRUN=1 to opt in explicitly, while a plain
+         `msiexec /qn` from a deployment tool stays silent.
+
+         The rest is unchanged: after InstallFinalize so the files exist,
+         `NOT Installed` keeps it off repair and maintenance, and `NOT REMOVE`
+         keeps it off uninstall. -->
+    <Property Id="LAUNCHFIRSTRUN" Value="0" />
+    <InstallExecuteSequence>
+      <Custom Action="LaunchInstructorFirstRun" After="InstallFinalize">
+        <![CDATA[NOT Installed AND NOT REMOVE AND (UILevel <> 2 OR LAUNCHFIRSTRUN = 1)]]>
+      </Custom>
+    </InstallExecuteSequence>
   </Product>
 </Wix>

@@ -29,11 +29,11 @@ VSVersionInfo(
         '040904B0',
         [
           StringStruct('CompanyName', 'Ephemeral'),
-          StringStruct('FileDescription', 'Ephemeral distributed tray client (beta build)'),
+          StringStruct('FileDescription', 'Ephemeral distributed instructor client (classroom build)'),
           StringStruct('FileVersion', 'Version number (injected from the github workflow)'),
-          StringStruct('InternalName', 'Ephemeral-Distributed-Beta'),
+          StringStruct('InternalName', 'Ephemeral-Distributed-Instructor'),
           StringStruct('LegalCopyright', 'MIT License'),
-          StringStruct('OriginalFilename', 'Ephemeral-Distributed-Beta.exe'),
+          StringStruct('OriginalFilename', 'Ephemeral-Distributed-Instructor.exe'),
           StringStruct('ProductName', 'Ephemeral'),
           StringStruct('ProductVersion', 'Version number (injected from the github workflow)')
         ]

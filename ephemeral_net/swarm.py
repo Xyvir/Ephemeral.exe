@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import urllib.parse
 import urllib.request
@@ -87,6 +88,13 @@ PRIVATE_MODE_MARKER = "private_mode"
 # existing swarm.
 PRIVATE_SEED_MARKER = "private_seed"
 
+# Marker filename recording that this user's starting mode has already been
+# applied once by a build that defaults to private (the instructor build). It
+# exists so the default cannot fight the toggle: without it, turning private
+# mode OFF would be silently switched back on at the next start, and this is
+# what makes the default a first-run action rather than a policy.
+PRIVATE_DEFAULT_MARKER = "private_default_applied"
+
 
 def private_student_url(ticket: str) -> str:
     """The one-link URL students open to reach this (private) node."""
@@ -133,6 +141,66 @@ def write_private_seed(seed: str | None, state_dir: Path | None = None) -> None:
             p.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+# An EndpointTicket as iroh serializes it (a real one, taken from the live
+# list in docs/swarm.json, is 151 characters and starts with this prefix), a
+# ``node_id@relay`` pair, and the compact ``iroh1:<node_id>;<relay>`` form the
+# DNS mirror uses. Anything else is not a seed.
+_TICKET_PREFIX = "endpoint"
+_TICKET_BODY = re.compile(r"^[A-Za-z0-9_\-=.+/:]+$")
+_NODE_ID = re.compile(r"^[0-9a-f]{64}$")
+_COMPACT_NODE = re.compile(r"^iroh1:([0-9a-f]{64})(?:;(\S+))?$")
+
+
+def parse_seed_input(raw: str) -> str | None:
+    """
+    Turn what a teacher pasted into a seed this node can bootstrap from.
+
+    Three answers are possible, and callers have to tell them apart:
+
+    * ``""`` — empty input, i.e. "create a new swarm" (the caller's default).
+    * a ticket or ``node_id@relay`` string — usable, hand it to
+      :func:`write_private_seed`.
+    * ``None`` — not a seed: a link with no ``#seed=`` in it, a URL, or a
+      phrase. Saying so beats persisting something the bootstrap cannot parse,
+      which is how a pasted student link would otherwise break the node.
+
+    The student link is the interesting case: it is the only thing a teacher
+    has to copy from their first machine (``private_student_url`` embeds the
+    node's ticket in the fragment), so it is accepted here and unwrapped.
+    """
+    value = (raw or "").strip().strip("\"'").strip()
+    if not value:
+        return ""
+
+    for marker in ("#seed=", "?seed=", "&seed="):
+        if marker in value:
+            value = urllib.parse.unquote(
+                value.split(marker, 1)[1].split("&", 1)[0]
+            ).strip()
+            break
+    else:
+        if value.lower().startswith(("http://", "https://")):
+            return None  # a link whose fragment carries no ticket
+
+    if not value:
+        return None
+
+    compact = _COMPACT_NODE.match(value)
+    if compact:
+        return f"{compact.group(1)}@{compact.group(2) or DEFAULT_RELAY}"
+
+    if "@" in value:
+        node_id, _, relay = value.partition("@")
+        node_id = node_id.strip().lower()
+        if not _NODE_ID.match(node_id):
+            return None
+        return f"{node_id}@{relay.strip() or DEFAULT_RELAY}"
+
+    if value.startswith(_TICKET_PREFIX) and len(value) > 20 and _TICKET_BODY.match(value):
+        return value
+    return None
 
 
 def parse_private_seed(seed: str) -> tuple[list[str], list[tuple[str, str]]]:
@@ -316,6 +384,7 @@ def parse_seed_nodes(env_value: str | None) -> list[tuple[str, str]]:
 __all__ = [
     "DEFAULT_RELAY",
     "DOH_ENDPOINTS",
+    "PRIVATE_DEFAULT_MARKER",
     "PRIVATE_MODE_MARKER",
     "PRIVATE_SEED_MARKER",
     "SWARM_DNS_TXT",
@@ -327,6 +396,7 @@ __all__ = [
     "load_or_create_secret",
     "parse_private_seed",
     "parse_seed_nodes",
+    "parse_seed_input",
     "parse_seeds",
     "parse_swarm_list_dns",
     "private_mode_enabled",

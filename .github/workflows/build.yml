@@ -68,6 +68,9 @@ jobs:
     - name: Run tray / always-on-node tests
       run: python test_ui.py
 
+    - name: Run container-runtime prerequisite tests
+      run: python test_prereq.py
+
   # ── Windows EXE: local ────────────────────────────────────────
   build-exe:
     runs-on: windows-latest
@@ -173,13 +176,13 @@ jobs:
           dist/Ephemeral-Distributed.exe
           dist/Ephemeral-Distributed-build-manifest.json
 
-  # ── Windows onedir bundle: distributed (beta) ─────────────────
+  # ── Windows onedir bundle: distributed (Instructor) ─────────────────
   # The stable Windows builds are --onefile self-extractors. This job ships the
   # distributed app as a onedir folder with UPX disabled and a Win32 version
   # resource, so the antivirus-sensitive path (an always-on classroom node on a
   # professor's PC) has a bundle to test that does not carry the two packaging
   # traits heuristics flag most often. The stable artifacts are unchanged.
-  build-exe-distributed-beta:
+  build-exe-distributed-instructor:
     runs-on: windows-latest
     needs: test
 
@@ -215,24 +218,24 @@ jobs:
         grep -n 'FileVersion\|filevers' packaging/version_info.txt
 
     - name: Build onedir bundle
-      run: pyinstaller --noconfirm packaging/ephemeral-distributed-beta.spec
+      run: pyinstaller --noconfirm packaging/ephemeral-distributed-instructor.spec
 
     - name: Smoke test — bundled self-check
       shell: bash
       run: |
         # Same check the AppImage builds run: start a node, print its id, exit.
-        ./dist/Ephemeral-Distributed-Beta/Ephemeral-Distributed-Beta.exe --self-check
-        echo "beta self-check passed"
+        ./dist/Ephemeral-Distributed-Instructor/Ephemeral-Distributed-Instructor.exe --self-check
+        echo "instructor self-check passed"
 
     - name: Package bundle (zip)
       shell: bash
       run: |
         python - <<'PY'
         import os, zipfile
-        src = "dist/Ephemeral-Distributed-Beta"
-        out = "dist/Ephemeral-Distributed-Beta-win64.zip"
+        src = "dist/Ephemeral-Distributed-Instructor"
+        out = "dist/Ephemeral-Distributed-Instructor-win64.zip"
         base = os.path.dirname(src)
-        if not os.path.isfile(os.path.join(src, "Ephemeral-Distributed-Beta.exe")):
+        if not os.path.isfile(os.path.join(src, "Ephemeral-Distributed-Instructor.exe")):
             raise SystemExit(f"missing built exe in {src}")
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
             for root, _dirs, files in os.walk(src):
@@ -252,8 +255,8 @@ jobs:
         VERSION="$(date +'%y.%-m.%-d')"
         echo "MSI product version: $VERSION"
         MSYS2_ARG_CONV_EXCL='*' bash packaging/msi/build_msi.sh \
-          dist/Ephemeral-Distributed-Beta \
-          dist/Ephemeral-Distributed-Beta.msi "$VERSION"
+          dist/Ephemeral-Distributed-Instructor \
+          dist/Ephemeral-Distributed-Instructor.msi "$VERSION"
 
     - name: Smoke test - install and remove the MSI
       shell: bash
@@ -267,7 +270,7 @@ jobs:
         # A machine-wide install writes %ProgramFiles% and the HKLM Run key, so
         # it needs elevation - the runner has it, and /qn keeps it unattended.
         export MSYS2_ARG_CONV_EXCL='*'
-        PKG="$PWD/dist/Ephemeral-Distributed-Beta.msi"
+        PKG="$PWD/dist/Ephemeral-Distributed-Instructor.msi"
         if [ ! -f "$PKG" ]; then
           echo "no MSI at $PKG - the build step produced nothing" >&2
           ls -la dist >&2
@@ -283,7 +286,7 @@ jobs:
         fi
         MSI="$(cygpath -w "$PKG")"
         RUNKEY='HKLM\Software\Microsoft\Windows\CurrentVersion\Run'
-        INSTALLED="$(cygpath -u "${PROGRAMFILES:-C:\Program Files}")/Ephemeral-Distributed-Beta"
+        INSTALLED="$(cygpath -u "${PROGRAMFILES:-C:\Program Files}")/Ephemeral-Distributed-Instructor"
         echo "installing $MSI ($(du -h "$PKG" | cut -f1))"
         # Git Bash reports a Windows exit status mod 256, so msiexec's 1619
         # reaches the log as "exit code 83" with nothing saying why: on failure
@@ -295,7 +298,7 @@ jobs:
           tail -n 40 msi-install.log >&2 || true
           exit 1
         fi
-        ls -la "$INSTALLED/Ephemeral-Distributed-Beta.exe"
+        ls -la "$INSTALLED/Ephemeral-Distributed-Instructor.exe"
         # "Machine-wide" is the claim this package makes, so the smoke test
         # checks the machine-wide entries rather than only the files.
         echo "--- machine-wide Run entry ---"
@@ -304,7 +307,7 @@ jobs:
           echo "the machine-wide node entry is missing from $RUNKEY" >&2
           exit 1
         }
-        reg query 'HKLM\Software\Ephemeral\Ephemeral-Distributed-Beta' /v NodeAtLogin /reg:64
+        reg query 'HKLM\Software\Ephemeral\Ephemeral-Distributed-Instructor' /v NodeAtLogin /reg:64
         code=0
         msiexec /x "$MSI" /qn /l*v "$(cygpath -w "$PWD/msi-uninstall.log")" || code=$?
         if [ "$code" -ne 0 ]; then
@@ -322,6 +325,119 @@ jobs:
         fi
         echo "MSI install + uninstall smoke passed, machine-wide entries included"
 
+    # ── Setup bundle: WSL2 + Podman + the MSI in one download ────────────────
+    # The MSI alone cannot enable WSL2 (elevation + a reboot), so teachers get a
+    # Burn bundle. Podman's installer is pinned by version and embedded, so
+    # setup never depends on a teacher's network — and a rename upstream fails
+    # this job loudly instead of shipping a bundle missing its runtime.
+    - name: Download the pinned Podman installer
+      shell: bash
+      run: |
+        PODMAN_VERSION="6.1.4"
+        URL="https://github.com/podman-container-tools/podman/releases/download/v${PODMAN_VERSION}/podman-installer-windows-amd64.msi"
+        echo "downloading $URL"
+        curl -fsSL --retry 3 -o dist/podman-installer-windows-amd64.msi "$URL"
+        # An HTML error page is the usual result of a moved release; name it.
+        magic="$(head -c 8 dist/podman-installer-windows-amd64.msi | od -An -tx1 | tr -d ' \n')"
+        if [ "$magic" != "d0cf11e0a1b11ae1" ]; then
+          echo "the Podman download is not an MSI (magic: $magic)" >&2
+          exit 1
+        fi
+        ls -lh dist/podman-installer-windows-amd64.msi
+
+    - name: Build the setup bundle
+      shell: bash
+      run: |
+        VERSION="$(date +'%y.%-m.%-d')"
+        MSYS2_ARG_CONV_EXCL='*' bash packaging/bootstrapper/build_setup.sh \
+          dist/Ephemeral-Distributed-Instructor \
+          dist/podman-installer-windows-amd64.msi \
+          dist/Ephemeral-Distributed-Instructor.msi \
+          dist/Ephemeral-Distributed-Instructor-Setup.exe \
+          "$VERSION"
+
+    - name: Smoke test - the bundle carries and unpacks every prerequisite
+      shell: bash
+      run: |
+        # `-layout` is Burn's own extraction: it verifies the bundle's payload
+        # table and writes the packages it would install, WITH no install, no
+        # elevation and no reboot. That is the only honest check a CI runner
+        # can make of a bundle whose chain installs a Windows feature.
+        export MSYS2_ARG_CONV_EXCL='*'
+        SETUP="$PWD/dist/Ephemeral-Distributed-Instructor-Setup.exe"
+        if [ ! -f "$SETUP" ]; then
+          echo "no setup bundle at $SETUP" >&2
+          exit 1
+        fi
+        magic="$(head -c 2 "$SETUP" | od -An -tx1 | tr -d ' \n')"
+        if [ "$magic" != "4d5a" ]; then
+          echo "the setup bundle is not a PE executable (magic: $magic)" >&2
+          exit 1
+        fi
+        echo "bundle: $(du -h "$SETUP" | cut -f1)"
+        rm -rf dist/setup-layout
+        "$SETUP" -layout "$(cygpath -w "$PWD/dist/setup-layout")" -quiet || {
+          echo "the bundle could not lay out its payloads" >&2
+          exit 1
+        }
+        ls -la dist/setup-layout
+        # All three packages must be present: the app, Podman, and the exe that
+        # enables WSL2 (the same file as the app, installed as a prerequisite).
+        exists=0
+        for want in Ephemeral-Distributed-Instructor.msi podman-installer-windows-amd64.msi; do
+          find dist/setup-layout -iname "$want" | grep -q . || {
+            echo "the bundle is missing its prerequisite payload: $want" >&2
+            exit 1
+          }
+          exists=$((exists + 1))
+        done
+        find dist/setup-layout -iname "Ephemeral-Distributed-Instructor.exe" | grep -q . || {
+          echo "the bundle is missing the exe that enables WSL2" >&2
+          exit 1
+        }
+        echo "setup bundle unpacks $exists prerequisite package(s) plus the app"
+
+    - name: Smoke test - the prerequisite entry point answers
+      shell: bash
+      run: |
+        # The bundle's first package is the app with --setup-prereqs. Runners do
+        # not have WSL2 enabled, so the answer here is expected to be a failure
+        # code: what is being checked is that the flag is wired and it reports a
+        # state instead of starting a tray. 0 (ready) and 1 (missing) are both
+        # honest answers; a traceback or a hang is not.
+        #
+        # The shipped exe is windowed (PyInstaller console=False), so stdout is
+        # None there and print() is a silent no-op: assert on the log that
+        # prereq.say() writes, never on stdout. EPHEMERAL_STATE_DIR also keeps
+        # this throwaway check out of the runner's real ~/.ephemeral.
+        export MSYS2_ARG_CONV_EXCL='*'
+        STATE="$(cygpath -w "$PWD/dist/setup-check-state")"
+        mkdir -p dist/setup-check-state
+        cd dist/Ephemeral-Distributed-Instructor
+        code=0
+        EPHEMERAL_STATE_DIR="$STATE" ./Ephemeral-Distributed-Instructor.exe --setup-prereqs --check || code=$?
+        echo "--setup-prereqs --check exited $code"
+        case "$code" in
+          0|1) ;;
+          *) echo "--check exited $code, which is neither ready nor missing" >&2; exit 1 ;;
+        esac
+        LOG="$PWD/../../dist/setup-check-state/setup.log"
+        if [ ! -f "$LOG" ]; then
+          echo "--check wrote no setup.log: the windowed build has no stdout, so "
+          echo "the log is the only record of what it decided" >&2
+          exit 1
+        fi
+        cat "$LOG"
+        grep -q '\[setup\] check:' "$LOG" || {
+          echo "setup.log carries no state line" >&2
+          exit 1
+        }
+        # A state the tray can act on has to be named, not just numbered.
+        grep -Eq 'check: (ready|no-wsl|needs-reboot|no-virtualization|no-podman|no-machine|machine-stopped)' "$LOG" || {
+          echo "setup.log named no recognisable runtime state" >&2
+          exit 1
+        }
+
     - name: Generate build manifest
       shell: bash
       run: |
@@ -329,20 +445,22 @@ jobs:
         SHORT_SHA="${FULL_SHA:0:7}"
         VERSION="$(date +'%Y%m%d')-${SHORT_SHA}"
         python packaging/write_build_manifest.py \
-          --output dist/Ephemeral-Distributed-Beta-build-manifest.json \
+          --output dist/Ephemeral-Distributed-Instructor-build-manifest.json \
           --build-version "$VERSION" \
-          --build-command 'pyinstaller --noconfirm packaging/ephemeral-distributed-beta.spec' \
-          --artifact dist/Ephemeral-Distributed-Beta-win64.zip \
-          --artifact dist/Ephemeral-Distributed-Beta.msi
+          --build-command 'pyinstaller --noconfirm packaging/ephemeral-distributed-instructor.spec' \
+          --artifact dist/Ephemeral-Distributed-Instructor-win64.zip \
+          --artifact dist/Ephemeral-Distributed-Instructor.msi \
+          --artifact dist/Ephemeral-Distributed-Instructor-Setup.exe
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Ephemeral-Distributed-Beta-Windows-onedir
+        name: Ephemeral-Distributed-Instructor-Windows-onedir
         path: |
-          dist/Ephemeral-Distributed-Beta-win64.zip
-          dist/Ephemeral-Distributed-Beta.msi
-          dist/Ephemeral-Distributed-Beta-build-manifest.json
+          dist/Ephemeral-Distributed-Instructor-win64.zip
+          dist/Ephemeral-Distributed-Instructor.msi
+          dist/Ephemeral-Distributed-Instructor-Setup.exe
+          dist/Ephemeral-Distributed-Instructor-build-manifest.json
 
   # ── Linux AppImages: local + distributed ──────────────────────
   build-linux-appimage:
@@ -498,7 +616,7 @@ jobs:
   # deliberately NOT in the release job's `needs`, so it cannot gate a release.
   scan-artifacts:
     runs-on: ubuntu-latest
-    needs: [build-exe, build-exe-distributed, build-exe-distributed-beta]
+    needs: [build-exe, build-exe-distributed, build-exe-distributed-instructor]
 
     steps:
     - uses: actions/checkout@v4
@@ -536,7 +654,7 @@ jobs:
   # ── Release ───────────────────────────────────────────────────
   release:
     runs-on: ubuntu-latest
-    needs: [build-exe, build-exe-distributed, build-exe-distributed-beta, build-linux-appimage]
+    needs: [build-exe, build-exe-distributed, build-exe-distributed-instructor, build-linux-appimage]
     if: github.event.inputs.create_release == 'true'
 
     steps:
@@ -562,8 +680,9 @@ jobs:
         tag_name: ${{ env.TAG }}
         name: Release ${{ env.TAG }}
         files: |
-          dist/Ephemeral-Distributed-Beta-win64.zip
-          dist/Ephemeral-Distributed-Beta.msi
+          dist/Ephemeral-Distributed-Instructor-win64.zip
+          dist/Ephemeral-Distributed-Instructor.msi
+          dist/Ephemeral-Distributed-Instructor-Setup.exe
           dist/Ephemeral.exe
           dist/Ephemeral-Distributed.exe
           dist/ephemeral-local-x86_64.AppImage
@@ -573,6 +692,6 @@ jobs:
           dist/ephemeral-self-host.tar.gz
           dist/Ephemeral-build-manifest.json
           dist/Ephemeral-Distributed-build-manifest.json
-          dist/Ephemeral-Distributed-Beta-build-manifest.json
+          dist/Ephemeral-Distributed-Instructor-build-manifest.json
           dist/Ephemeral-Linux-build-manifest.json
         generate_release_notes: true

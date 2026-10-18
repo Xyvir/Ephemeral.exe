@@ -8,6 +8,11 @@ the nearest warm node while the image pulls in the background, and remote
 jobs are accepted while idle. Also owns the private-mode toggle and the
 pre-hydration console.
 
+The instructor build (:class:`InstructorBackend`) is this backend with the
+public swarm removed: it never reads the live node list, so its node is either
+its own private swarm or local-only, and nothing in this module can put it in
+the public one.
+
 Cluster configuration (environment variables):
 
     EPHEMERAL_RELAY          "n0" (default) | "minimal" | "disabled" |
@@ -47,10 +52,12 @@ from ephemeral_core.executor import host_arch
 from ephemeral_core.space import SpaceGuardError, ensure_space_for_pull
 from ephemeral_net.jobs import JobDoneEvent, JobErrorEvent, JobRequest
 from ephemeral_net.swarm import (
+    PRIVATE_DEFAULT_MARKER,
     PRIVATE_MODE_MARKER,
     default_state_dir,
     load_or_create_secret,
     parse_private_seed,
+    parse_seed_input,
     parse_seed_nodes,
     parse_seeds,
     private_mode_enabled,
@@ -59,7 +66,7 @@ from ephemeral_net.swarm import (
     write_private_seed,
 )
 
-from ephemeral_ui import platform
+from ephemeral_ui import platform, prereq
 from ephemeral_ui.backends.base import Backend
 
 
@@ -73,9 +80,12 @@ class Cluster:
 
     def __init__(self, relay: str, seed_nodes: list, seeds: list,
                  secret: bytes | None, allow_network: bool,
-                 relay_fallback: bool = False) -> None:
+                 relay_fallback: bool = False, public_swarm: bool = True) -> None:
         self.relay = relay
         self.relay_fallback = relay_fallback
+        # Per-build, not per-user: False removes the live-list bootstrap
+        # below, which is the whole of "no public swarm".
+        self.public_swarm = public_swarm
         self.seed_nodes = seed_nodes
         self.seeds = seeds
         self.secret = secret
@@ -152,10 +162,13 @@ class Cluster:
                 await node.bootstrap_nodes(seed_nodes)
             elif seeds:
                 await node.bootstrap(seeds)
-        else:
+        elif self.public_swarm:
             # No compiled-in seeds: join the public swarm via the live
             # bootstrap list (docs/swarm.json) — fully automatic.
             await node.bootstrap_from_list()
+        # else: this build has no public swarm to join. With private mode off
+        # it is local-only — dial nothing, accept nothing, and execute every
+        # job on this machine, which is the local half of local-or-private.
         self.node = node
 
     def stop(self) -> None:
@@ -243,6 +256,18 @@ class DistributedBackend(Backend):
     app_key = "Ephemeral-Distributed"
     display_name = "Ephemeral-Distributed"
 
+    #: Whether this build may join the public swarm. Overridden to False by
+    #: :class:`InstructorBackend`, which is the only thing that removes the
+    #: live-list bootstrap — a user cannot switch it back on.
+    public_swarm = True
+    #: Instructor builds create their private swarm on first run: with no
+    #: public swarm to fall back on, starting switched off would mean a machine
+    #: no student can reach.
+    default_private = False
+    #: The toggle's name has to say what OFF means: for the public client that
+    #: is the public swarm, for the instructor build it is local-only.
+    private_menu_label = "Private Mode"
+
     def __init__(self) -> None:
         super().__init__()
         _seed_nodes = parse_seed_nodes(os.getenv("EPHEMERAL_SEED_NODES"))
@@ -262,6 +287,7 @@ class DistributedBackend(Backend):
             seeds=_seeds,
             secret=self.secret,
             allow_network=os.getenv("EPHEMERAL_ALLOW_NETWORK", "0") == "1",
+            public_swarm=self.public_swarm,
         )
         self._cluster_start_lock = threading.Lock()
 
@@ -269,10 +295,15 @@ class DistributedBackend(Backend):
         # Per-user, no elevation, no service — see platform.NodeAutostart.
         self.node_autostart = platform.NodeAutostart(self.app_key, self.display_name)
 
+        # The installer launches this build once with --first-run, so the
+        # classroom link is put in front of the teacher instead of waiting to
+        # be discovered: see setup_tray() and _first_launch_setup().
+        self.first_run = "--first-run" in sys.argv
+
     # --- identity --------------------------------------------------------
 
     def about(self) -> str:
-        text = ("# Ephemeral-Distributed.exe\n"
+        text = (f"# {self.app_key}.exe\n"
                 "Version: Version number (injected from the github workflow)\n"
                 "Dev: Dunko Xyvir\nLicense: MIT License\n"
                 "URL: https://github.com/Xyvir/Ephemeral.exe")
@@ -285,9 +316,23 @@ class DistributedBackend(Backend):
                 text += "\n\nPrivate mode student URL:\n" + url
         return text
 
+    def _swarm_description(self) -> str:
+        """What this node is connected to — the question the toggle raises.
+
+        OFF means different things per build, so it is spelled out rather than
+        left as "private off": the instructor build has no public swarm to fall
+        back on, and executing on this PC is then the whole behaviour.
+        """
+        if self.private_checked():
+            return "private (students join with the link below)"
+        if self.public_swarm:
+            return "public (joined automatically from the live list)"
+        return "local only (no peers — jobs run on this PC)"
+
     def _node_status(self) -> str:
         """Current cluster state (node id, peers, warm images)."""
         lines = ["Mode: per-user node (tray)"]
+        lines.append(f"Swarm: {self._swarm_description()}")
         if self.check_node_autostart():
             lines.append("Login autostart: on (starts when this user logs in)")
         lines.append(self.cluster.info())
@@ -379,7 +424,160 @@ class DistributedBackend(Backend):
         """True when the tray's own node is in private mode."""
         return private_mode_enabled(argv=sys.argv)
 
-    def _announce_private(self, icon, enabled, joined, url):
+    def _apply_default_mode(self) -> None:
+        """Apply this build's own starting mode, once, before the node dials.
+
+        Runs on every start (tray, one-shot, headless and ``--node``), and only
+        for a build that defaults to private: the instructor build gets a swarm
+        it can hand out, instead of a machine no student can reach.
+
+        It deliberately records nothing: deciding between anchoring a swarm
+        and joining one is the interactive first launch's job (see
+        :meth:`_first_launch_setup`), and a login node claiming that decision
+        for itself would take the choice away from the teacher. The recorded
+        marker is written when a choice is actually made — by the first-launch
+        prompt or by the toggle — which is also what stops this default from
+        undoing an explicit OFF.
+        """
+        if not self.default_private:
+            return
+        if self._choice_recorded():
+            return
+        if not self.private_checked():
+            self._apply_private_mode(True)
+
+    def _choice_recorded(self) -> bool:
+        """True once a private/join decision has been made on this machine."""
+        return (default_state_dir() / PRIVATE_DEFAULT_MARKER).exists()
+
+    def _record_choice(self) -> None:
+        """Remember that the starting mode is now the user's own decision.
+
+        Written by the first-launch prompt and by the toggle, never by the
+        default itself: that is what keeps a default from reapplying over a
+        teacher who switched Private Swarm Mode OFF.
+        """
+        state_dir = default_state_dir()
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / PRIVATE_DEFAULT_MARKER).touch()
+
+    def _redial_with_seed(self) -> None:
+        """Restart this build's node so it dials the seed just stored.
+
+        ``Cluster.stop()`` cannot interrupt a bootstrap that is still running
+        (it has no node to close yet) and ``Cluster.start()`` returns as soon
+        as any node exists — so an answer that lands while the launch warmup is
+        still dialling has to let that attempt settle before replacing it, or
+        the node keeps the swarm it already chose.
+        """
+        thread = self.cluster._thread
+        starting = thread is not None and thread.is_alive()
+        if self.cluster.node is None and not starting:
+            # Nothing has dialled yet: the seed is already on disk and the
+            # bootstrap about to run will read it, so there is nothing to undo.
+            return
+        try:
+            self.cluster.start()  # waits for an in-flight bootstrap to settle
+        except Exception:
+            pass  # a failed start is reported by the announce, not here
+        self.cluster.stop()
+        self.cluster.start()
+
+    def _first_launch_setup(self, icon) -> None:
+        """Settle where this machine's jobs run, then show the classroom link.
+
+        The instructor build starts private, but private has two useful shapes:
+        a swarm this machine anchors, or one it joins. Joining is what makes
+        two instructor machines redundant — the same classroom swarm with twice
+        the capacity — so the choice is offered once, here, rather than left to
+        be discovered in the menu.
+        """
+        if not self.default_private:
+            return
+        if not self._choice_recorded():
+            self._prompt_for_first_swarm(icon)
+        self._announce_first_run(icon)
+
+    def _prompt_for_first_swarm(self, icon) -> None:
+        """Ask create-or-join on the first run, and persist the answer.
+
+        Accepts the other machine's student link, a bare ticket, or
+        ``node_id@relay`` (see :func:`ephemeral_net.swarm.parse_seed_input`).
+        """
+        prompt = (
+            "Anchor this machine's own classroom swarm, or join the one you\n"
+            "already run? Pasting the other instructor machine's student link\n"
+            "(or its ticket, or node_id@relay) puts both machines in the same\n"
+            "private swarm, so a class survives one of them being offline."
+        )
+        answer = self._prompt_user_for_seed(read_private_seed() or "", prompt=prompt)
+        if answer is None:
+            # No console to ask in (a silent or rushed start): take the default
+            # rather than leaving a classroom with no reachable node.
+            self._apply_private_mode(True)
+            self._record_choice()
+            return
+
+        seed = parse_seed_input(answer)
+        if seed is None:
+            platform.show_terminal_window(
+                "Ephemeral Instructor setup",
+                "That does not look like a ticket, a node_id@relay pair, or a "
+                "link carrying #seed=, so this machine kept a swarm of its own."
+                "\n\nTo join another one, open Distributed -> Private Swarm Mode "
+                "and paste it there.",
+            )
+        self._apply_private_mode(True)
+        write_private_seed(seed or None)
+        self._record_choice()
+        self._redial_with_seed()
+
+    def _announce_first_run(self, icon) -> None:
+        """Present the classroom link after the install that launched us.
+
+        Waits for this build's own node — creating the private swarm when there
+        is none — then shows the student URL in a terminal window and copies it,
+        because the link to hand out is the one thing a teacher needs from an
+        install.
+
+        **A link is only announced once the runtime has proven itself.** On a
+        fresh PC nothing can run yet: Podman needs WSL2, WSL2 is an optional
+        Windows feature, and a Podman machine has to exist. Handing out a link
+        in that state would promise a node whose first student job fails, so
+        each missing piece is named instead (see ``ephemeral_ui.prereq``), and
+        a test container has to exit 0 before students get a URL.
+        """
+        state = prereq.status()
+        if not state.ok:
+            platform.show_terminal_window(*prereq.explain(state))
+            return
+        try:
+            self._ensure_cluster()
+        except Exception as e:
+            platform.show_terminal_window(
+                "Ephemeral Instructor setup",
+                "The classroom node could not be started:\n\n"
+                + str(e)
+                + "\n\nSee About for node status, or start the tray again.",
+            )
+            return
+        ran, detail = prereq.canary()
+        if not ran:
+            platform.show_terminal_window(
+                "Ephemeral needs a container runtime",
+                "The node is up, but a test container did not run, so no "
+                "classroom link is shown yet.\n\n"
+                + (detail or "podman run failed")[:1500]
+                + "\n\nDistributed -> Repair runtime creates or restarts the "
+                "Podman machine, then this setup finishes on the next start.",
+            )
+            return
+        self._announce_private(
+            icon, True, bool(read_private_seed()), self.current_student_url(),
+            title="Ephemeral Instructor setup",
+        )
+
+    def _announce_private(self, icon, enabled, joined, url, title="Ephemeral Private Mode"):
         """Announce the private-mode result.
 
         Enabling is a longer-status state (the student URL needs review), so
@@ -391,49 +589,65 @@ class DistributedBackend(Backend):
         if enabled:
             header = "Joined existing private swarm" if joined else "Private mode ON — created a new swarm"
             body = header + (("\n\nGive students this URL:\n" + url) if url else "")
-            platform.show_terminal_window("Ephemeral Private Mode", body)
+            platform.show_terminal_window(title, body)
         else:
-            icon.notify("Private mode OFF (public swarm)", title="Ephemeral Private Mode")
+            off = "public swarm" if self.public_swarm else "this PC only — jobs run here"
+            icon.notify(f"Private mode OFF ({off})", title=title)
 
     def toggle_private(self, icon, item_unused=None):
         """Flip the tray's own node between public and private mode.
 
         Enabling prompts once: leave empty to CREATE a new private swarm
-        (anchored on this node), or paste a ticket to JOIN an existing swarm.
-        The node restarts in the new mode."""
+        (anchored on this node), or paste a ticket, ``node_id@relay``, or the
+        other machine's student link (its ``#seed=`` fragment is the ticket) to
+        JOIN an existing swarm. The node restarts in the new mode."""
         enabling = not self.private_checked()
 
         if not enabling:
             self._apply_private_mode(False)
             write_private_seed(None)
-            if self.cluster.node is not None:
-                self.cluster.stop()
-                self.cluster.start()
+            self._record_choice()
+            self._redial_with_seed()
             self._announce_private(icon, False, False, None)
             return
 
-        seed = self._prompt_user_for_seed(read_private_seed() or "")
-        if seed is None:
+        answer = self._prompt_user_for_seed(read_private_seed() or "")
+        if answer is None:
             return
-        seed = seed.strip() or None
+        seed = parse_seed_input(answer)
+        if seed is None:
+            platform.show_terminal_window(
+                "Ephemeral Private Swarm",
+                "That does not look like a ticket, a node_id@relay pair, or a "
+                "link carrying #seed=, so the mode was left as it was.\n\n"
+                "The student link works as-is: its #seed= fragment is the ticket.",
+            )
+            return
+        seed = seed or None
 
         # The tray's own node anchors a NEW swarm (create-new) or joins an
         # existing one (join-existing) when a seed is provided.
         self._apply_private_mode(True)
+        self._record_choice()
         write_private_seed(seed)
-        if self.cluster.node is not None:
-            self.cluster.stop()
-            self.cluster.start()
+        self._redial_with_seed()
         self._announce_private(icon, True, bool(seed), self._student_url())
 
-    def _prompt_user_for_seed(self, current_seed: str = "") -> str | None:
-        """Ask for a seed ticket (or ``node_id@relay``) to join a private swarm.
+    def _prompt_user_for_seed(
+        self, current_seed: str = "", prompt: str | None = None
+    ) -> str | None:
+        """Ask what this node should join, and hand back the raw answer.
 
-        Empty input means \"create a new swarm\" (self-seed). Returns ``None``
+        The wording is the caller's, because the first launch asks a different
+        question (anchor, or join for redundancy) than the toggle does. The
+        answer is not interpreted here: callers run it through
+        :func:`ephemeral_net.swarm.parse_seed_input`, which accepts a ticket,
+        ``node_id@relay``, or the student link carrying a ticket in ``#seed=``.
+        Empty input means "create a new swarm" (self-seed). Returns ``None``
         when the prompt could not be shown. Windows uses a cmd.exe console;
         Linux uses zenity -> kdialog -> tkinter -> stdin.
         """
-        prompt = (
+        prompt = prompt or (
             "Paste the swarm's seed ticket (or node_id@relay) to JOIN it,\n"
             "or leave empty to CREATE a new private swarm."
         )
@@ -1253,6 +1467,7 @@ class DistributedBackend(Backend):
     # --- tray lifecycle --------------------------------------------------
 
     def start_background(self) -> None:
+        self._apply_default_mode()
         # Warm up the node in the BACKGROUND — never block the tray icon on
         # cluster bootstrap. A slow relay/DNS/swarm dial (or a stale swarm
         # entry) can exceed the 10 s start window. The first job retries via
@@ -1264,7 +1479,12 @@ class DistributedBackend(Backend):
         ).start()
 
     def setup_tray(self, icon):
-        pass  # warmup already started in start_background()
+        # warmup already started in start_background()
+        if self.first_run or (self.default_private and not self._choice_recorded()):
+            threading.Thread(
+                target=self._first_launch_setup, args=(icon,),
+                name="ephemeral-first-launch", daemon=True,
+            ).start()
 
     # --- always-on node (login autostart, per-user) -----------------------
 
@@ -1290,6 +1510,7 @@ class DistributedBackend(Backend):
         login-time network race can't leave a classroom without a node. Logs to
         ``<state dir>/node.log`` and blocks until killed.
         """
+        self._apply_default_mode()
         log_path = default_state_dir() / "node.log"
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1338,13 +1559,51 @@ class DistributedBackend(Backend):
         # Node status moved into About — no separate "Cluster Status" item.
         return (
             platform.item('Distributed', platform.pystray.Menu(
-                platform.item('Private Mode', lambda icon, i: self.toggle_private(icon, i),
+                platform.item(self.private_menu_label, lambda icon, i: self.toggle_private(icon, i),
                               checked=self.private_checked),
                 platform.item('Run Node on Login', lambda icon, i: self.toggle_node_autostart(icon, i),
                               checked=lambda i: self.check_node_autostart()),
                 platform.item('Pre-hydrate All Images', lambda icon, i: self.on_prehydrate_all(icon, i)),
+                platform.item('Repair runtime', lambda icon, i: self.repair_runtime(icon, i)),
             )),
         )
+
+    def repair_runtime(self, icon, item_unused=None):
+        """Create or start the per-user Podman machine, then prove it works.
+
+        The unprivileged half of setup, available after the fact: a teacher who
+        installed the MSI alone (no setup bundle), or whose machine was deleted,
+        reaches the same end state without reinstalling. WSL2 itself is never
+        touched here — that needs elevation and belongs to the installer.
+        """
+        icon.notify("Checking the container runtime...", title="Ephemeral")
+        state = prereq.status()
+        if state.stage in ("no-wsl", "needs-reboot", "no-virtualization", "no-podman"):
+            platform.show_terminal_window(*prereq.explain(state))
+            return
+        ok, detail = prereq.ensure_machine()
+        if not ok:
+            platform.show_terminal_window(
+                "Ephemeral repair runtime",
+                "The Podman machine could not be prepared:\n\n"
+                + (detail or "")[:1500],
+            )
+            return
+        ran, canary_detail = prereq.canary()
+        if not ran:
+            platform.show_terminal_window(
+                "Ephemeral repair runtime",
+                "The machine is up but a test container still failed, so jobs "
+                "cannot run yet.\n\n" + (canary_detail or "")[:1500],
+            )
+            return
+        platform.show_terminal_window(
+            "Ephemeral repair runtime",
+            "The container runtime works: a test container ran and exited 0.\n\n"
+            "Restart the tray (or use Private Swarm Mode) for the classroom "
+            "link students join.",
+        )
+
 
     def on_hotkey(self, icon):
         # Identical to the base thread-spawn; kept explicit for parity with
@@ -1418,3 +1677,34 @@ def _prompt_user_for_seed_linux(prompt: str) -> str | None:
     except Exception as e:
         print(f"Input error: {e}")
         return None
+
+
+class InstructorBackend(DistributedBackend):
+    """The classroom build: its own private swarm, or this machine alone.
+
+    The difference from the public client is not a setting — it is what this
+    build cannot do. ``public_swarm = False`` removes the live-list bootstrap
+    entirely, so the node is either its own private swarm (created on first
+    run, and the default) or local-only, and a teacher never has to reason
+    about which strangers' machines a block might land on.
+
+    ``--first-run``, which is what the MSI launches once after installing,
+    asks the teacher whether this machine anchors its own swarm or joins one
+    they already run — pasting the first machine's link is enough to put two
+    instructor machines in the same private swarm, for redundancy — and then
+    puts the classroom link on screen instead of leaving it to be found.
+
+    One consequence worth knowing: private mode is a *user* setting, stored in
+    the shared state dir (``~/.ephemeral``) rather than per build, so a teacher
+    who also runs the public client will find that client in private mode too
+    after the instructor build's first run. That is the intended trade — the
+    alternative is a second, silently divergent notion of "private" — and the
+    public client can switch back with its own toggle.
+    """
+
+    app_key = "Ephemeral-Distributed-Instructor"
+    display_name = "Ephemeral Distributed (Instructor)"
+
+    public_swarm = False
+    default_private = True
+    private_menu_label = "Private Swarm Mode"

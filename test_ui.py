@@ -8,7 +8,7 @@ Covers the parts that must not regress:
   itself elevated and registered a ``/SC ONSTART /RU SYSTEM`` scheduled task
   from an unsigned onefile exe, and Windows Defender flagged the build;
 * ``--node`` dispatch: the headless node that login entry starts;
-* packaging invariants for the distributed-beta artifact (onedir bundle, no
+* packaging invariants for the distributed-instructor artifact (onedir bundle, no
   UPX, version resource), which exists so the antivirus-sensitive path has a
   bundle that is not a self-extractor;
 * the ClamAV canary, which must stay a soft signal: it may never fail a build,
@@ -48,6 +48,16 @@ TEST_RUN_KEY = r"Software\EphemeralUiTests"
 
 
 # --- fakes ---------------------------------------------------------------
+
+class _FakeIcon:
+    """Just enough tray icon for a backend to call ``notify`` on."""
+
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def notify(self, message, title=None):
+        self.messages.append(message)
+
 
 class _FakeMenu(list):
     """Stand-in for ``pystray.Menu`` (iterable, callable like the real one)."""
@@ -138,8 +148,8 @@ def test_node_value_name_does_not_collide_with_the_tray_autostart():
 
 def test_onedir_bundles_are_never_copied_out_of_their_folder():
     sm = platform.StartupManager("Ephemeral-Distributed", "Ephemeral-Distributed")
-    bundle = os.path.join(tempfile.gettempdir(), "Ephemeral-Distributed-Beta")
-    exe = os.path.join(bundle, "Ephemeral-Distributed-Beta.exe")
+    bundle = os.path.join(tempfile.gettempdir(), "Ephemeral-Distributed-Instructor")
+    exe = os.path.join(bundle, "Ephemeral-Distributed-Instructor.exe")
     old = (getattr(sys, "frozen", False), getattr(sys, "_MEIPASS", None), sys.executable)
     try:
         sys.frozen = True
@@ -262,7 +272,7 @@ def test_node_autostart_contains_no_elevation_or_service_registration():
 def test_node_flag_runs_the_headless_node_without_a_gui():
     backend = _StubBackend()
     argv = sys.argv
-    sys.argv = ["Ephemeral-Distributed-Beta.exe", "--node"]
+    sys.argv = ["Ephemeral-Distributed-Instructor.exe", "--node"]
     try:
         try:
             tray.run(backend)
@@ -347,34 +357,34 @@ def test_distributed_menu_offers_a_login_scoped_node():
 
 # --- packaging invariants -----------------------------------------------
 
-def test_beta_bundle_is_not_a_self_extractor():
-    spec = (ROOT / "packaging" / "ephemeral-distributed-beta.spec").read_text(encoding="utf-8")
+def test_instructor_bundle_is_not_a_self_extractor():
+    spec = (ROOT / "packaging" / "ephemeral-distributed-instructor.spec").read_text(encoding="utf-8")
     code = _strip_docstrings(spec)  # prose may name what the build avoids
-    assert "COLLECT(" in code, "the beta bundle must be a onedir COLLECT"
-    assert "upx=False" in code, "UPX packing must stay off in the beta bundle"
-    assert "onefile" not in code, "the beta bundle must not request a onefile build"
-    assert "version=VERSION_FILE" in code, "the beta exe must carry a version resource"
+    assert "COLLECT(" in code, "the instructor bundle must be a onedir COLLECT"
+    assert "upx=False" in code, "UPX packing must stay off in the instructor bundle"
+    assert "onefile" not in code, "the instructor bundle must not request a onefile build"
+    assert "version=VERSION_FILE" in code, "the instructor exe must carry a version resource"
     version_info = (ROOT / "packaging" / "version_info.txt").read_text(encoding="utf-8")
-    assert "Ephemeral-Distributed-Beta.exe" in version_info
+    assert "Ephemeral-Distributed-Instructor.exe" in version_info
     assert "Version number (injected from the github workflow)" in version_info
-    print("PASS: the distributed-beta bundle is onedir, un-UPXed, with metadata")
+    print("PASS: the distributed-instructor bundle is onedir, un-UPXed, with metadata")
 
 
-def test_ci_builds_and_ships_the_beta_bundle():
+def test_ci_builds_and_ships_the_instructor_bundle():
     workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
-    assert "build-exe-distributed-beta:" in workflow
-    assert "packaging/ephemeral-distributed-beta.spec" in workflow
-    assert "Ephemeral-Distributed-Beta-win64.zip" in workflow
+    assert "build-exe-distributed-instructor:" in workflow
+    assert "packaging/ephemeral-distributed-instructor.spec" in workflow
+    assert "Ephemeral-Distributed-Instructor-win64.zip" in workflow
 
-    beta_job = workflow.split("build-exe-distributed-beta:", 1)[1]
+    beta_job = workflow.split("build-exe-distributed-instructor:", 1)[1]
     beta_job = beta_job.split("build-linux-appimage:", 1)[0]
-    assert "--onefile" not in beta_job, "the beta job must not build a onefile exe"
-    assert "--self-check" in beta_job, "the beta job must smoke-test the bundle"
+    assert "--onefile" not in beta_job, "the instructor job must not build a onefile exe"
+    assert "--self-check" in beta_job, "the instructor job must smoke-test the bundle"
 
     release = workflow.split("release:", 1)[1]
-    assert "dist/Ephemeral-Distributed-Beta-win64.zip" in release
-    assert "build-exe-distributed-beta" in release
-    print("PASS: CI builds, smoke-tests and releases the beta bundle")
+    assert "dist/Ephemeral-Distributed-Instructor-win64.zip" in release
+    assert "build-exe-distributed-instructor" in release
+    print("PASS: CI builds, smoke-tests and releases the instructor bundle")
 
 
 def _write(path: pathlib.Path, text: str) -> None:
@@ -436,6 +446,275 @@ def _run_canary(tmp: str, exit_code: int | None = None, stub: bool = True):
     return proc, (summary.read_text(encoding="utf-8") if summary.exists() else "")
 
 
+def test_instructor_build_cannot_join_the_public_swarm():
+    """The classroom build is a different build, not a user setting.
+
+    Removing the public swarm has to hold for the *shipped exe*, so four things
+    have to line up: the spec builds the instructor entry point, that entry
+    point selects the instructor mode, ``app.run`` maps the mode to the
+    instructor backend, and the live-list bootstrap sits behind the per-build
+    flag with no second call site to slip through.
+    """
+    spec = (ROOT / "packaging" / "ephemeral-distributed-instructor.spec").read_text(encoding="utf-8")
+    assert "main_distributed_instructor.py" in spec, (
+        "the instructor exe must be built from the instructor entry point, or "
+        "the public swarm ships inside it")
+    assert "main_distributed_client.py" not in spec.split("Analysis(")[1], (
+        "the public client's entry point must not be what this spec builds")
+
+    entry = (ROOT / "main_distributed_instructor.py").read_text(encoding="utf-8")
+    assert 'run("instructor")' in entry, "the entry point must select the instructor mode"
+
+    app_src = (ROOT / "ephemeral_ui" / "app.py").read_text(encoding="utf-8")
+    assert '"instructor"' in app_src and "InstructorBackend" in app_src, (
+        "app.run must map the instructor mode to the instructor backend")
+
+    backend_src = (ROOT / "ephemeral_ui" / "backends" / "distributed.py").read_text(
+        encoding="utf-8")
+    assert "elif self.public_swarm:" in backend_src, (
+        "the live-list bootstrap must sit behind the per-build flag")
+    assert backend_src.count("bootstrap_from_list()") == 1, (
+        "one call site only, or the flag can be bypassed")
+    assert "public_swarm = False" in backend_src and "default_private = True" in backend_src, (
+        "the instructor backend must refuse the public swarm and start private")
+    assert '"--first-run" in sys.argv' in backend_src, (
+        "the flag the installer launches with must be honoured")
+    wxs = _msi_text("Ephemeral.Distributed.Instructor.wxs")
+    assert "--first-run" in wxs, (
+        "the install-time launch is what asks for the classroom link")
+
+    from ephemeral_ui.backends.distributed import DistributedBackend, InstructorBackend
+    assert InstructorBackend.public_swarm is False, "instructor must not reach the public swarm"
+    assert DistributedBackend.public_swarm is True, (
+        "the public client keeps the swarm this build is about")
+    assert InstructorBackend.default_private is True
+    assert DistributedBackend.default_private is False, (
+        "the public client's starting mode must not change")
+    assert InstructorBackend.app_key != DistributedBackend.app_key, (
+        "the two builds must not share a tray identity, or a login entry")
+    assert InstructorBackend.display_name.startswith("Ephemeral Distributed")
+
+    # Private ON is a starting point, not a policy: applying it records
+    # nothing, the interactive first launch is what records the choice, and an
+    # explicit OFF then survives every restart.
+    saved = os.environ.get("EPHEMERAL_STATE_DIR")
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["EPHEMERAL_STATE_DIR"] = tmp
+            from ephemeral_net.swarm import PRIVATE_DEFAULT_MARKER, PRIVATE_MODE_MARKER
+            from ephemeral_ui.backends.distributed import default_state_dir
+
+            fresh = InstructorBackend()
+            assert fresh.private_checked() is False, "a fresh state dir starts switched off"
+            fresh._apply_default_mode()
+            assert fresh.private_checked() is True, (
+                "the instructor build must create its private swarm on first run")
+            assert not (default_state_dir() / PRIVATE_DEFAULT_MARKER).exists(), (
+                "applying the default must record nothing: the first interactive "
+                "launch still has to offer create-or-join")
+
+            # The teacher switches it off in the tray, then starts again.
+            fresh.toggle_private(_FakeIcon())
+            assert InstructorBackend().private_checked() is False, (
+                "the first-run default must not overrule an explicit OFF")
+            assert (default_state_dir() / PRIVATE_DEFAULT_MARKER).exists(), (
+                "the toggle is what records the choice")
+            InstructorBackend()._apply_default_mode()
+            assert InstructorBackend().private_checked() is False, (
+                "a recorded OFF must survive every later start")
+
+            # ...and the public client never switches itself into private mode.
+            DistributedBackend()._apply_default_mode()
+            assert not (default_state_dir() / PRIVATE_MODE_MARKER).exists(), (
+                "the public client must not be dragged into private mode by the "
+                "instructor build's default")
+    finally:
+        if saved is None:
+            os.environ.pop("EPHEMERAL_STATE_DIR", None)
+        else:
+            os.environ["EPHEMERAL_STATE_DIR"] = saved
+
+    print("PASS: the instructor build cannot reach the public swarm")
+
+
+def test_instructor_first_launch_offers_create_or_join():
+    """Two instructor machines can anchor one classroom swarm.
+
+    A professor's second machine should be redundancy, not a second classroom,
+    and the only thing the first machine hands them is the student link — which
+    carries the ticket in its ``#seed=`` fragment. So the first launch has to
+    accept that link and persist the ticket inside it, refuse a paste that is
+    not a seed, and ask exactly once.
+    """
+    from ephemeral_net.swarm import (
+        PRIVATE_DEFAULT_MARKER,
+        PRIVATE_MODE_MARKER,
+        PRIVATE_SEED_MARKER,
+        parse_seed_input,
+    )
+    from ephemeral_ui.backends.distributed import DistributedBackend, InstructorBackend
+
+    ticket = "endpoint" + "A1b2C3d4" * 18
+    link = f"https://xyvir.github.io/Ephemeral.exe/#seed={ticket}"
+    assert parse_seed_input(link) == ticket, "the student link must yield its ticket"
+    assert parse_seed_input(f"  {ticket}  ") == ticket
+    assert parse_seed_input(f"?seed={ticket}&x=1") == ticket
+    assert parse_seed_input("https://xyvir.github.io/Ephemeral.exe/") is None, (
+        "a link with no #seed= must never be stored as a seed")
+    assert parse_seed_input("endpoint with spaces in it") is None
+    assert parse_seed_input("not a seed at all, thanks") is None
+    assert parse_seed_input("") == "", "empty input means create-new"
+    compact = "iroh1:" + "a" * 64 + ";relay.example.org"
+    assert parse_seed_input(compact) == "a" * 64 + "@relay.example.org", (
+        "the compact form the swarm list publishes must be usable too")
+
+    # The tickets this repo actually publishes have to survive the validator,
+    # or a teacher pasting one from the live list gets refused. Checked against
+    # the checked-in list rather than a made-up string, so an iroh format change
+    # shows up here instead of in a classroom.
+    published = re.findall(r'"(endpoint[^"]+)"', (ROOT / "docs" / "swarm.json").read_text(
+        encoding="utf-8"))
+    assert published, "docs/swarm.json should publish at least one ticket"
+    for real in published:
+        assert parse_seed_input(real) == real, (
+            "a real published ticket must not be refused as unparseable")
+
+    saved = os.environ.get("EPHEMERAL_STATE_DIR")
+    shown: list[tuple[str, str]] = []
+    real_window = platform.show_terminal_window
+    platform.show_terminal_window = lambda title, body: shown.append((title, body))
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["EPHEMERAL_STATE_DIR"] = tmp
+            state = pathlib.Path(tmp)
+
+            # The runtime gate is exercised in test_prereq.py; here it is
+            # stubbed ready so a unit test never starts a container (or waits
+            # for a Podman machine that this host may not have).
+            from ephemeral_ui import prereq
+
+            real_status, real_canary = prereq.status, prereq.canary
+            prereq.status = lambda: prereq.RuntimeState("ready")
+            prereq.canary = lambda *a, **k: (True, "")
+
+            def launch(answer):
+                backend = InstructorBackend()
+                backend._ensure_cluster = lambda: None      # no node in a unit test
+                backend.current_student_url = lambda: link
+                backend._announce_private = lambda *a, **k: None
+                backend._prompt_user_for_seed = (
+                    lambda current="", prompt=None: answer
+                )
+                backend._first_launch_setup(None)
+                assert (state / PRIVATE_DEFAULT_MARKER).exists(), (
+                    "the launch must record the choice, or it will ask again")
+                return backend
+
+            def reset():
+                (state / PRIVATE_SEED_MARKER).unlink(missing_ok=True)
+                (state / PRIVATE_MODE_MARKER).unlink(missing_ok=True)
+                (state / PRIVATE_DEFAULT_MARKER).unlink(missing_ok=True)
+
+            # JOIN: the pasted link becomes the seed the node dials, which is
+            # what puts both machines in one swarm.
+            joined = launch(link)
+            assert joined.private_checked() is True
+            assert (state / PRIVATE_SEED_MARKER).read_text(encoding="utf-8").strip() == ticket, (
+                "the link's ticket must be what joins the second machine")
+
+            # CREATE: empty input, so this machine anchors its own swarm.
+            reset()
+            created = launch("")
+            assert created.private_checked() is True
+            assert not (state / PRIVATE_SEED_MARKER).exists()
+
+            # A paste that is not a seed is refused rather than written, and
+            # the machine still ends up reachable on its own swarm.
+            reset()
+            shown.clear()
+            rejected = launch("https://xyvir.github.io/Ephemeral.exe/")
+            assert rejected.private_checked() is True
+            assert not (state / PRIVATE_SEED_MARKER).exists(), (
+                "a link without #seed= must never be persisted as a seed")
+            assert shown, "the refusal has to be explained, not swallowed"
+
+            # No console to ask in: take the default rather than leave a
+            # classroom with no reachable node.
+            reset()
+            fallback = launch(None)
+            assert fallback.private_checked() is True
+            assert not (state / PRIVATE_SEED_MARKER).exists()
+
+            # The menu path takes the same forms, for a teacher who skipped it.
+            reset()
+            later = InstructorBackend()
+            later._announce_private = lambda *a, **k: None
+            later._prompt_user_for_seed = lambda current="", prompt=None: link
+            later.toggle_private(_FakeIcon())
+            assert (state / PRIVATE_SEED_MARKER).read_text(encoding="utf-8").strip() == ticket
+
+            # A join that lands while the node is still bootstrapping must
+            # still re-dial: the old swarm would otherwise stay in place,
+            # because Cluster.stop() has no node to close yet.
+            class _Cluster:
+                def __init__(self, node, starting):
+                    self.node = node
+                    self._thread = SimpleNamespace(is_alive=lambda: starting)
+                    self.calls: list[str] = []
+
+                def start(self):
+                    self.calls.append("start")
+                    self.node = object()
+
+                def stop(self):
+                    self.calls.append("stop")
+                    self.node = None
+
+            idle = InstructorBackend()
+            idle.cluster = _Cluster(None, False)
+            idle._redial_with_seed()
+            assert idle.cluster.calls == [], (
+                "before anything has dialled there is nothing to re-dial")
+
+            mid = InstructorBackend()
+            mid.cluster = _Cluster(None, True)  # a bootstrap is still running
+            mid._redial_with_seed()
+            assert mid.cluster.calls == ["start", "stop", "start"], mid.cluster.calls
+
+            # Asked once, and only by the build that asks: the public client
+            # has no classroom swarm to anchor or join.
+            asked: list[int] = []
+            again = InstructorBackend()
+            again._ensure_cluster = lambda: None
+            again._announce_private = lambda *a, **k: None
+            again._prompt_user_for_seed = (
+                lambda current="", prompt=None: asked.append(1) or ""
+            )
+            again._first_launch_setup(None)
+            assert not asked, "the create-or-join question must be offered once"
+
+            def never(*a, **k):
+                raise AssertionError("the public client must not ask where to join")
+
+            # No recorded choice here, so this proves the *build* keeps quiet,
+            # not that an old marker short-circuited the question.
+            (state / PRIVATE_DEFAULT_MARKER).unlink(missing_ok=True)
+            public = DistributedBackend()
+            public._ensure_cluster = lambda: None
+            public._announce_private = lambda *a, **k: None
+            public._prompt_user_for_seed = never
+            public._first_launch_setup(None)
+    finally:
+        prereq.status, prereq.canary = real_status, real_canary
+        platform.show_terminal_window = real_window
+        if saved is None:
+            os.environ.pop("EPHEMERAL_STATE_DIR", None)
+        else:
+            os.environ["EPHEMERAL_STATE_DIR"] = saved
+
+    print("PASS: the instructor first launch asks create-or-join")
+
+
 def test_clamav_canary_is_soft_and_reports_honestly():
     """Every outcome exits 0, and "not scanned" is never reported as "clean"."""
     for exit_code, in_output, in_summary in (
@@ -487,7 +766,7 @@ def test_ci_clamav_canary_cannot_gate_a_release():
     print("PASS: the ClamAV canary is CI-wired, non-blocking, and cannot silently skip files")
 
 
-# --- MSI: machine-wide install of the distributed beta -------------------
+# --- MSI: machine-wide install of the distributed instructor build -------------------
 
 MSI_DIR = ROOT / "packaging" / "msi"
 
@@ -498,7 +777,7 @@ def _msi_text(name):
 
 def test_msi_is_machine_wide_and_declarative():
     """The installer must serve every user, and change nothing it cannot undo."""
-    wxs = _msi_text("Ephemeral.Distributed.Beta.wxs")
+    wxs = _msi_text("Ephemeral.Distributed.Instructor.wxs")
 
     assert 'InstallScope="perMachine"' in wxs, "the MSI must install machine-wide"
     assert 'InstallPrivileges="elevated"' in wxs, (
@@ -515,16 +794,52 @@ def test_msi_is_machine_wide_and_declarative():
     marker = wxs.index('Name="Ephemeral-Distributed-Node"')
     entry = wxs[marker:marker + 400]
     assert "--node" in entry, "the machine-wide login entry must start the node"
-    assert "[INSTALLDIR]Ephemeral-Distributed-Beta.exe" in entry, (
+    assert "[INSTALLDIR]Ephemeral-Distributed-Instructor.exe" in entry, (
         "the entry must point at the installed exe, not a copy")
 
-    # Declarative only: no custom actions, no service, no scheduled task.
-    # Checked against markup, not prose: the comments above explain what is
-    # deliberately absent and must not be able to fail (or satisfy) this.
+    # Declarative apart from exactly one action: the launch that hands a
+    # teacher their classroom link. Windows Installer cannot start a program
+    # without a custom action, so the invariant is no longer "none" -- it is
+    # "one, and this one, in this shape". Checked against markup, not prose:
+    # the comments above explain what is deliberately absent and must not be
+    # able to satisfy this.
     markup = re.sub(r"<!--.*?-->", "", wxs, flags=re.S)
-    assert "<CustomAction" not in markup, (
-        "custom actions that write the registry or launch processes are the "
-        "shape installer heuristics hunt for")
+    actions = re.findall(r"<CustomAction\b[^>]*>", markup)
+    assert len(actions) == 1, (
+        "this source gets exactly one custom action (the post-install launch); "
+        f"found {len(actions)}: {actions}")
+    # ...and the built package has exactly one more, WixUIPrintEula, which the
+    # WixUI extension contributes because the feature tree shows a licence. It
+    # prints the RTF and launches nothing; anything beyond that pair is new.
+    launch = actions[0]
+    assert 'Id="LaunchInstructorFirstRun"' in launch, launch
+    assert 'Directory="INSTALLDIR"' in launch, (
+        "a type 34 action needs the install directory as its working directory")
+    assert ('ExeCommand="&quot;[INSTALLDIR]Ephemeral-Distributed-Instructor.exe&quot;'
+            ' --first-run"') in launch, (
+        "type 34 requires the full executable path in ExeCommand, and --first-run "
+        "is what makes the app hand over the classroom link")
+    assert 'Impersonate="yes"' in launch, (
+        "the tray has to appear in the installing user's session, not SYSTEM's")
+    assert 'Return="asyncNoWait"' in launch, (
+        "a tray that fails to start must not wedge the installer")
+    for dangerous in ("ShellExecute", "cmd.exe", "powershell", "runas",
+                      "wscript", "cscript", "RunAs"):
+        assert dangerous not in markup, (
+            f"{dangerous!r} is the shape installer heuristics hunt for; the one "
+            "action launches the installed exe and nothing else")
+    # ...and it may only fire when a person is watching setup finish.
+    sequence = re.search(r"<InstallExecuteSequence>(.*?)</InstallExecuteSequence>",
+                         markup, re.S)
+    assert sequence, "the launch must be sequenced explicitly"
+    publish = sequence.group(1)
+    assert 'Action="LaunchInstructorFirstRun"' in publish, publish
+    assert "InstallFinalize" in publish, (
+        "the launch runs after the files are on disk, not while they are")
+    for guard in ("NOT Installed", "NOT REMOVE", "UILevel <> 2"):
+        assert guard in publish, (
+            f"{guard!r} must guard the launch: it must not run on uninstall, on "
+            "repair, or during a silent /qn deployment")
     for forbidden in ("ServiceInstall", "ServiceControl", "schtasks", "sc create"):
         assert forbidden not in markup, f"{forbidden} must not appear in the installer"
     assert "UpgradeCode=\"00B73DB1-B66B-4A71-9AE7-3C3E9E1C6971\"" in wxs, (
@@ -552,9 +867,9 @@ def test_msi_is_machine_wide_and_declarative():
     assert "Ephemeral-Distributed-Node" in workflow, (
         "the machine-wide Run value is the claim this package makes, so CI has "
         "to check it and not only that files landed")
-    assert "--artifact dist/Ephemeral-Distributed-Beta.msi" in workflow, (
+    assert "--artifact dist/Ephemeral-Distributed-Instructor.msi" in workflow, (
         "the MSI's hash must reach the build manifest consumers verify against")
-    assert "dist/Ephemeral-Distributed-Beta.msi" in workflow, (
+    assert "dist/Ephemeral-Distributed-Instructor.msi" in workflow, (
         "the MSI must be among the release's uploaded files")
     print("PASS: the MSI installs machine-wide, per-machine resources only, declaratively")
 
@@ -658,8 +973,10 @@ def main():
     test_node_flag_runs_the_headless_node_without_a_gui()
     test_node_hooks_are_inert_without_a_node()
     test_distributed_menu_offers_a_login_scoped_node()
-    test_beta_bundle_is_not_a_self_extractor()
-    test_ci_builds_and_ships_the_beta_bundle()
+    test_instructor_bundle_is_not_a_self_extractor()
+    test_instructor_build_cannot_join_the_public_swarm()
+    test_instructor_first_launch_offers_create_or_join()
+    test_ci_builds_and_ships_the_instructor_bundle()
     test_clamav_canary_is_soft_and_reports_honestly()
     test_ci_clamav_canary_cannot_gate_a_release()
     test_msi_is_machine_wide_and_declarative()

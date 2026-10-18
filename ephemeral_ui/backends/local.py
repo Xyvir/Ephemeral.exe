@@ -190,10 +190,12 @@ class LocalBackend(Backend):
         if content is None:
             content = platform.get_clipboard()
 
-        # Safety check: reject previous Ephemeral output (same as original)
-        if (re.search(r"^## (Run|Result) .*[\r\n]+```text", content.strip(), re.MULTILINE)
+        # Safety check: reject previous Ephemeral output (same as original).
+        # `{3,}` because a result fence grows past three backticks whenever its
+        # body contains ``` of its own (see executor._md_fence).
+        if (re.search(r"^## (Run|Result) .*[\r\n]+`{3,}text", content.strip(), re.MULTILINE)
                 or re.search(r"^Result \(.*\):[\r\n]+---[\r\n]+", content.strip(), re.MULTILINE)
-                or re.search(r"^--- Run \d+ \(.*\) ---\n```text", content.strip(), re.MULTILINE)):
+                or re.search(r"^--- Run \d+ \(.*\) ---\n`{3,}text", content.strip(), re.MULTILINE)):
             icon.notify("Clipboard contains previous results. Execution halted.", title="Ephemeral Safety")
             return
 

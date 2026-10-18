@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ephemeral Distributed (Instructor) — one-download setup.
+
+  Why a bundle and not the MSI: a classroom PC that has never run a container
+  needs two machine-level things before the app is useful at all.
+
+    1. WSL2, an optional Windows feature. Enabling it needs elevation and, on
+       first enablement, a reboot. A WiX MSI cannot own that: Windows Installer
+       cannot roll a DISM change back, and the reboot ends its transaction.
+    2. Podman, which brings the container runtime and its own WSL machine image.
+
+  So this bundle chains them and hands the machine to the MSI last. The MSI
+  itself still contains exactly one custom action (the post-install launch) and
+  never provisions a prerequisite on its own — see
+  packaging/msi/Ephemeral.Distributed.Instructor.wxs and test_ui.py, which pin
+  that.
+
+  The per-user half (creating the Podman machine and proving it can run a
+  container) deliberately does NOT happen here: it must run as the teacher, not
+  as the elevated installer, so it belongs to the app's first launch
+  (ephemeral_ui/prereq.py + DistributedBackend._announce_first_run).
+
+  Group policy: this bundle elevates once, at launch, because the user asked to
+  install; the app inside never elevates itself, and uninstalling never disables
+  WSL2 or removes Podman (both prerequisite packages are Permanent="yes").
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:bal="http://schemas.microsoft.com/wix/BalExtension">
+  <Bundle Name="Ephemeral Distributed (Instructor) Setup"
+          Version="$(var.ProductVersion)"
+          Manufacturer="Dunko Xyvir"
+          UpgradeCode="{7E4C1A52-6F2B-4E8D-9C3A-5B1D2E9F4A07}"
+          AboutUrl="https://github.com/Xyvir/Ephemeral.exe"
+          Compressed="yes">
+    <!-- One "Install" button. WixStdBA's LaunchTarget is a courtesy: the real
+         announcement is the MSI's own launch action (below), which is
+         impersonated and outlives the bundle's exit, so the tray and the
+         classroom link survive a setup window the user closes immediately. -->
+    <BootstrapperApplicationRef Id="WixStandardBootstrapperApplication.HyperlinkLicense">
+      <bal:WixStandardBootstrapperApplication SuppressOptionsUI="yes"
+                                             LicenseUrl=""
+                                             LaunchTarget="[ProgramFiles64Folder]Ephemeral-Distributed-Instructor\Ephemeral-Distributed-Instructor.exe"
+                                             LaunchTargetElevatedId="LaunchApp" />
+    </BootstrapperApplicationRef>
+
+    <Chain>
+      <!-- WSL2, via the app's own headless entry point.
+
+           There is no redistributable WSL installer to chain, so the app
+           carries the logic (the setup-prereqs switch): it enables
+           Microsoft-Windows-Subsystem-Linux and VirtualMachinePlatform with
+           DISM /norestart, then fetches the WSL runtime. It exits immediately
+           when WSL2 is already ready, which is what makes this safe to run on
+           repair — and it is the only custom action in this bundle.
+
+           No DetectCondition on purpose: Burn has no registry probe for an
+           optional Windows feature, and a wrong probe here would either skip a
+           needed install or re-run a destructive one. The executable is the
+           detector, and it is idempotent.
+
+           3010 (ERROR_SUCCESS_REBOOT_REQUIRED) is the documented DISM answer
+           for "enabled, restart to activate" — Burn turns it into a real
+           reboot instead of pretending setup finished. 740 is DISM's
+           "elevation required"; the bundle runs elevated, so seeing it means
+           the machine refused, not that the user forgot a UAC prompt. -->
+      <ExePackage Id="Wsl2"
+                  DisplayName="Windows Subsystem for Linux 2 (WSL2)"
+                  SourceFile="$(var.BundleDir)\Ephemeral-Distributed-Instructor.exe"
+                  InstallCommand="--setup-prereqs"
+                  UninstallCommand="--noop"
+                  Permanent="yes"
+                  Vital="yes"
+                  Compressed="yes">
+        <ExitCode Value="3010" Behavior="forceReboot" />
+        <ExitCode Value="740" Behavior="error" />
+      </ExePackage>
+
+      <!-- Podman, per-user scope as documented for its Windows installer.
+
+           Vital="no": a machine that already carries a different Podman build
+           returns 1638 ("another version is installed"), and rolling the whole
+           setup back over that would leave a teacher with nothing and no
+           explanation. The app's first run diagnoses a missing runtime
+           precisely instead.
+
+           Permanent="yes": a teacher may use Podman for other courses; removing
+           Ephemeral must not take their container runtime with it. -->
+      <MsiPackage Id="Podman"
+                  DisplayName="Podman (container runtime)"
+                  SourceFile="$(var.PodmanMsi)"
+                  DisplayInternalUI="no"
+                  Permanent="yes"
+                  Vital="no"
+                  Compressed="yes">
+        <MsiProperty Name="MSIINSTALLPERUSER" Value="1" />
+        <MsiProperty Name="MACHINE_PROVIDER" Value="wsl" />
+        <ExitCode Value="1638" Behavior="success" />
+      </MsiPackage>
+
+      <!-- The app. LAUNCHFIRSTRUN=1 opts the post-install launch back in:
+           Burn installs MSIs quietly, and the silent guard in the MSI would
+           otherwise suppress exactly the thing setup exists to show. -->
+      <MsiPackage Id="EphemeralInstructor"
+                  DisplayName="Ephemeral Distributed (Instructor)"
+                  SourceFile="$(var.AppMsi)"
+                  DisplayInternalUI="no"
+                  Vital="yes"
+                  Compressed="yes">
+        <MsiProperty Name="LAUNCHFIRSTRUN" Value="1" />
+      </MsiPackage>
+    </Chain>
+  </Bundle>
+</Wix>

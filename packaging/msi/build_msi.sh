@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Build the Ephemeral Distributed (beta) MSI from a onedir bundle.
+# Build the Ephemeral Distributed (Instructor) MSI from a onedir bundle.
 # ============================================================================
 #
-# packaging/ephemeral-distributed-beta.spec produces a folder (the tray exe
+# packaging/ephemeral-distributed-instructor.spec produces a folder (the tray exe
 # plus its _internal payload). This wraps that folder in a machine-wide MSI, so
 # a professor installs the app instead of unzipping it — and so a lab can deploy
 # or remove it unattended (elevation is required: it writes %ProgramFiles% and
 # the machine-wide Run key; run these from an elevated prompt or a deployment
 # tool):
 #
-#   msiexec /i Ephemeral-Distributed-Beta.msi /qn
-#   msiexec /i Ephemeral-Distributed-Beta.msi /qn ADDLOCAL=ApplicationFiles
-#   msiexec /i Ephemeral-Distributed-Beta.msi /qn REMOVE=NodeAtLogin
-#   msiexec /x Ephemeral-Distributed-Beta.msi /qn
+#   msiexec /i Ephemeral-Distributed-Instructor.msi /qn
+#   msiexec /i Ephemeral-Distributed-Instructor.msi /qn ADDLOCAL=ApplicationFiles
+#   msiexec /i Ephemeral-Distributed-Instructor.msi /qn REMOVE=NodeAtLogin
+#   msiexec /x Ephemeral-Distributed-Instructor.msi /qn
 #
 # Usage:
 #   bash packaging/msi/build_msi.sh <bundle-dir> <output.msi> [product-version]
@@ -69,8 +69,8 @@ if [ "$v_major" -ge 256 ] || [ "$v_minor" -ge 256 ] || [ "$v_build" -ge 65536 ];
     exit 2
 fi
 
-[ -f "$BUNDLE/Ephemeral-Distributed-Beta.exe" ] || {
-    echo "not a distributed-beta bundle (missing Ephemeral-Distributed-Beta.exe): $BUNDLE" >&2
+[ -f "$BUNDLE/Ephemeral-Distributed-Instructor.exe" ] || {
+    echo "not a distributed-instructor bundle (missing Ephemeral-Distributed-Instructor.exe): $BUNDLE" >&2
     exit 2
 }
 
@@ -122,7 +122,7 @@ echo "==> compiling (version $VERSION)"
     -dSourceDir="$(win "$BUNDLE")" \
     -dProductVersion="$VERSION" \
     -dLicenseRtf="$(win "$HERE/license.rtf")" \
-    -out "$(win "$WORK/Product.wixobj")" "$(win "$HERE/Ephemeral.Distributed.Beta.wxs")"
+    -out "$(win "$WORK/Product.wixobj")" "$(win "$HERE/Ephemeral.Distributed.Instructor.wxs")"
 # The harvested fragment resolves every File/@Source through $(var.SourceDir),
 # so it needs the same binding as the product source above.
 "$WIX_BIN/candle.exe" -nologo -arch x64 \

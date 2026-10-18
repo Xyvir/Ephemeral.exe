@@ -69,7 +69,7 @@ summary() {
     return 0
 }
 
-# Zips are unpacked first so their contents get scanned — the distributed-beta
+# Zips are unpacked first so their contents get scanned — the distributed-instructor
 # artifact ships a whole folder inside a zip, and the folder is the point.
 for target in "${TARGETS[@]}"; do
     [ -d "$target" ] || continue

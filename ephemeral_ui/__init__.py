@@ -8,8 +8,10 @@ the backend from an explicit build mode:
 
 * ``local``       — local Podman execution
 * ``distributed`` — the iroh cluster (per-user node)
+* ``instructor``  — the classroom build: the distributed client without the
+                    public swarm, so the node is its own private swarm or local
 
-The two entry points (``main_local.py``, ``main_distributed_client.py``)
-are thin, immutable mode selectors. They never infer the mode from the
+The entry points (``main_local.py``, ``main_distributed_client.py``,
+``main_distributed_instructor.py``) are thin, immutable mode selectors. They never infer the mode from the
 executable filename or a user-controlled setting.
 """
