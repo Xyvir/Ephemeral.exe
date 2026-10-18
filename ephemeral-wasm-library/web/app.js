@@ -651,20 +651,9 @@ function setPreviewHighlight(idx) {
   if (groups.length !== fenceInfo(editor.getValue()).length) return;
   const group = groups[idx];
   if (!group || !group.length) return;
+  // Highlight only — the page's scroll position is the reader's, so hovering a
+  // pill lights the fence up in place and never scrolls it into view.
   for (const el of group) el.classList.add("block-hover");
-  revealPreviewBlock(group);
-}
-
-// Bring a highlighted block into view — but only when it is off screen, so
-// sweeping across the pills doesn't yank the page around.
-function revealPreviewBlock(group) {
-  const first = group[0];
-  const last = group[group.length - 1];
-  const top = first.getBoundingClientRect().top;
-  const bottom = last.getBoundingClientRect().bottom;
-  const margin = 80; // leave room for the sticky toolbar above / dock below
-  if (top >= margin && bottom <= window.innerHeight - margin) return;
-  first.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
 // Every pill that belongs to a fence points back at it: hovering (or focusing)
@@ -873,17 +862,19 @@ function updateLangStatus() {
     group.appendChild(chip);
     // Artifact pills: the block references /output, so the run is expected to
     // return a downloadable artifact (single images preview inline). One pill
-    // per declared name, so two outputs give three edge-sharing pills.
+    // per declared name, so two outputs give three edge-sharing pills. The 📦
+    // doubles as the "has it been generated yet?" marker: it stays grey (label
+    // muted) until a run actually returns that file, then the pill becomes a
+    // full-colour one-click download — see syncArtifactChips.
     const artifactNames = artifactNamesFromScript(f.body);
     if (/(?<![\w/])\/output(?=[/'"\s]|$)/.test(f.body || "")) {
       for (const name of artifactNames.length ? artifactNames : [null]) {
         const achip = document.createElement("span");
-        achip.className = "lang-chip artifact";
-        achip.textContent = name ? "📦 " + shortPillName(name) : "📦 artifact";
+        achip.className = "lang-chip artifact artifact-pending";
+        achip.appendChild(artifactGlyph());
+        achip.appendChild(document.createTextNode(name ? " " + shortPillName(name) : " artifact"));
         if (name) achip.dataset.name = name;
-        achip.title = name
-          ? `writes ${name} to /output — returned as a downloadable artifact after the run (images preview inline)`
-          : "writes to /output — returned as a downloadable artifact after the run (images preview inline)";
+        achip.title = pendingArtifactTitle(name);
         linkPillToBlock(achip, i);
         group.appendChild(achip);
       }
@@ -1419,11 +1410,24 @@ function docMatchesRun(segs) {
 // Placeholder under a code block that has no result yet: nothing has run, the
 // block was added after the run, or its code changed since. Without it an
 // unrun block would just silently have no output area.
-function pendingElement(seg) {
+function pendingElement(seg, state) {
   const div = document.createElement("div");
   div.className = "block pending";
-  div.textContent =
+  let text =
     "▶ not run — press Run to execute this " + (seg.lang || "code") + " block";
+  // Mid-run the block's own state is the truth: a block in flight is not
+  // "not run", and in a chain the block below is queued behind the one above
+  // it, not waiting for a click.
+  if (state && state.status === "running") {
+    text = "⏳ running this " + (seg.lang || "code") + " block — results appear here when it finishes";
+  } else if (state && state.status === "queued" && state.chained) {
+    text = "⏳ queued — runs as soon as the block above it finishes";
+  } else if (state && state.status === "failed") {
+    // A failed block's envelope lands in the panel's stderr, so without this
+    // the placeholder would claim it was never run at all.
+    text = "✕ this " + (seg.lang || "code") + " block failed — its error is below";
+  }
+  div.textContent = text;
   return div;
 }
 
@@ -1452,11 +1456,16 @@ function renderInterleaved() {
     runArtifacts.length === results.length &&
     pairs.size === runnableFences(segs).length;
   let ai = 0;
+  // fenceInfo() and splitMarkdown() walk the same fences in document order, so
+  // counting code segments gives the blockStates key for this segment (fence
+  // blocks with no header are skipped by fenceInfo, hence the header guard).
+  let fenceIdx = -1;
   segs.forEach((seg, i) => {
     if (seg.type === "prose") {
       box.appendChild(renderProseSeg(seg));
       return;
     }
+    fenceIdx++;
     box.appendChild(renderCodeSeg(seg));
     if (seg.isSeed) return;
     if (pairs.has(i)) {
@@ -1467,7 +1476,10 @@ function renderInterleaved() {
         );
       }
     } else {
-      box.appendChild(pendingElement(seg));
+      const state = blockStates.get(fenceIdx);
+      box.appendChild(
+        pendingElement(seg, state && state.header === seg.header ? state : null)
+      );
     }
   });
   leftoverArtifacts = inlineAll ? [] : runArtifacts;
@@ -2076,6 +2088,10 @@ async function submitChained(submissions) {
   for (const sub of submissions) {
     sub.state.status = "running";
     applyBlockStatus(sub.state);
+    // Repaint as the chain advances so the placeholder under this block says
+    // it is running (not still queued) while it works. A lone pill re-run is
+    // not a chain and keeps the previous panel on screen while it streams.
+    if (sub.state.chained) paintRunProgress();
     const doc = carrying ? carrying + "\n" + sub.doc : sub.doc;
     try {
       results.push({
@@ -2120,6 +2136,10 @@ function makeBlockEventHandler(blockIdx) {
       };
       state.artifacts.push(a);
       applyBlockStatus(state);
+      // The artifact pill's 📦 goes full colour the moment the file lands, even
+      // on a fan-out run whose output panel is only painted once every block
+      // has finished.
+      syncArtifactChips();
     } else if (evt.type === "job_done") {
       // Routing is by construction: each sub-job's handler is attached to its
       // own stream, so never filter on evt.job_id here — the wasm client's
@@ -2133,11 +2153,16 @@ function makeBlockEventHandler(blockIdx) {
       // semantics as the output panel's yellow warnings toggle.
       state.warn = state.exitCode === 0 && String(state.stderr || "").trim().length > 0;
       applyBlockStatus(state);
+      // A chained run shows each block's result the moment it lands instead of
+      // holding the whole chain's output until the last block exits, so the
+      // panel reacts to the run as it progresses.
+      if (state.chained) paintRunProgress();
     } else if (evt.type === "error") {
       state.errors.push(String(evt.message || "rejected"));
       state.status = "failed";
       state.exitCode = state.exitCode ?? 1;
       applyBlockStatus(state);
+      if (state.chained) paintRunProgress();
     }
   };
 }
@@ -2187,8 +2212,11 @@ function initBlockStates(fences) {
 function blockStatusVisual(state) {
   if (state.status === "queued") {
     // A queued chain block is not working yet: it is waiting for the block
-    // above it, so it gets a "..." instead of the running spinner.
-    return { cls: "waiting", icon: "..." };
+    // above it, so it gets the waiting class instead of the running spinner.
+    // The three dots are drawn in CSS (.chip-run::before) rather than typed, so
+    // they fill the same fixed status slot as the spinner and the check mark
+    // and the pill keeps one width through every state.
+    return { cls: "waiting", icon: "" };
   }
   if (state.status === "running") {
     return { cls: "running", icon: "" }; // spinner drawn via CSS
@@ -2464,6 +2492,10 @@ async function run() {
     // Chained: only the first block is live; the rest show "..." until
     // submitChained flips each one to running in turn.
     for (const sub of submissions) applyBlockStatus(sub.state);
+    // Put the document on screen with every block pending before the first
+    // run lands, so the box reacts from the first second (and the per-block
+    // placeholders say what each queued block is waiting for).
+    paintRunProgress();
   }
 
   // Transport-level failures (relay drop, node unreachable) surface as promise
@@ -2496,6 +2528,15 @@ async function run() {
   const { ran, failed } = mergeBlockResults();
 
   // Rebuild the merged result + stderr the same way the single-job path did.
+  // A chained run already painted the earlier blocks into the panel as they
+  // landed, and the results-only view is built by appending to the box — so
+  // start from a clean panel and a clean copy source, or the merged envelopes
+  // would land on screen (and in Copy output) a second time.
+  if (chained) {
+    outputRaw = "";
+    $("output").textContent = "";
+    lastStderrEl = null;
+  }
   if (lastResultText) appendResult(lastResultText);
   if (lastStderr) appendStderr(lastStderr, lastExitCode);
   else $("warnings").hidden = true;
@@ -2640,12 +2681,6 @@ async function rerunBlock(idx) {
   for (const state of blockStates.values()) {
     if (state.exec && state.status === "queued") state.status = "idle";
   }
-  // Repaint the carried-over results: typing rebuilt the pill row (the editor's
-  // onChange runs updateLangStatus), which drops the status overlays.
-  for (const state of blockStates.values()) {
-    if (state.exec && state.status !== "idle") applyBlockStatus(state);
-  }
-
   // Queue exactly what this click runs: the clicked block alone, or a chained
   // replay from the root. Only the first is live; the rest wait their turn
   // and say so with a "..." pill (submitChained flips them in order).
@@ -2655,9 +2690,6 @@ async function rerunBlock(idx) {
     state.chained = chained;
     state.status = "queued";
     state.nodeId = targets.get(i).node_id || (manual ? "(manual)" : null);
-    // A lone re-run flips straight to running in submitChained; the waiting
-    // "..." is only meaningful for the blocks queued behind a chain.
-    if (chained) applyBlockStatus(state);
   }
   if (chained) {
     // Replaying the chain replaced the inputs every later block ran on, so
@@ -2668,8 +2700,23 @@ async function rerunBlock(idx) {
       if (!state.exec) continue;
       resetBlockRun(state);
       state.status = "idle";
-      applyBlockStatus(state);
     }
+  }
+
+  // Rebuild the pill row from the live document, then re-derive what every
+  // other block has already produced. This is what puts a re-running block's
+  // artifact pills back to "not generated yet" (grey 📦) instead of leaving
+  // the previous run's download pill clickable while the new run is in flight.
+  updateLangStatus();
+  syncArtifactChips();
+  // The rebuild above wiped every status overlay (they live in the pill DOM,
+  // so any updateLangStatus call — including the editor's onChange — drops
+  // them), so re-apply what each block was showing. A lone re-run flips
+  // straight to running in submitChained, so it gets no waiting marker.
+  for (const state of blockStates.values()) {
+    if (!state.exec || state.status === "idle") continue;
+    if (state.status === "queued" && !chained) continue;
+    applyBlockStatus(state);
   }
 
   const submissions = runIdxs.map((i) =>
@@ -2682,6 +2729,9 @@ async function rerunBlock(idx) {
   // chained replay share the same status transitions.
   runInFlight = true; // streamed logs own the box until the re-render below
   setBusy(true);
+  // A chained replay reacts the same way a full run does: the queued document
+  // goes up first, then each block's result lands as that block finishes.
+  if (chained) paintRunProgress();
   try {
     const results = await submitChained(submissions);
     for (let i = 0; i < submissions.length; i++) {
@@ -2737,29 +2787,101 @@ function paintMergedOutput() {
   syncTryItHere();
 }
 
+// Paint the results of the blocks that have finished so far, mid-run. A
+// chained run only produced output once the whole chain was done, so a student
+// watching four dependent blocks saw nothing but logs until the last one
+// exited, even though block 1 had finished seconds earlier. This rebuilds the
+// panel from the merged per-block states (exactly what the final render uses),
+// so each block's result — and its real artifact pills — appear under that
+// block the moment it lands, while the blocks still waiting stay placeholders.
+// Chained only: a fan-out run's blocks all land through one allSettled, and a
+// lone pill re-run has a single block, so neither has a visible gap to fill.
+// The caller owns `runInFlight`; the live-preview scheduler stays stood down.
+function paintRunProgress() {
+  if (!runInFlight) return;
+  mergeBlockResults();
+  outputRaw = lastResultText
+    ? (lastResultText.endsWith("\n") ? lastResultText : lastResultText + "\n") + "\n"
+    : "";
+  lastOutputRaw = outputRaw;
+  if (lastStderr && lastExitCode === 0) showWarningsButton();
+  setInterleaved(effectiveInterleave());
+  if (interleaved) renderInterleaved();
+  else renderNormal();
+  // The declaration-time hints for a finished block become real, one-click
+  // downloads as that block lands rather than all at once at the end.
+  syncArtifactChips();
+}
+
+// The 📦 marker lives in its own span so the pill's label colour and the
+// marker's greyness are separate signals, and so greying it can never change
+// the pill's width: the glyph keeps its advance either way.
+function artifactGlyph() {
+  const g = document.createElement("span");
+  g.className = "pill-art";
+  g.textContent = "📦";
+  return g;
+}
+
+// Tooltip for an artifact pill the run has not returned yet — and for a
+// declared name whose run finished without producing it.
+function pendingArtifactTitle(name) {
+  const what = name ? `writes ${name} to /output` : "writes to /output";
+  return `${what} — not generated yet: this pill becomes a one-click download once a run returns the file (images preview inline)`;
+}
+
+function missingArtifactTitle(name) {
+  return name
+    ? `declares ${name} in /output, but the last run of this block did not produce it`
+    : "writes to /output, but the last run of this block returned no artifact";
+}
+
 // Reflect the artifacts a run actually returned as clickable pills: each
 // block's pre-run "writes to /output" hint becomes one pill per file, and a
 // click downloads exactly that file (the rolled-up artifact block still zips
 // the whole run together).
+//
+// The declaration-time pills also carry the "generated yet?" signal, so this
+// settles them too: the one whose file came back is replaced by the real
+// download pill, and a name the run finished without producing is struck
+// through instead of silently promising a file that is not there. Both passes
+// are idempotent, so this runs once per landing artifact as well as at the end.
 function syncArtifactChips() {
   for (const el of document.querySelectorAll("#langStatus .lang-chip.artifact-ready")) {
     el.remove();
   }
   for (const [idx, state] of blockStates) {
-    if (!state.exec || !state.artifacts.length) continue;
+    if (!state.exec) continue;
     const chip = document.querySelector(`#langStatus .lang-chip.lang-name[data-idx="${idx}"]`);
     if (!chip) continue;
-    // The declaration-time placeholders are redundant once the real names are
-    // known (and they must go before the per-file pills are inserted).
+    const produced = new Set(state.artifacts.map((a) => a.name));
+    // A block is settled once its run is over, so a declared name it did not
+    // return is MISSING rather than still pending. A block that has not run (or
+    // is still queued/running) keeps its pills pending.
+    const settled =
+      state.status === "done" || state.status === "failed" || state.status === "no-match";
     for (const ph of document.querySelectorAll(
-      `#langStatus .lang-chip.artifact:not(.artifact-ready)[data-idx="${idx}"]`
-    )) ph.remove();
+      `#langStatus .lang-chip.artifact-pending[data-idx="${idx}"]`
+    )) {
+      const name = ph.dataset.name || "";
+      // A generic pill stands for a /output path the script builds at runtime,
+      // so any returned file satisfies it.
+      const got = name ? produced.has(name) : produced.size > 0;
+      if (got) {
+        ph.remove(); // the real, full-colour download pill replaces it
+        continue;
+      }
+      ph.classList.toggle("artifact-missing", settled);
+      ph.title = settled ? missingArtifactTitle(name) : pendingArtifactTitle(name);
+    }
+    if (!state.artifacts.length) continue;
     const lang = String(state.lang).replace(/[^a-zA-Z0-9]/g, "_");
     let anchor = chip;
     for (const a of state.artifacts) {
       const achip = document.createElement("span");
       achip.className = "lang-chip artifact artifact-ready";
-      achip.textContent = "📦 " + shortPillName(a.name);
+      achip.appendChild(artifactGlyph());
+      achip.appendChild(document.createTextNode(" " + shortPillName(a.name)));
       achip.dataset.name = a.name;
       achip.title = `download ${a.name} — produced by this ${state.lang} block`;
       achip.setAttribute("role", "button");

@@ -28,7 +28,13 @@ by default, or a self-hosted one.
   under the editor are live controls: hovering one highlights its fence in
   the editor, clicking a supported language pill re-runs **just that block**
   (the other blocks keep their results), and a pill for a returned artifact
-  downloads that single file. A block's declaration pill and its artifact
+  downloads that single file. An artifact pill also says whether its file
+  exists yet: the `📦` is **grey with a muted label** until a run actually
+  returns that name, then full colour as a one-click download, and a name the
+  run finished without producing is struck through instead of promising a
+  file that is not there. Only paint changes between those states — the glyph
+  keeps its advance — so an artifact pill never changes width. A block's
+  declaration pill and its artifact
   pills are drawn as one joined group with shared straight edges, so a row
   reads as that block's declaration plus its outputs. A seedfile is
   adjacent to the block that reads it by design, so its pill joins that
@@ -40,8 +46,15 @@ by default, or a self-hosted one.
   In a `chain` document
   one block cannot run in isolation, so a pill click replays the chain from
   its root instead (and drops the now-stale results below it); while a
-  chain run is in flight the queued pills show a `...` waiting marker
-  instead of the running spinner. The trailing `i` pill lists every
+  chain run is in flight the queued pills show a three-dot waiting marker
+  instead of the running spinner, drawn inside a fixed-width status slot so
+  a pill keeps the same width as its block moves waiting → running → done.
+  Chain output is **reactive**: each block's
+  result — and its real artifact pills — lands in the panel the moment that
+  block exits, so a slow block at the end of a chain no longer holds back the
+  blocks above it, and the interleaved view's placeholder for a waiting block
+  says `⏳ queued — runs as soon as the block above it finishes` instead of
+  claiming it was never run. The trailing `i` pill lists every
   supported
   language, each with a one-sentence explanation (from `web/blurbs.js`) on
   hover, so a name like `cjam` or `piet` is never just a mystery token. The

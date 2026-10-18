@@ -207,9 +207,11 @@ textarea { min-height: 150px; resize: vertical; }
 .lang-status[hidden] { display: none; }
 
 /* Per-block run status lives INSIDE the language pills: grey + spinner while
-   running, "..." while a chained block waits for the one above it, green check
-   on success, yellow triangle on warnings (clean exit with stderr), red x on
-   failure - see the .lang-chip.waiting/running/done/warn/err rules below.
+   running, three dots while a chained block waits for the one above it, green
+   check on success, yellow triangle on warnings (clean exit with stderr), red x
+   on failure - see the .lang-chip.waiting/running/done/warn/err rules below.
+   Every state fills the same fixed-width slot, so a pill never changes width
+   as its block changes state.
 */
 .lang-chip {
   font: 12px ui-monospace, Consolas, monospace;
@@ -228,6 +230,21 @@ textarea { min-height: 150px; resize: vertical; }
 .lang-chip.invalid { border-color: #8a5a1e; color: #ffb86b; }
 .lang-chip.file { border-color: #444; color: var(--muted); }
 .lang-chip.artifact { border-color: #1e4a6e; color: #6db3ff; }
+/* An artifact pill is a promise before the run and a download after it, and
+   its 📦 says which: grey while the file has not been generated, full colour
+   once it has been. Only paint changes, never geometry — greyscale and opacity
+   leave the glyph's advance alone, so a pill keeps one width through every
+   state (the same rule the status slot below follows). A declared name whose
+   run finished without producing it stays grey and is struck through: a pill
+   for a file that is not there, rather than a promise that stays pending
+   forever. */
+.lang-chip.artifact-pending { color: var(--muted); }
+.lang-chip.artifact-pending .pill-art {
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+.lang-chip.artifact-missing .pill-art { opacity: 0.3; }
+.lang-chip.artifact-missing { text-decoration: line-through; }
 
 /* Pills that belong to one fence (the language declaration plus the
    artifact pills it writes) form a group: their shared edge is squared
@@ -305,24 +322,60 @@ textarea { min-height: 150px; resize: vertical; }
 .lang-chip.done { border-color: #2d5a2d; color: var(--ok); }
 .lang-chip.warn { border-color: #8a7a1e; color: #ffd76b; }
 .lang-chip.err { border-color: #5a2d2d; color: var(--err); }
-.chip-run { display: inline-block; margin-right: 4px; }
-.chip-run:empty { display: none; }
+
+/* The status slot: a fixed 10px box at the head of the pill, so a block's pill
+   keeps the same width as it moves waiting -> running -> done. A monospace
+   `...` was wider than the spinner and the check mark it became, which made
+   the whole dock reflow mid-run. The slot is only reserved once a block HAS a
+   status - an idle pill never ran, so it carries no indicator and no dead
+   space. */
+.chip-run {
+  display: none;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  text-align: center;
+  /* The glyph's own line box must not outgrow the 10px slot: a taller line box
+     makes the chip 0.6px taller on ✓/⚠/✕ than on the spinner. */
+  line-height: 10px;
+  vertical-align: -1px;
+}
+.lang-chip.waiting .chip-run,
+.lang-chip.running .chip-run,
+.lang-chip.done .chip-run,
+.lang-chip.warn .chip-run,
+.lang-chip.err .chip-run { display: inline-block; }
+
+/* A chained run queues blocks behind the one in flight. The three dots are
+   drawn (2px each, 4px apart) rather than typed: they sit closer together than
+   a monospace `...` and span exactly the 10px the spinner and the status
+   glyphs occupy, so the waiting mark changes neither the mark's weight nor the
+   pill's width. They blink while the block waits. */
+.lang-chip.waiting { border-color: #3a3a3a; color: var(--muted); background: #1e1e1e; }
+.lang-chip.waiting .chip-run {
+  position: relative;
+  animation: chip-wait 1.4s ease-in-out infinite;
+}
+.lang-chip.waiting .chip-run::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 0;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 4px 0 0 currentColor, 8px 0 0 currentColor;
+}
 .lang-chip.running .chip-run {
-  display: inline-block;
-  width: 9px;
-  height: 9px;
+  /* border-box, so the 2px ring stays inside the 10px slot the glyphs use. */
+  box-sizing: border-box;
   border: 2px solid rgba(255, 255, 255, 0.25);
   border-top-color: var(--muted);
   border-radius: 50%;
-  vertical-align: -1px;
   animation: chip-spin 0.8s linear infinite;
 }
 @keyframes chip-spin { to { transform: rotate(360deg); } }
-
-/* A chained run queues blocks behind the one in flight. The "..." pill says
-   "waiting for the block above me" instead of looking idle or already busy. */
-.lang-chip.waiting { border-color: #3a3a3a; color: var(--muted); background: #1e1e1e; }
-.lang-chip.waiting .chip-run { animation: chip-wait 1.4s ease-in-out infinite; }
 @keyframes chip-wait { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
 
 /* Disclaimer directly under the Run buttons. */
