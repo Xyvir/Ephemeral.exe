@@ -1565,8 +1565,29 @@ class DistributedBackend(Backend):
                               checked=lambda i: self.check_node_autostart()),
                 platform.item('Pre-hydrate All Images', lambda icon, i: self.on_prehydrate_all(icon, i)),
                 platform.item('Repair runtime', lambda icon, i: self.repair_runtime(icon, i)),
+                platform.item('Install Podman Desktop', lambda icon, i: self.show_podman_guide(icon, i)),
             )),
         )
+
+    def show_podman_guide(self, icon, item_unused=None):
+        """The vendor route, for a PC where Ephemeral's own setup cannot run.
+
+        Installed from the MSI or the zip, or on a machine whose policy refuses
+        an unsigned installer, a teacher still needs the engine — and Podman
+        Desktop is the officially supported way to get it. The browser is
+        opened to the vendor's page, and the same steps stay in the terminal
+        window, because a machine with no registered browser is exactly the
+        kind of machine that ends up here.
+
+        Order is the point, not a detail: Podman Desktop does not enable WSL2,
+        so the guide puts WSL2 first (see ``prereq.desktop_guide``). Nothing
+        here installs anything itself.
+        """
+        title, body = prereq.desktop_guide()
+        if not platform.open_url(prereq.PODMAN_DESKTOP_URL):
+            body += ("\n\n(No browser answered, so open that address by "
+                     "hand.)")
+        platform.show_terminal_window(title, body)
 
     def repair_runtime(self, icon, item_unused=None):
         """Create or start the per-user Podman machine, then prove it works.

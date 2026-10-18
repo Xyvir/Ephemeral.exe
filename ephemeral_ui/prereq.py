@@ -19,6 +19,13 @@ So the work is split by privilege, and that split is the design:
 Detection is deliberately done with unprivileged commands (``wsl --status``,
 ``podman machine list``), because the query must work in a tray that never
 elevates; DISM is used only to *change* feature state, in the install path.
+
+The bundle is the default route, not the only one. A PC where it cannot run —
+the MSI or the zip installed directly, or a machine whose policy refuses an
+unsigned installer — gets the vendor's own front end as a second route
+(:func:`desktop_guide`). It installs the engine and, per Podman Desktop's own
+docs, does **not** enable WSL2, so it is offered after the elevated half and
+never instead of it; ``test_prereq`` pins that ordering.
 """
 from __future__ import annotations
 
@@ -43,6 +50,18 @@ ELEVATION_REQUIRED = 740      # DISM's "the requested operation requires elevati
 
 #: The optional Windows features WSL2 needs, in Microsoft's manual-install order.
 WSL_FEATURES = ("Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform")
+
+#: The vendor's own Windows front end, offered as a *second route* for the PCs
+#: our setup cannot cover: a teacher who installed the MSI or the zip directly,
+#: or one whose machine policy blocks an unsigned installer. Pinned here rather
+#: than in prose so the URL a teacher retypes is the one a test checked.
+PODMAN_DESKTOP_URL = "https://podman-desktop.io/downloads"
+
+#: Package ids, verified with ``winget search`` on Windows 11 (1.30.5 / 6.1.4):
+#: the GUI, and the engine alone for a managed PC where winget is allowed but
+#: our installer is not. Both install per-user, like the MSI we embed.
+PODMAN_DESKTOP_WINGET = "RedHat.Podman-Desktop"
+PODMAN_CLI_WINGET = "Podman.CLI"
 
 _BACKSLASH = 92
 
@@ -248,7 +267,8 @@ def ensure_machine() -> tuple[bool, str]:
         return False, (
             "The podman command is not installed. Run the Ephemeral setup "
             "(Ephemeral-Distributed-Instructor-Setup.exe) to install it, or "
-            "install Podman from https://podman.io/docs/installation#windows."
+            f"use the vendor route in Distributed -> Install Podman Desktop "
+            f"({PODMAN_DESKTOP_URL})."
         )
     if state.stage == "ready":
         return True, "Podman machine already running"
@@ -329,6 +349,58 @@ def describe_exit(code: int) -> str:
     return "WSL2 could not be enabled automatically; see the setup log."
 
 
+def desktop_guide() -> tuple[str, str]:
+    """Steps for the vendor route, in the order that actually works.
+
+    Offered because setup cannot be every PC's answer: the MSI and the zip can
+    be installed without the bundle, and a managed machine may refuse an
+    unsigned installer outright. What this route does **not** do is replace the
+    elevated half — Podman Desktop's own docs are explicit that "you must
+    enable the WSL feature", and its onboarding cannot create a machine
+    without it — so WSL2 is step zero here, not an afterthought. A teacher who
+    installs the GUI first hits a dead end inside someone else's wizard, and
+    that is the failure this ordering exists to prevent.
+
+    Nothing here is required when the bundle ran; the readiness gate and
+    ``Repair runtime`` accept whatever this route produces, because both ask
+    ``podman machine list`` rather than caring which provider created it.
+    """
+    if sys.platform != "win32":
+        return (
+            "Install Podman",
+            "Install Podman with your package manager (for example "
+            "'sudo apt install podman'), start the user socket with "
+            "'systemctl --user start podman.socket', then start the tray "
+            "again.\n\n"
+            "Distributed -> Repair runtime re-checks it and proves it with a "
+            "real container.\n\n"
+            "Installation guide: https://podman.io/docs/installation",
+        )
+    return (
+        "Install Podman Desktop",
+        "Podman Desktop is the official front end for Podman, and its setup "
+        "flow installs the engine and creates a machine on Windows. Use it "
+        "when Ephemeral's own setup cannot run on this PC.\n\n"
+        "WSL2 comes first, whichever route you take: Podman Desktop installs "
+        "the engine but does not enable WSL2, and cannot create a machine "
+        "without it.\n"
+        "  * run Ephemeral-Distributed-Instructor-Setup.exe, or\n"
+        "  * in an administrator PowerShell: wsl --install --no-distribution\n"
+        "  then restart Windows if it asks.\n\n"
+        "Then:\n"
+        f"  1. Install Podman Desktop: {PODMAN_DESKTOP_URL}\n"
+        f"     (or, in a terminal: winget install {PODMAN_DESKTOP_WINGET})\n"
+        "  2. In its onboarding (or Settings -> Resources) choose Install for "
+        "Podman, then Create for the machine. The defaults are fine: a WSL or "
+        "a Hyper-V machine both work, and Hyper-V needs Windows Pro or "
+        "Enterprise.\n"
+        "  3. Start Ephemeral again. Distributed -> Repair runtime starts the "
+        "machine if it was left stopped, then proves it with a real "
+        "container.\n\n"
+        "Engine only, no GUI: winget install " + PODMAN_CLI_WINGET + ".",
+    )
+
+
 def explain(state: RuntimeState) -> tuple[str, str]:
     """A terminal-window explanation for a PC that cannot run a block.
 
@@ -343,7 +415,10 @@ def explain(state: RuntimeState) -> tuple[str, str]:
             "Run Ephemeral-Distributed-Instructor-Setup.exe (it enables WSL2 "
             "and installs Podman), or in an administrator PowerShell run:\n\n"
             "    wsl --install --no-distribution\n\n"
-            "then restart Windows and start the tray again."
+            "then restart Windows and start the tray again.\n\n"
+            "Podman Desktop does not enable WSL2 either, so install it after "
+            "this step, not instead of it: Distributed -> Install Podman "
+            "Desktop has the rest of its steps."
         ),
         "needs-reboot": (
             "WSL2 is installed but needs a restart to finish enabling.\n\n"
@@ -358,9 +433,13 @@ def explain(state: RuntimeState) -> tuple[str, str]:
         ),
         "no-podman": (
             "Podman is not installed, so there is no container runtime.\n\n"
-            "Run Ephemeral-Distributed-Instructor-Setup.exe, or install Podman "
-            "from https://podman.io/docs/installation#windows and start the "
-            "tray again."
+            "Run Ephemeral-Distributed-Instructor-Setup.exe (offline, and it "
+            "also enables WSL2), or use the vendor route: Distributed -> "
+            "Install Podman Desktop.\n\n"
+            f"The vendor route starts at {PODMAN_DESKTOP_URL} "
+            "(winget install " + PODMAN_DESKTOP_WINGET + " works too), but "
+            "WSL2 has to be enabled first or Podman Desktop cannot create "
+            "its machine."
         ),
         "no-machine": (
             "Podman is installed but has no machine yet.\n\n"

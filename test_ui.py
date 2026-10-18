@@ -346,6 +346,9 @@ def test_distributed_menu_offers_a_login_scoped_node():
     assert "Distributed" in texts, texts
     assert "Run Node on Login" in texts, texts
     assert "Private Mode" in texts, texts
+    assert "Install Podman Desktop" in texts, (
+        "the vendor route has to be reachable from the tray, not only from a "
+        "machine that already failed: " + repr(texts))
     joined = " ".join(texts).lower()
     for needle in ("service", "system", "boot"):
         assert needle not in joined, (

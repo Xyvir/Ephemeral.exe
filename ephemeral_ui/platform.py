@@ -24,6 +24,7 @@ import sys
 import tempfile
 import threading
 import time
+import webbrowser
 
 # GUI deps are optional (CLI/self-check work without them).
 try:
@@ -252,6 +253,20 @@ def _prompt_user_for_language_linux(default_lang, code_preview=""):
 def _ps_quote(s: str) -> str:
     """Single-quote a string for PowerShell (escape embedded quotes)."""
     return s.replace("'", "''")
+
+
+def open_url(url: str) -> bool:
+    """Open ``url`` in the user's default browser; True when one opened.
+
+    Used to hand a teacher to a vendor's own download page (Podman Desktop),
+    so this is the one place outbound navigation happens. Never raises: a
+    locked-down machine with no registered browser must still get the URL in
+    text, and callers show it either way.
+    """
+    try:
+        return bool(webbrowser.open(url))
+    except Exception:
+        return False
 
 
 def open_terminal_emulator(script_path: str) -> bool:

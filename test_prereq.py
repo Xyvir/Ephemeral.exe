@@ -264,6 +264,77 @@ def test_prerequisite_module_never_elevates_itself():
     assert "def cli(" in src and "enable_wsl()" in src
 
 
+def test_the_vendor_route_comes_after_wsl_and_never_replaces_it():
+    """Podman Desktop is an escape hatch, and it cannot enable WSL2.
+
+    The tempting simplification — "point teachers at the official installer" —
+    breaks on one documented fact: Podman Desktop's Windows guide says "you
+    must enable the WSL feature", and Podman's own guide says the installer
+    "no longer automatically installs WSL". So a GUI-first teacher reaches a
+    wizard that cannot create a machine, which is worse than the dead end we
+    started from. Every surface that offers both routes must therefore put WSL2
+    first and say plainly that the GUI does not do it.
+    """
+    assert prereq.PODMAN_DESKTOP_URL.startswith("https://podman-desktop.io/"), (
+        prereq.PODMAN_DESKTOP_URL)
+    assert prereq.PODMAN_DESKTOP_WINGET != prereq.PODMAN_CLI_WINGET
+    assert prereq.PODMAN_DESKTOP_WINGET in ("RedHat.Podman-Desktop",)
+    assert prereq.PODMAN_CLI_WINGET in ("Podman.CLI",)
+
+    saved = sys.platform
+    try:
+        sys.platform = "win32"  # the branch that matters for the WSL wording
+        title, body = prereq.desktop_guide()
+    finally:
+        sys.platform = saved
+    assert "WSL2" in title or "Podman" in title, title
+    assert prereq.PODMAN_DESKTOP_URL in body, body
+    assert "does not enable WSL2" in body, body
+    # Step order, not just presence: the enable-WSL command precedes the link.
+    assert body.index("wsl --install") < body.index(prereq.PODMAN_DESKTOP_URL), body
+    assert "Repair runtime" in body, "the guide must end where the tray can finish"
+
+    # The in-state messages carry the same ordering guarantee.
+    _, no_wsl = prereq.explain(prereq.RuntimeState("no-wsl", "not enabled"))
+    assert "wsl --install" in no_wsl, no_wsl
+    assert no_wsl.index("wsl --install") < no_wsl.index("Podman Desktop"), no_wsl
+    assert "does not enable WSL2" in no_wsl, no_wsl
+
+    _, no_podman = prereq.explain(prereq.RuntimeState("no-podman", "missing"))
+    assert prereq.PODMAN_DESKTOP_URL in no_podman, no_podman
+    assert "first" in no_podman.lower(), (
+        "the engine route must say WSL2 comes first: " + no_podman)
+
+
+def test_the_gui_escape_hatch_opens_the_page_and_keeps_the_url_visible():
+    """The menu path hands over the vendor page without ever installing.
+
+    Two shapes: a browser opens (and the steps still open in a terminal window,
+    because the guide is longer than a toast), and no browser answers — a
+    locked-down machine — in which case the URL has to remain readable in text.
+    """
+    from ephemeral_ui.backends.distributed import InstructorBackend
+
+    opened: list[str] = []
+    shown: list[tuple[str, str]] = []
+    real_open, real_window = platform.open_url, platform.show_terminal_window
+    platform.show_terminal_window = lambda title, body: shown.append((title, body))
+    try:
+        platform.open_url = lambda url: (opened.append(url) or True)
+        InstructorBackend().show_podman_guide(_FakeIcon())
+        assert opened == [prereq.PODMAN_DESKTOP_URL], opened
+        assert shown and prereq.PODMAN_DESKTOP_URL in shown[0][1], shown
+        assert "browser" not in shown[0][1].lower(), shown
+
+        opened.clear(); shown.clear()
+        platform.open_url = lambda url: False
+        InstructorBackend().show_podman_guide(_FakeIcon())
+        assert shown and prereq.PODMAN_DESKTOP_URL in shown[0][1], shown
+        assert "browser" in shown[0][1].lower(), shown
+    finally:
+        platform.open_url, platform.show_terminal_window = real_open, real_window
+
+
 def test_setup_bundle_chains_wsl_then_podman_then_the_app():
     """One download, in order, with nothing an uninstall would gut."""
     wxs = (ROOT / "packaging" / "bootstrapper"
@@ -371,6 +442,8 @@ def main():
     test_no_classroom_link_before_a_container_has_run()
     test_repair_runtime_creates_the_machine_then_proves_it()
     test_prerequisite_module_never_elevates_itself()
+    test_the_vendor_route_comes_after_wsl_and_never_replaces_it()
+    test_the_gui_escape_hatch_opens_the_page_and_keeps_the_url_visible()
     test_setup_bundle_chains_wsl_then_podman_then_the_app()
     test_msi_launch_is_opt_in_for_the_bundle_but_still_silent_by_default()
     test_setup_bundle_is_built_and_shipped_by_ci()
