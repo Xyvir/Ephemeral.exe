@@ -207,6 +207,11 @@ textarea { min-height: 150px; resize: vertical; }
   border: 1px solid #444;
   background: #1a1a1a;
   color: var(--muted);
+  /* Pills are one line tall, always: a wrapped two-line pill breaks the
+     straight shared edge a .pill-group is built on, and ragged heights make
+     the dock jump as blocks are typed. Long names are elided in JS
+     (shortPillName) rather than wrapped here. */
+  white-space: nowrap;
 }
 .lang-chip.valid { border-color: #1e4a6e; color: var(--accent-hi); }
 .lang-chip.invalid { border-color: #8a5a1e; color: #ffb86b; }
@@ -225,6 +230,17 @@ textarea { min-height: 150px; resize: vertical; }
 .pill-group > .lang-chip:first-child { border-radius: 10px 0 0 10px; }
 .pill-group > .lang-chip:last-child { border-radius: 0 10px 10px 0; }
 .pill-group > .lang-chip:only-child { border-radius: 10px; }
+/* A group wider than the dock shrinks instead of spilling past its right
+   edge: the row stays one line tall and the pills ellipsize in place (the
+   full name is still in each pill's tooltip). min-width: 0 is what lets a
+   flex item shrink below its content size at all. */
+.lang-status > .pill-group { max-width: 100%; min-width: 0; }
+.pill-group > .lang-chip {
+  min-width: 3ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* The overlapped border belongs to the pill under the pointer: keep it
    on top, or the neighbour paints its own border over the highlight. */
 .pill-group > .lang-chip:hover,

@@ -30,7 +30,14 @@ by default, or a self-hosted one.
   (the other blocks keep their results), and a pill for a returned artifact
   downloads that single file. A block's declaration pill and its artifact
   pills are drawn as one joined group with shared straight edges, so a row
-  reads as that block's declaration plus its outputs. In a `chain` document
+  reads as that block's declaration plus its outputs. A seedfile is
+  adjacent to the block that reads it by design, so its pill joins that
+  block's group too — the dock then reads seeds → the code that eats them →
+  the  files it writes, one continuous edge the whole way; a seedfile no
+  block below names keeps a group of its own. Pills never wrap: a file
+  name longer than 15 characters is elided in the pill with its extension
+  kept (`longnamean~.txt`), and the full name stays in the pill's tooltip.
+  In a `chain` document
   one block cannot run in isolation, so a pill click replays the chain from
   its root instead (and drops the now-stale results below it); while a
   chain run is in flight the queued pills show a `...` waiting marker

@@ -676,6 +676,49 @@ function linkPillToBlock(el, idx) {
   return el;
 }
 
+// The seedfile a block reads sits directly above it by design, so its pill
+// belongs in that block's group rather than in a group of its own: a chain then
+// reads as the seeds being staged, the code that eats them, and the files it
+// writes, sharing one edge the whole way down. Returns the index of the fence
+// that consumes the seedfile, or -1 when nothing below it names the file.
+function seedConsumerIndex(fences, idx) {
+  const name = fences[idx].lang;
+  if (!name) return -1;
+  // The name is matched as a path token rather than as a substring, so
+  // `notes.txt` does not match `notes.txt.bak` or `mynotes.txt`.
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const used = new RegExp("(^|[^\\w.])" + escaped + "(?![\\w.])");
+  for (let j = idx + 1; j < fences.length; j++) {
+    const g = fences[j];
+    // Another seedfile is staged alongside this one, not instead of it, so it
+    // is not the consumer; the first real block is — whether or not it names
+    // the file.
+    if (!SUPPORTED_LANGUAGES.has(g.lang) && g.lang.includes(".")) continue;
+    return used.test(g.body || "") ? j : -1;
+  }
+  return -1;
+}
+
+// A dock pill is one line tall by design — the group's shared edge only reads
+// as one control while the row stays straight — so a long filename is elided
+// inside the pill instead of being allowed to wrap (or stretch) the dock. The
+// extension is kept because it says what the file IS, the cut is marked with
+// `~`, and the whole label is capped at PILL_NAME_CHARS:
+// `longnameandthen.txt` -> `longnamean~.txt`. The full name always stays in
+// the pill's tooltip, and `data-name` carries it for anything that needs it.
+const PILL_NAME_CHARS = 15;
+function shortPillName(name) {
+  const s = String(name || "");
+  if (s.length <= PILL_NAME_CHARS) return s;
+  // Only a trailing dot-suffix after some stem counts as an extension; when it
+  // is long enough to eat the whole label, fall back to a plain cut.
+  const dot = s.lastIndexOf(".");
+  const ext = dot > 0 ? s.slice(dot) : "";
+  const keep = PILL_NAME_CHARS - 1 - ext.length;
+  if (ext && keep >= 3) return s.slice(0, keep) + "~" + ext;
+  return s.slice(0, PILL_NAME_CHARS - 1) + "~";
+}
+
 function updateLangStatus() {
   if (!editor) return; // OverType fires onChange during its own _init,
   // before the constructor's destructuring assigns `editor`.
@@ -685,6 +728,14 @@ function updateLangStatus() {
   // A chained document cannot re-run one block in isolation (it would miss the
   // files handed down from above), so its pills replay from the root instead.
   const chainedDoc = chainRequested(fences);
+  // Seedfile pills join the group of the block that reads them (see the group
+  // assembly below), so work those pairings out before any pill is built: the
+  // block's group has to be able to pick up the seed pills that precede it.
+  const seedConsumers = fences.map((f, i) => {
+    const ok = SUPPORTED_LANGUAGES.has(f.lang);
+    return !ok && f.lang.includes(".") ? seedConsumerIndex(fences, i) : -1;
+  });
+  const pendingSeedPills = new Map();
   for (let i = 0; i < fences.length; i++) {
     const f = fences[i];
     // Language pill: blue for a supported language, orange for an unknown
@@ -760,7 +811,19 @@ function updateLangStatus() {
           : "not in the language map — this block will be rejected",
       ...notes,
     ].join("\n");
+    if (seedConsumers[i] >= 0) {
+      const host = fences[seedConsumers[i]];
+      chip.title +=
+        `\nread by the \`${[host.lang, ...host.params].join(" ")}\` block below — ` +
+        "the two share an edge here";
+    }
+    // A seedfile's name is the pill label, so a long one is elided there; the
+    // tooltip keeps the name it stands for (the payload is untouched — Run
+    // still stages the file under its real name).
+    const pillName = isFile ? shortPillName(f.lang) : f.lang;
+    if (pillName !== f.lang) chip.title += `\nname: ${f.lang}`;
     chip.dataset.baseTitle = chip.title;
+    chip.dataset.name = f.lang;
     linkPillToBlock(chip, i);
     // A supported language pill doubles as the "re-run just this block"
     // button: it is reachable by keyboard and never re-submits the document.
@@ -798,11 +861,15 @@ function updateLangStatus() {
     runInd.className = "chip-run";
     chip.appendChild(runInd);
     if (foldable && !ok) chip.appendChild(document.createTextNode(folded ? "▸ " : "▾ "));
-    chip.appendChild(document.createTextNode([f.lang, ...labels].join(" ")));
+    chip.appendChild(document.createTextNode([pillName, ...labels].join(" ")));
     // A fence's pills share a straight edge (see .pill-group): the declaration
     // and the artifacts it writes read as one group, not as loose controls.
     const group = document.createElement("span");
     group.className = "pill-group";
+    // Seed pills the blocks above hand down come first, so a seed and the code
+    // that reads it share one edge (a seed's own artifacts, if it names any,
+    // travel with it).
+    for (const seedPill of pendingSeedPills.get(i) || []) group.appendChild(seedPill);
     group.appendChild(chip);
     // Artifact pills: the block references /output, so the run is expected to
     // return a downloadable artifact (single images preview inline). One pill
@@ -812,7 +879,8 @@ function updateLangStatus() {
       for (const name of artifactNames.length ? artifactNames : [null]) {
         const achip = document.createElement("span");
         achip.className = "lang-chip artifact";
-        achip.textContent = name ? "📦 " + name : "📦 artifact";
+        achip.textContent = name ? "📦 " + shortPillName(name) : "📦 artifact";
+        if (name) achip.dataset.name = name;
         achip.title = name
           ? `writes ${name} to /output — returned as a downloadable artifact after the run (images preview inline)`
           : "writes to /output — returned as a downloadable artifact after the run (images preview inline)";
@@ -820,7 +888,15 @@ function updateLangStatus() {
         group.appendChild(achip);
       }
     }
-    el.appendChild(group);
+    if (seedConsumers[i] >= 0) {
+      // This is a seedfile a block below consumes: hold its pills back so that
+      // block's group adopts them, instead of drawing a group of its own.
+      const bucket = pendingSeedPills.get(seedConsumers[i]) || [];
+      while (group.firstChild) bucket.push(group.removeChild(group.firstChild));
+      pendingSeedPills.set(seedConsumers[i], bucket);
+    } else {
+      el.appendChild(group);
+    }
   }
   // The (i) help pill is always the trailing chip — even with no fences,
   // so it's a static affordance, not tied to whatever the doc declares.
@@ -2683,7 +2759,8 @@ function syncArtifactChips() {
     for (const a of state.artifacts) {
       const achip = document.createElement("span");
       achip.className = "lang-chip artifact artifact-ready";
-      achip.textContent = "📦 " + a.name;
+      achip.textContent = "📦 " + shortPillName(a.name);
+      achip.dataset.name = a.name;
       achip.title = `download ${a.name} — produced by this ${state.lang} block`;
       achip.setAttribute("role", "button");
       achip.setAttribute("tabindex", "0");
