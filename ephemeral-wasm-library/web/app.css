@@ -130,17 +130,27 @@ textarea { min-height: 150px; resize: vertical; }
   border-radius: 0 0 8px 8px;
 }
 /* "More code below" chevron: a tiny centered marker INSIDE the dock,
-   just under its top border — it lives on the dock's own panel
-   background, so it never overlays editor text. JS toggles .visible
+   padded 2px under its top border — the visible bottom edge of the
+   entry box — and nowhere near the pills below it. JS toggles .visible
    while content is hidden beneath the fold; the marker eases in and
    out (opacity/transform only — display can't animate, so the element
    stays in the DOM and merely transparent when idle). Pure decoration
    — pointer-events: none so it never intercepts clicks. */
 .more-hint {
   position: absolute;
-  top: 1px;
+  /* 2px under the dock's top edge, i.e. just below the entry box, so the
+     marker reads as a "continues below" tab rather than part of the row. */
+  top: 2px;
   left: 0;
   right: 0;
+  /* Zero height with no line box: an inline triangle otherwise rides the
+     text baseline of a 21px strut, which painted it 9–15px below the
+     border — right on top of the language pills. The triangle is a block,
+     so its border box starts exactly at `top` and ends at `top` + 6px,
+     leaving the 16px gap above .lang-status clear. */
+  height: 0;
+  line-height: 0;
+  font-size: 0;
   text-align: center;
   pointer-events: none;
   z-index: 9;
@@ -153,7 +163,8 @@ textarea { min-height: 150px; resize: vertical; }
   .more-hint { transition: none; }
 }
 .more-hint .more-tri {
-  display: inline-block;
+  display: block;
+  margin: 0 auto;
   width: 0;
   height: 0;
   border-left: 5px solid transparent;
