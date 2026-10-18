@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-18T03:59:34Z",
+  "updated": "2026-10-18T10:45:27Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [],
@@ -7,13 +7,13 @@
     {
       "node_id": "ed7106bced606bede735b4c9b215052855f9747e8cb56629759ae672ce29b9c8",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacvsioxydjycaeajqn5wfca2oaq",
+      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacxetfg4rlacaeajqn5vrlekyaq",
       "images": [],
       "url": "https://ephemeralexe-production.up.railway.app",
       "probe": "ok",
-      "probe_at": "2026-10-18T03:59:34Z",
+      "probe_at": "2026-10-18T10:45:27Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 133
+      "probe_ms": 137
     }
   ]
 }
