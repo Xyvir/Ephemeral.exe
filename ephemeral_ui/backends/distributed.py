@@ -1584,7 +1584,7 @@ class DistributedBackend(Backend):
         here installs anything itself.
         """
         title, body = prereq.desktop_guide()
-        if not platform.open_url(prereq.PODMAN_DESKTOP_URL):
+        if not platform.open_url(prereq.guide_url()):
             body += ("\n\n(No browser answered, so open that address by "
                      "hand.)")
         platform.show_terminal_window(title, body)

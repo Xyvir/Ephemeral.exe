@@ -322,14 +322,14 @@ def test_the_gui_escape_hatch_opens_the_page_and_keeps_the_url_visible():
     try:
         platform.open_url = lambda url: (opened.append(url) or True)
         InstructorBackend().show_podman_guide(_FakeIcon())
-        assert opened == [prereq.PODMAN_DESKTOP_URL], opened
-        assert shown and prereq.PODMAN_DESKTOP_URL in shown[0][1], shown
+        assert opened == [prereq.guide_url()], opened
+        assert shown and prereq.guide_url() in shown[0][1], shown
         assert "browser" not in shown[0][1].lower(), shown
 
         opened.clear(); shown.clear()
         platform.open_url = lambda url: False
         InstructorBackend().show_podman_guide(_FakeIcon())
-        assert shown and prereq.PODMAN_DESKTOP_URL in shown[0][1], shown
+        assert shown and prereq.guide_url() in shown[0][1], shown
         assert "browser" in shown[0][1].lower(), shown
     finally:
         platform.open_url, platform.show_terminal_window = real_open, real_window

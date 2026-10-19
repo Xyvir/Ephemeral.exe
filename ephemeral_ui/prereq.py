@@ -57,6 +57,14 @@ WSL_FEATURES = ("Microsoft-Windows-Subsystem-Linux", "VirtualMachinePlatform")
 #: than in prose so the URL a teacher retypes is the one a test checked.
 PODMAN_DESKTOP_URL = "https://podman-desktop.io/downloads"
 
+#: Vendor install guide for the engine itself, used by the non-Windows guide.
+PODMAN_INSTALL_URL = "https://podman.io/docs/installation"
+
+
+def guide_url() -> str:
+    """The page the vendor-route guide points at on this platform."""
+    return PODMAN_DESKTOP_URL if sys.platform == "win32" else PODMAN_INSTALL_URL
+
 #: Package ids, verified with ``winget search`` on Windows 11 (1.30.5 / 6.1.4):
 #: the GUI, and the engine alone for a managed PC where winget is allowed but
 #: our installer is not. Both install per-user, like the MSI we embed.
@@ -374,7 +382,7 @@ def desktop_guide() -> tuple[str, str]:
             "again.\n\n"
             "Distributed -> Repair runtime re-checks it and proves it with a "
             "real container.\n\n"
-            "Installation guide: https://podman.io/docs/installation",
+            f"Installation guide: {PODMAN_INSTALL_URL}",
         )
     return (
         "Install Podman Desktop",
