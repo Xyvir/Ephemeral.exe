@@ -381,10 +381,10 @@ jobs:
     - name: Smoke test - the bundle carries and unpacks every prerequisite
       shell: bash
       run: |
-        # `-layout` is Burn's own extraction: it verifies the bundle's payload
-        # table and writes the packages it would install, WITH no install, no
-        # elevation and no reboot. That is the only honest check a CI runner
-        # can make of a bundle whose chain installs a Windows feature.
+        # `dark -x` is WiX's decompiler: it writes the bundle's attached container
+        # (every Compressed="yes" payload) to disk without installing, elevating or
+        # rebooting. `-layout` is not used: in WiX v3 it fetches external packages
+        # only and writes none of the embedded ones.
         export MSYS2_ARG_CONV_EXCL='*'
         SETUP="$PWD/dist/Ephemeral-Distributed-Instructor-Setup.exe"
         if [ ! -f "$SETUP" ]; then
@@ -397,27 +397,73 @@ jobs:
           exit 1
         fi
         echo "bundle: $(du -h "$SETUP" | cut -f1)"
-        rm -rf dist/setup-layout
-        "$SETUP" -layout "$(cygpath -w "$PWD/dist/setup-layout")" -quiet || {
-          echo "the bundle could not lay out its payloads" >&2
-          exit 1
-        }
-        ls -la dist/setup-layout
-        # All three packages must be present: the app, Podman, and the exe that
-        # enables WSL2 (the same file as the app, installed as a prerequisite).
-        exists=0
-        for want in Ephemeral-Distributed-Instructor.msi podman-installer-windows-amd64.msi; do
-          find dist/setup-layout -iname "$want" | grep -q . || {
-            echo "the bundle is missing its prerequisite payload: $want" >&2
-            exit 1
-          }
-          exists=$((exists + 1))
+        DARK=""
+        for candidate in "/c/Program Files (x86)/WiX Toolset"*/bin "/c/Program Files/WiX Toolset"*/bin; do
+          if [ -f "$candidate/dark.exe" ]; then
+            DARK="$candidate/dark.exe"
+            break
+          fi
         done
-        find dist/setup-layout -iname "Ephemeral-Distributed-Instructor.exe" | grep -q . || {
-          echo "the bundle is missing the exe that enables WSL2" >&2
+        if [ -z "$DARK" ]; then
+          echo "dark.exe not found in the WiX v3 toolset" >&2
+          exit 1
+        fi
+        rm -rf dist/setup-extract
+        mkdir -p dist/setup-extract
+        "$DARK" -nologo -x "$(cygpath -w "$PWD/dist/setup-extract")" "$(cygpath -w "$SETUP")" || {
+          echo "dark could not extract the bundle's payloads" >&2
           exit 1
         }
-        echo "setup bundle unpacks $exists prerequisite package(s) plus the app"
+        find dist/setup-extract -type f | sed 's/^/  /'
+        # Each package the chain installs must be in the bundle byte-for-byte, and
+        # the exe that enables WSL2 must be a real 64-bit PE image: Windows Package
+        # Cache refuses anything else with "Unsupported 16-Bit Application".
+        python - "$(cygpath -w "$PWD/dist/setup-extract/AttachedContainer")" \
+          dist/Ephemeral-Distributed-Instructor/Ephemeral-Distributed-Instructor.exe \
+          dist/Ephemeral-Distributed-Instructor.msi \
+          dist/podman-installer-windows-amd64.msi <<'PY'
+        import hashlib
+        import pathlib
+        import struct
+        import sys
+
+        root = pathlib.Path(sys.argv[1])
+        sources = [pathlib.Path(p) for p in sys.argv[2:]]
+
+
+        def sha(p):
+            return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+        def fail(msg):
+            print(f"FAIL: {msg}")
+            sys.exit(1)
+
+
+        extracted = {sha(p): p for p in root.iterdir() if p.is_file()}
+        for src in sources:
+            if not src.is_file():
+                fail(f"source payload missing: {src}")
+            h = sha(src)
+            if h not in extracted:
+                fail(f"{src.name} is not in the bundle byte-for-byte")
+            print(f"ok {src.name} -> {extracted[h].name}")
+
+        exe_src = next(p for p in sources if p.suffix.lower() == ".exe")
+        b = extracted[sha(exe_src)].read_bytes()
+        if len(b) < 64 or b[:2] != b"MZ":
+            fail("WSL2 exe has no MZ header")
+        off = struct.unpack_from("<I", b, 0x3C)[0]
+        if off + 24 > len(b) or b[off:off + 4] != b"PE\0\0":
+            fail(f"WSL2 exe is not a PE image (e_lfanew=0x{off:x})")
+        machine = struct.unpack_from("<H", b, off + 4)[0]
+        if machine != 0x8664:
+            fail(f"WSL2 exe machine is 0x{machine:04x}, not x64 (0x8664)")
+        magic = struct.unpack_from("<H", b, off + 24)[0]
+        if magic != 0x20B:
+            fail(f"WSL2 exe optional-header magic is 0x{magic:04x}, not PE32+ (0x20b)")
+        print("ok WSL2 exe is a 64-bit PE image")
+        PY
 
     - name: Smoke test - the prerequisite entry point answers
       shell: bash
