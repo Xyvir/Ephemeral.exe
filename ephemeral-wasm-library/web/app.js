@@ -30,8 +30,8 @@ let goodNeighborCount = 0;
 // Artifacts streamed by the current run's node (one "artifact" frame per
 // file, before job_done). Cleared at the start of each run.
 let runArtifacts = [];
-// Artifacts NOT placed inline under a run result (pure-positional 1:1
-// matching) — these still get the rolled-up artifact block at the end.
+// Artifacts NOT placed inline under their block's result (the block was
+// edited since the run, or has no result) — these get the rolled-up block.
 let leftoverArtifacts = [];
 // Raw (unformatted) markdown of everything appended to the Output box —
 // results keep their `## <Lang> Result` headers and fenced code blocks
@@ -1398,15 +1398,6 @@ function pairResults(segs, results) {
   return pairs;
 }
 
-// True when the displayed document's runnable fences are exactly the ones the
-// last run executed, in the same order — the only case where inline artifacts
-// can be trusted to line up with their block.
-function docMatchesRun(segs) {
-  const live = runnableFences(segs).map(fenceKey);
-  const run = runnableFences(splitMarkdown(lastMarkdown)).map(fenceKey);
-  return live.length === run.length && live.every((k, i) => k === run[i]);
-}
-
 // Placeholder under a code block that has no result yet: nothing has run, the
 // block was added after the run, or its code changed since. Without it an
 // unrun block would just silently have no output area.
@@ -1444,18 +1435,10 @@ function renderInterleaved() {
   const segs = splitMarkdown(doc);
   const results = splitResults(lastResultText);
   const pairs = pairResults(segs, results);
-  // Inline each artifact under its own run's result ONLY in the clean
-  // one-artifact-per-run case for the exact document that ran (the fan-out
-  // norm, where artifact frames + run envelopes both arrive in document
-  // order). Any other shape — no results, missing/extra artifacts, multi-file
-  // runs, or a document edited since the run — falls back to the rolled-up
-  // artifact block at the end.
-  const inlineAll =
-    docMatchesRun(segs) &&
-    runArtifacts.length > 0 &&
-    runArtifacts.length === results.length &&
-    pairs.size === runnableFences(segs).length;
-  let ai = 0;
+  // Each block's artifacts are placed under that block's own result. Only a
+  // block whose result paired with the displayed code (unchanged since the run)
+  // gets them; anything unplaced falls back to the rolled-up block at the end.
+  const placed = new Set();
   // fenceInfo() and splitMarkdown() walk the same fences in document order, so
   // counting code segments gives the blockStates key for this segment (fence
   // blocks with no header are skipped by fenceInfo, hence the header guard).
@@ -1465,24 +1448,25 @@ function renderInterleaved() {
       box.appendChild(renderProseSeg(seg));
       return;
     }
-    fenceIdx++;
+    fenceIdx += seg.header ? 1 : 0;
     box.appendChild(renderCodeSeg(seg));
     if (seg.isSeed) return;
+    const state = seg.header ? blockStates.get(fenceIdx) : null;
+    const own = state && state.header === seg.header ? state : null;
     if (pairs.has(i)) {
       box.appendChild(resultElement(pairs.get(i)));
-      if (inlineAll) {
-        box.appendChild(
-          renderArtifactInline(runArtifacts[ai++], artifactLang(lastMarkdown))
-        );
+      // A block's artifacts belong to that block, so they sit under its result.
+      if (own) {
+        for (const a of own.artifacts) {
+          box.appendChild(renderArtifactInline(a, artifactLang(lastMarkdown)));
+          placed.add(a);
+        }
       }
     } else {
-      const state = blockStates.get(fenceIdx);
-      box.appendChild(
-        pendingElement(seg, state && state.header === seg.header ? state : null)
-      );
+      box.appendChild(pendingElement(seg, own));
     }
   });
-  leftoverArtifacts = inlineAll ? [] : runArtifacts;
+  leftoverArtifacts = runArtifacts.filter((a) => !placed.has(a));
   addCopyButtons(box);
   pruneEmptyStdoutForImages(box);
   appendArtifactsIfAny();
@@ -3317,7 +3301,7 @@ function artifactTools(artifacts, lang) {
 // Render a SINGLE artifact inline under its run's result (interleaved
 // view): image preview (or a file row for non-images) with the floating
 // Copy-image / Download icons over it, plus the filename as a caption. Used
-// when positional 1:1 matching holds — the one-artifact-per-run fan-out case.
+// for each block that has a result — its own artifacts, in the order produced.
 function renderArtifactInline(a, lang) {
   const div = document.createElement("div");
   div.className = "block artifacts inline";

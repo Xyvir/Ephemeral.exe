@@ -514,8 +514,7 @@ class StartupManager:
         **onedir** bundle does not: its exe is inert without the sibling
         ``_internal`` folder, so copying just the exe installs a boot entry
         that silently fails on the next login. onedir builds are therefore
-        registered **in place** (the same reason the run key for the
-        always-on node never copies — see :class:`NodeAutostart`).
+        registered **in place**.
         """
         if not getattr(sys, 'frozen', False):
             return True  # not frozen: copy the entry script (previous behavior)
@@ -557,6 +556,11 @@ class StartupManager:
                     winreg.DeleteValue(key, self.app_key)
                 except FileNotFoundError:
                     pass
+                if self._machine_wide_startup() and icon:
+                    # HKLM can only be removed by uninstalling (admin rights);
+                    # say so instead of pretending the toggle worked.
+                    icon.notify("Start on boot was set for all users by the installer. "
+                                "Uninstall Ephemeral to remove it.", title="Ephemeral Setup")
 
                 if not os.path.exists(install_path) and icon:
                     # onedir builds are registered in place, so there is no
@@ -614,9 +618,22 @@ class StartupManager:
             if icon:
                 icon.notify(f"Failed to configure startup: {e}", title="Ephemeral Error")
 
+    def _machine_wide_startup(self) -> bool:
+        """True when the installer registered start-on-boot for every user (HKLM)."""
+        try:
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                 r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
+            winreg.QueryValueEx(key, self.app_key)
+            winreg.CloseKey(key)
+            return True
+        except OSError:
+            return False
+
     def check_startup(self):
         if sys.platform != 'win32':
             return os.path.exists(self._autostart_desktop_path())
+        if self._machine_wide_startup():
+            return True
         try:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                                  r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
@@ -624,143 +641,4 @@ class StartupManager:
             winreg.CloseKey(key)
             return True
         except FileNotFoundError:
-            return False
-
-# --- Always-on node autostart (per-user, no elevation) -------------------
-
-class NodeAutostart:
-    """Login-autostart for the *node* half of a distributed build.
-
-    Distinct from :class:`StartupManager`, which starts the tray UI. This
-    registers the app with ``--node`` for the **current user**, at login, with
-    **no elevation**. Two rules keep it deliberately unexciting:
-
-    * No privilege escalation and no Windows service. The first attempt at this
-      feature re-launched itself elevated (``ShellExecuteW runas``) and
-      registered ``schtasks /SC ONSTART /RU SYSTEM`` from an unsigned onefile
-      exe — persistence-as-SYSTEM plus self-elevation is exactly the shape
-      antivirus heuristics hunt for, and the build was flagged. The per-user
-      Run key (Software/Microsoft/Windows/CurrentVersion/Run) and the
-      freedesktop autostart directory need no privilege at all.
-    * The command points at the app **in place** — no copy into
-      ``%LOCALAPPDATA%``, which would break an onedir bundle (the exe is useless
-      without its ``_internal`` folder) and reads as dropper behavior.
-
-    The only difference from the user launching the app themselves is the
-    ``--node`` argument, and that is visible in the Run-key value / the
-    ``.desktop`` file.
-
-    Scope: this starts at *login*, not at boot. A per-user tray process cannot
-    honestly provide pre-login always-on; that is the headless Linux gateway's
-    job (``install_self_host.sh``).
-    """
-
-    #: HKCU subkey the login command is stored under.
-    RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-
-    def __init__(self, app_key: str, display_name: str,
-                 entry_path: str | None = None,
-                 run_key: str | None = None):
-        self.app_key = app_key
-        self.display_name = display_name
-        # Same convention as StartupManager: the entry point the user launched.
-        self.entry_path = entry_path or os.path.abspath(sys.argv[0])
-        # Injectable so tests never touch the real Run key.
-        self.run_key = run_key or self.RUN_KEY
-
-    @property
-    def value_name(self) -> str:
-        """Run-key value name — distinct from the tray's own autostart value."""
-        return f"{self.app_key}-Node"
-
-    def node_command(self) -> str:
-        """Command line the login entry runs (always ends in ``--node``)."""
-        appimage = os.environ.get("APPIMAGE")
-        if appimage:
-            # Inside an AppImage, sys.executable is a per-launch temp mount;
-            # the .AppImage file itself is the stable path.
-            return f'"{appimage}" --node'
-        if getattr(sys, "frozen", False):
-            return f'"{sys.executable}" --node'
-        return f'"{sys.executable}" "{self.entry_path}" --node'
-
-    def _desktop_path(self) -> str:
-        key = self.app_key.lower().replace(" ", "-")
-        return os.path.join(os.path.expanduser("~"), ".config", "autostart",
-                            f"{key}-node.desktop")
-
-    def set_node_autostart(self, enable, icon=None) -> None:
-        """Enable/disable starting the headless node at login."""
-        if sys.platform != "win32":
-            return self._set_node_autostart_linux(enable, icon)
-        if not HAS_WINREG:  # pragma: no cover - win32 always has winreg
-            show_terminal_window(
-                "Ephemeral Node",
-                "Cannot configure login autostart: winreg is unavailable.",
-            )
-            return
-        try:
-            # CreateKeyEx so a missing Run key never blocks the toggle.
-            with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, self.run_key, 0,
-                                    winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE) as key:
-                if enable:
-                    winreg.SetValueEx(key, self.value_name, 0, winreg.REG_SZ,
-                                      self.node_command())
-                else:
-                    try:
-                        winreg.DeleteValue(key, self.value_name)
-                    except FileNotFoundError:
-                        pass
-        except Exception as e:
-            show_terminal_window("Ephemeral Node",
-                                 f"Could not update login autostart:\n{e}")
-            return
-        if icon:
-            if enable:
-                icon.notify("Node will start when you log in. "
-                            "(Pre-login always-on needs the Linux gateway.)",
-                            title="Ephemeral Node")
-            else:
-                icon.notify("Node will no longer start at login.",
-                            title="Ephemeral Node")
-
-    def _set_node_autostart_linux(self, enable, icon=None) -> None:
-        """Enable/disable the node via a freedesktop autostart entry."""
-        path = self._desktop_path()
-        try:
-            if enable:
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write("[Desktop Entry]\n")
-                    f.write("Type=Application\n")
-                    f.write(f"Name={self.display_name} (node)\n")
-                    f.write(f"Exec={self.node_command()}\n")
-                    f.write("X-GNOME-Autostart-enabled=true\n")
-            else:
-                if os.path.exists(path):
-                    os.remove(path)
-        except Exception as e:
-            show_terminal_window("Ephemeral Node",
-                                 f"Could not update login autostart:\n{e}")
-            return
-        if icon:
-            if enable:
-                icon.notify(f"Node will start at login: {path}",
-                            title="Ephemeral Node")
-            else:
-                icon.notify("Node will no longer start at login.",
-                            title="Ephemeral Node")
-
-    def check_node_autostart(self) -> bool:
-        """True when the headless node is set to start at login."""
-        if sys.platform != "win32":
-            return os.path.exists(self._desktop_path())
-        if not HAS_WINREG:  # pragma: no cover - win32 always has winreg
-            return False
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.run_key, 0,
-                                winreg.KEY_QUERY_VALUE) as key:
-                winreg.QueryValueEx(key, self.value_name)
-                return True
-        except OSError:
             return False

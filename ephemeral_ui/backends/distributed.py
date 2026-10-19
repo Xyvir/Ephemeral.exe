@@ -291,10 +291,6 @@ class DistributedBackend(Backend):
         )
         self._cluster_start_lock = threading.Lock()
 
-        # Always-on-node login autostart (the "Run Node on Login" menu item).
-        # Per-user, no elevation, no service — see platform.NodeAutostart.
-        self.node_autostart = platform.NodeAutostart(self.app_key, self.display_name)
-
         # The installer launches this build once with --first-run, so the
         # classroom link is put in front of the teacher instead of waiting to
         # be discovered: see setup_tray() and _first_launch_setup().
@@ -333,8 +329,6 @@ class DistributedBackend(Backend):
         """Current cluster state (node id, peers, warm images)."""
         lines = ["Mode: per-user node (tray)"]
         lines.append(f"Swarm: {self._swarm_description()}")
-        if self.check_node_autostart():
-            lines.append("Login autostart: on (starts when this user logs in)")
         lines.append(self.cluster.info())
         return "\n".join(lines)
 
@@ -427,7 +421,7 @@ class DistributedBackend(Backend):
     def _apply_default_mode(self) -> None:
         """Apply this build's own starting mode, once, before the node dials.
 
-        Runs on every start (tray, one-shot, headless and ``--node``), and only
+        Runs on every start (tray and one-shot), and only
         for a build that defaults to private: the instructor build gets a swarm
         it can hand out, instead of a machine no student can reach.
 
@@ -1486,83 +1480,12 @@ class DistributedBackend(Backend):
                 name="ephemeral-first-launch", daemon=True,
             ).start()
 
-    # --- always-on node (login autostart, per-user) -----------------------
-
-    def check_node_autostart(self) -> bool:
-        """True when the headless node is registered to start at login."""
-        return self.node_autostart.check_node_autostart()
-
-    def toggle_node_autostart(self, icon, item_unused=None):
-        """Enable/disable starting the headless node when this user logs in.
-
-        Per-user and unprivileged on purpose: it writes the login entry and
-        nothing else — no elevation, no Windows service, no SYSTEM task. See
-        :class:`ephemeral_ui.platform.NodeAutostart` for why, including the
-        honest limit that a per-user app cannot start before anyone logs in.
-        """
-        enabling = not self.check_node_autostart()
-        self.node_autostart.set_node_autostart(enabling, icon)
-
-    def run_node_forever(self) -> int:
-        """Headless idle node (``--node``) — what "Run Node on Login" starts.
-
-        No tray icon and no hotkeys: just the cluster node, retried forever so a
-        login-time network race can't leave a classroom without a node. Logs to
-        ``<state dir>/node.log`` and blocks until killed.
-        """
-        self._apply_default_mode()
-        log_path = default_state_dir() / "node.log"
-        try:
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            logging.basicConfig(
-                filename=str(log_path), level=logging.INFO,
-                format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-            )
-        except OSError as e:
-            print(f"ephemeral: could not open node log {log_path}: {e}")
-        log = logging.getLogger("ephemeral.node")
-        log.info("node mode starting (relay=%s private=%s)",
-                 self.cluster.relay, self.private_checked())
-        while True:
-            try:
-                self._ensure_cluster()
-                break
-            except Exception as e:
-                log.warning("node start failed (%s); retrying in 30s", e)
-                time.sleep(30)
-        node_id = self.cluster.node.node_id() if self.cluster.node else "?"
-        log.info("node ready: node_id=%s", node_id)
-        # flush: a GUI-subsystem exe (console=False) buffers redirected stdout,
-        # and this process is normally killed rather than exited cleanly.
-        print(f"NODE READY node_id={node_id}", flush=True)
-        if self.private_checked():
-            url = self.current_student_url()
-            if url:
-                log.info("private student URL: %s", url)
-                print(f"SWARM PRIVATE URL {url}", flush=True)
-        try:
-            while True:
-                time.sleep(60)
-                if self.cluster.node is None:
-                    log.warning("node is gone; restarting")
-                    try:
-                        self._ensure_cluster()
-                    except Exception as e:
-                        log.warning("node restart failed (%s); retrying in 30s", e)
-                        time.sleep(30)
-        except KeyboardInterrupt:
-            log.info("node mode interrupted")
-            self.cluster.stop()
-            return 0
-
     def extra_menu_items(self, icon) -> tuple:
         # Node status moved into About — no separate "Cluster Status" item.
         return (
             platform.item('Distributed', platform.pystray.Menu(
                 platform.item(self.private_menu_label, lambda icon, i: self.toggle_private(icon, i),
                               checked=self.private_checked),
-                platform.item('Run Node on Login', lambda icon, i: self.toggle_node_autostart(icon, i),
-                              checked=lambda i: self.check_node_autostart()),
                 platform.item('Pre-hydrate All Images', lambda icon, i: self.on_prehydrate_all(icon, i)),
                 platform.item('Repair runtime', lambda icon, i: self.repair_runtime(icon, i)),
                 platform.item('Install Podman Desktop', lambda icon, i: self.show_podman_guide(icon, i)),

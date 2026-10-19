@@ -125,12 +125,6 @@ def run(backend):
     if "--self-check" in sys.argv:
         sys.exit(backend.self_check())
 
-    # HEADLESS NODE: the idle node half of a distributed build — the process
-    # the "Run Node on Login" menu item registers. No icon, no hotkeys, no GUI
-    # dependencies, so this runs before anything is initialized.
-    if "--node" in sys.argv:
-        sys.exit(backend.run_node_forever())
-
     # Background warmup (distributed: cluster + bash canary; local: none).
     backend.start_background()
 

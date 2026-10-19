@@ -1,13 +1,10 @@
 """
-Tests for the tray front end's always-on-node plumbing.
+Tests for the tray front end's packaging and startup plumbing.
 
 Covers the parts that must not regress:
 
-* the login entry the "Run Node on Login" menu item writes — deliberately
-  per-user and unprivileged. The first version of this feature re-launched
-  itself elevated and registered a ``/SC ONSTART /RU SYSTEM`` scheduled task
-  from an unsigned onefile exe, and Windows Defender flagged the build;
-* ``--node`` dispatch: the headless node that login entry starts;
+* the tray has no headless "node" mode: start-on-boot launches the same tray
+  app a user sees, and nothing runs invisibly in the background;
 * packaging invariants for the distributed-instructor artifact (onedir bundle, no
   UPX, version resource), which exists so the antivirus-sensitive path has a
   bundle that is not a self-extractor;
@@ -15,8 +12,7 @@ Covers the parts that must not regress:
   and it must never report "not scanned" as "clean".
 
 No GUI, Podman, network, or elevated privilege is needed: the tray menu is
-built through injected fakes, and the Windows checks run against a temporary
-key under HKCU (Software) that they delete afterwards.
+built through injected fakes.
 
 Run:  python test_ui.py
 """
@@ -36,15 +32,7 @@ from types import SimpleNamespace
 from ephemeral_ui import platform, tray
 from ephemeral_ui.backends.base import Backend
 
-try:
-    import winreg
-except ImportError:  # pragma: no cover - POSIX CI
-    winreg = None
-
 ROOT = pathlib.Path(__file__).resolve().parent
-
-#: HKCU key the Windows tests use instead of the real Run key.
-TEST_RUN_KEY = r"Software\EphemeralUiTests"
 
 
 # --- fakes ---------------------------------------------------------------
@@ -92,10 +80,6 @@ class _StubBackend:
     def start_background(self):
         self.calls.append("start_background")
 
-    def run_node_forever(self):
-        self.calls.append("run_node_forever")
-        return 7
-
 
 def _collect_texts(items, found=None):
     """Every menu label reachable from ``items`` (recursing into submenus)."""
@@ -105,45 +89,6 @@ def _collect_texts(items, found=None):
         if it.menu is not None:
             _collect_texts(it.menu, found)
     return found
-
-
-# --- node login entry ----------------------------------------------------
-
-def test_node_command_runs_the_app_in_place():
-    autostart = platform.NodeAutostart("Ephemeral-Distributed", "Ephemeral-Distributed")
-    cmd = autostart.node_command()
-
-    assert cmd.endswith(" --node"), cmd
-    # The app is registered where it lives: an onedir bundle cannot be copied
-    # out of its folder, and a copy into AppData reads as dropper behavior.
-    install_path = platform.StartupManager("Ephemeral-Distributed", "x").get_install_path()
-    assert install_path not in cmd, cmd
-    print("PASS: the node login entry runs the app in place with --node")
-
-
-def test_node_command_prefers_the_appimage_path():
-    old = os.environ.get("APPIMAGE")
-    os.environ["APPIMAGE"] = os.path.join(tempfile.gettempdir(), "Ephemeral.AppImage")
-    try:
-        cmd = platform.NodeAutostart("ephemeral-distributed", "d").node_command()
-    finally:
-        if old is None:
-            os.environ.pop("APPIMAGE", None)
-        else:
-            os.environ["APPIMAGE"] = old
-    # sys.executable inside an AppImage is a per-launch temp mount.
-    assert cmd.startswith('"/') or cmd.startswith('"C:'), cmd
-    assert "Ephemeral.AppImage" in cmd and sys.executable not in cmd, cmd
-    print("PASS: the node login entry uses the stable AppImage path")
-
-
-def test_node_value_name_does_not_collide_with_the_tray_autostart():
-    node = platform.NodeAutostart("Ephemeral-Distributed", "Ephemeral-Distributed")
-    tray_autostart = platform.StartupManager("Ephemeral-Distributed", "Ephemeral-Distributed")
-
-    assert node.value_name == "Ephemeral-Distributed-Node"
-    assert node.value_name != tray_autostart.app_key
-    print("PASS: node and tray autostart use distinct login entries")
 
 
 def test_onedir_bundles_are_never_copied_out_of_their_folder():
@@ -165,70 +110,6 @@ def test_onedir_bundles_are_never_copied_out_of_their_folder():
     print("PASS: onedir bundles register in place; onefile copies still work")
 
 
-def _cleanup_test_run_key():
-    if winreg is None:
-        return
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, TEST_RUN_KEY, 0,
-                            winreg.KEY_ALL_ACCESS) as key:
-            for name in ("Ephemeral-Distributed-Node",):
-                try:
-                    winreg.DeleteValue(key, name)
-                except FileNotFoundError:
-                    pass
-        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, TEST_RUN_KEY)
-    except OSError:
-        pass
-
-
-def test_windows_login_entry_is_per_user_and_never_elevated():
-    autostart = platform.NodeAutostart("Ephemeral-Distributed", "Ephemeral-Distributed",
-                                       run_key=TEST_RUN_KEY)
-    try:
-        autostart.set_node_autostart(False)  # start from a clean key
-        assert autostart.check_node_autostart() is False
-
-        autostart.set_node_autostart(True)
-        assert autostart.check_node_autostart() is True
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, TEST_RUN_KEY, 0,
-                            winreg.KEY_QUERY_VALUE) as key:
-            stored, _ = winreg.QueryValueEx(key, autostart.value_name)
-        assert stored.endswith(" --node"), stored
-        for needle in ("SYSTEM", "runas", "schtasks", "/RL HIGHEST"):
-            assert needle not in stored, stored
-
-        autostart.set_node_autostart(False)
-        assert autostart.check_node_autostart() is False
-    finally:
-        _cleanup_test_run_key()
-    print("PASS: Windows login entry is a per-user Run value ending in --node")
-
-
-def test_linux_login_entry_is_an_in_place_desktop_file():
-    home = tempfile.mkdtemp(prefix="ephemeral-home-")
-    old_home = os.environ.get("HOME")
-    os.environ["HOME"] = home
-    try:
-        autostart = platform.NodeAutostart("ephemeral-distributed", "Ephemeral-Distributed")
-        autostart.set_node_autostart(True)
-        path = autostart._desktop_path()
-        assert path.startswith(home), path
-        body = pathlib.Path(path).read_text(encoding="utf-8")
-        assert body.startswith("[Desktop Entry]"), body
-        assert "--node" in body, body
-        assert autostart.check_node_autostart() is True
-
-        autostart.set_node_autostart(False)
-        assert not os.path.exists(path)
-        assert autostart.check_node_autostart() is False
-    finally:
-        if old_home is None:
-            os.environ.pop("HOME", None)
-        else:
-            os.environ["HOME"] = old_home
-    print("PASS: Linux login entry is an in-place autostart .desktop file")
-
-
 def _strip_docstrings(source: str) -> str:
     """Python source re-emitted without docstrings and without comments."""
     tree = ast.parse(textwrap.dedent(source))
@@ -242,86 +123,9 @@ def _strip_docstrings(source: str) -> str:
     return ast.unparse(tree)
 
 
-def _code_without_docstrings(obj) -> str:
-    """``obj``'s code, with docstrings stripped and string arguments kept.
-
-    Docstrings go so the guard can inspect the *implementation* while the
-    class stays free to explain the flagged history in prose; the string
-    arguments that make up a dangerous command line (``"runas"``, ``"/RU"``)
-    survive stripping and stay detectable.
-    """
-    return _strip_docstrings(inspect.getsource(obj))
-
-
-def test_node_autostart_contains_no_elevation_or_service_registration():
-    code = _code_without_docstrings(platform.NodeAutostart)
-    for needle in ("runas", "ShellExecuteW", "schtasks", "SYSTEM", "sc create",
-                   "shutil.copy", "HKEY_LOCAL_MACHINE"):
-        assert needle not in code, (
-            f"{needle!r} must not appear in NodeAutostart: that combination is "
-            "what got the unsigned build flagged by Windows Defender"
-        )
-    # Positive checks, so an emptied class can't pass the guard vacuously.
-    assert "HKEY_CURRENT_USER" in code, "the login entry must be per-user (HKCU)"
-    assert "CreateKeyEx" in code and "SetValueEx" in code, code
-    print("PASS: NodeAutostart neither elevates nor registers a service")
-
-
-# --- --node dispatch -----------------------------------------------------
-
-def test_node_flag_runs_the_headless_node_without_a_gui():
-    backend = _StubBackend()
-    argv = sys.argv
-    sys.argv = ["Ephemeral-Distributed-Instructor.exe", "--node"]
-    try:
-        try:
-            tray.run(backend)
-            raise AssertionError("tray.run must exit on --node")
-        except SystemExit as e:
-            assert e.code == 7, e.code
-    finally:
-        sys.argv = argv
-    # Node mode owns its own warmup: the tray must not start first.
-    assert backend.calls == ["run_node_forever"], backend.calls
-    print("PASS: --node runs the headless node and exits without the tray")
-
-
-def test_node_hooks_are_inert_without_a_node():
-    class _Minimal(Backend):
-        app_key = "minimal"
-        display_name = "Minimal"
-
-        def about(self):
-            return ""
-
-        def startup_message(self):
-            return ""
-
-        def run_logic(self, icon, content=None):
-            pass
-
-        def quit(self, icon, item_unused=None):
-            pass
-
-        def force_stop_all(self, icon, item_unused=None):
-            pass
-
-        def purge_cache(self, icon, item_unused=None):
-            pass
-
-        def self_check(self):
-            return 0
-
-    backend = _Minimal()
-    assert backend.check_node_autostart() is False
-    backend.toggle_node_autostart(None)  # no-op: never raises
-    assert backend.run_node_forever() == 2  # --node is a usage error here
-    print("PASS: a backend without a node offers no autostart and rejects --node")
-
-
 # --- distributed menu ---------------------------------------------------
 
-def test_distributed_menu_offers_a_login_scoped_node():
+def test_distributed_menu_has_no_background_node():
     from ephemeral_ui.backends.distributed import DistributedBackend
 
     # Without GUI deps platform.item/platform.pystray do not exist at all, so
@@ -344,7 +148,7 @@ def test_distributed_menu_offers_a_login_scoped_node():
                 setattr(platform, name, value)
 
     assert "Distributed" in texts, texts
-    assert "Run Node on Login" in texts, texts
+    assert "Run Node on Login" not in texts, texts
     assert "Private Mode" in texts, texts
     assert "Install Podman Desktop" in texts, (
         "the vendor route has to be reachable from the tray, not only from a "
@@ -355,7 +159,7 @@ def test_distributed_menu_offers_a_login_scoped_node():
             f"the Distributed menu must not promise {needle!r}: the node starts "
             "at login for one user, and a boot-time service is what was flagged"
         )
-    print("PASS: the Distributed menu offers a login-scoped node, not a service")
+    print("PASS: the Distributed menu has no background node or service item")
 
 
 # --- packaging invariants -----------------------------------------------
@@ -794,9 +598,12 @@ def test_msi_is_machine_wide_and_declarative():
     assert "HKEY_CURRENT_USER" not in wxs and 'Root="HKCU"' not in wxs, (
         "every registry value must be HKLM: HKCU would only cover whoever ran "
         "the installer")
-    marker = wxs.index('Name="Ephemeral-Distributed-Node"')
+    marker = wxs.index('Name="Ephemeral-Distributed-Instructor" Type="string"')
     entry = wxs[marker:marker + 400]
-    assert "--node" in entry, "the machine-wide login entry must start the node"
+    assert "--node" not in entry, (
+        "the machine-wide login entry starts the tray app, not a hidden node: "
+        "a teacher must see the same app the Install & Run on Boot item starts")
+    assert 'Name="Ephemeral-Distributed-Instructor" Type="string"' in wxs
     assert "[INSTALLDIR]Ephemeral-Distributed-Instructor.exe" in entry, (
         "the entry must point at the installed exe, not a copy")
 
@@ -867,7 +674,7 @@ def test_msi_is_machine_wide_and_declarative():
     assert 'if [ ! -f "$PKG" ]' in workflow, (
         "the smoke test must say the MSI is missing instead of letting msiexec "
         "report it as a package it could not open")
-    assert "Ephemeral-Distributed-Node" in workflow, (
+    assert "/v Ephemeral-Distributed-Instructor /reg:64" in workflow, (
         "the machine-wide Run value is the claim this package makes, so CI has "
         "to check it and not only that files landed")
     assert "--artifact dist/Ephemeral-Distributed-Instructor.msi" in workflow, (
@@ -960,22 +767,8 @@ def test_msi_harvest_postprocessor_covers_every_directory():
 
 
 def main():
-    test_node_command_runs_the_app_in_place()
-    test_node_command_prefers_the_appimage_path()
-    test_node_value_name_does_not_collide_with_the_tray_autostart()
     test_onedir_bundles_are_never_copied_out_of_their_folder()
-    if sys.platform == "win32" and winreg is not None:
-        test_windows_login_entry_is_per_user_and_never_elevated()
-    else:
-        print("SKIP: Windows Run-key test - not a Windows host")
-    if sys.platform != "win32":
-        test_linux_login_entry_is_an_in_place_desktop_file()
-    else:
-        print("SKIP: Linux autostart test - not a POSIX host")
-    test_node_autostart_contains_no_elevation_or_service_registration()
-    test_node_flag_runs_the_headless_node_without_a_gui()
-    test_node_hooks_are_inert_without_a_node()
-    test_distributed_menu_offers_a_login_scoped_node()
+    test_distributed_menu_has_no_background_node()
     test_instructor_bundle_is_not_a_self_extractor()
     test_instructor_build_cannot_join_the_public_swarm()
     test_instructor_first_launch_offers_create_or_join()

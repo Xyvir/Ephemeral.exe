@@ -302,9 +302,9 @@ jobs:
         # "Machine-wide" is the claim this package makes, so the smoke test
         # checks the machine-wide entries rather than only the files.
         echo "--- machine-wide Run entry ---"
-        reg query "$RUNKEY" /v Ephemeral-Distributed-Node /reg:64
-        reg query "$RUNKEY" /v Ephemeral-Distributed-Node /reg:64 | grep -qF -- '--node' || {
-          echo "the machine-wide node entry is missing from $RUNKEY" >&2
+        reg query "$RUNKEY" /v Ephemeral-Distributed-Instructor /reg:64
+        reg query "$RUNKEY" /v Ephemeral-Distributed-Instructor /reg:64 | grep -qF -- 'Ephemeral-Distributed-Instructor.exe' || {
+          echo "the machine-wide start-on-boot entry is missing from $RUNKEY" >&2
           exit 1
         }
         reg query 'HKLM\Software\Ephemeral\Ephemeral-Distributed-Instructor' /v NodeAtLogin /reg:64
@@ -319,8 +319,8 @@ jobs:
           echo "the install directory survived uninstall: $INSTALLED" >&2
           exit 1
         fi
-        if reg query "$RUNKEY" /v Ephemeral-Distributed-Node /reg:64 >/dev/null 2>&1; then
-          echo "the machine-wide node entry survived uninstall" >&2
+        if reg query "$RUNKEY" /v Ephemeral-Distributed-Instructor /reg:64 >/dev/null 2>&1; then
+          echo "the machine-wide start-on-boot entry survived uninstall" >&2
           exit 1
         fi
         echo "MSI install + uninstall smoke passed, machine-wide entries included"

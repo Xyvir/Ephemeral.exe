@@ -130,25 +130,3 @@ class Backend(ABC):
     @abstractmethod
     def self_check(self) -> int:
         """Headless install check; returns a process exit code."""
-
-    # --- always-on node (distributed builds only) -------------------------
-
-    def check_node_autostart(self) -> bool:
-        """True when the headless node is registered to start at login.
-
-        Only the distributed tier runs a node, so the local build returns
-        False and its tray never offers the item.
-        """
-        return False
-
-    def toggle_node_autostart(self, icon, item_unused=None) -> None:
-        """Enable/disable login autostart for the headless node (no-op)."""
-
-    def run_node_forever(self) -> int:
-        """Run the headless always-on node (``--node``); returns an exit code.
-
-        The distributed backend owns the real implementation. In a build with
-        no node, ``--node`` is a usage error rather than a silent success.
-        """
-        print("ephemeral: --node is only available in the distributed build")
-        return 2

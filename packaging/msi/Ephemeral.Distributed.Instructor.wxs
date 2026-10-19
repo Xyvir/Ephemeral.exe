@@ -11,8 +11,7 @@
     install raises a UAC prompt: writing %ProgramFiles% and HKLM is exactly what
     administrator rights are for. It happens once, visibly, with the user's
     consent — the app itself still never self-elevates and ships no service,
-    scheduled task or SYSTEM component (see NodeAutostart in platform.py, and
-    the tests that keep it that way).
+    scheduled task or SYSTEM component (see the tests that keep it that way).
   * Exactly one custom action, and it does one thing: start the app that was
     just installed, once. An MSI cannot launch a program declaratively, and the
     classroom link a teacher actually needs only exists once the app runs (it
@@ -28,11 +27,14 @@
     "launch when setup finishes" checkbox on the Finish dialog is the other
     standard pattern; it needs the WixUtilExtension and a custom dialog, and it
     would leave a teacher without the link unless they ticked it.)
-  * The optional "serve this PC" feature writes an HKLM Run value, so the node
-    starts when *any* user logs in — including a professor who is not the
-    account that installed it. Its component keypath is a separate marker
-    value, so a user who turns the node off in the tray does not have Windows
-    Installer repair silently switch it back on.
+  * The default-on "start at login" feature writes an HKLM Run value that
+    starts the normal tray app when *any* user logs in, including a professor
+    who is not the account that installed it. It is the same thing as the tray's
+    "Install & Run on Boot" item, just set for every user at install time, and
+    it is visible to the user: no background node, no headless mode. Its
+    component keypath is a separate marker value, so a user who turns start-on-
+    boot off in the tray does not have Windows Installer repair silently switch
+    it back on.
   * Staying per-machine also keeps MSI honest: file-keyed components are the
     supported model, and ICE38/ICE91 (which only apply to user-profile
     directories) simply do not arise, so validation needs no suppressions.
@@ -88,13 +90,13 @@
                            Key="Software\Ephemeral\Ephemeral-Distributed-Instructor"
                            Name="NodeAtLogin" Type="integer" Value="1"
                            KeyPath="yes" />
-            <!-- Machine-wide login entry: every user login on this PC starts a
-                 node. Visible as-is in regedit at
-                 HKLM\Software\Microsoft\Windows\CurrentVersion\Run. -->
+            <!-- Machine-wide login entry: every user login on this PC starts the
+                 tray app. The value name is the instructor app_key, so the
+                 tray's "Install & Run on Boot" check and toggle see it. -->
             <RegistryValue Root="HKLM"
                            Key="Software\Microsoft\Windows\CurrentVersion\Run"
-                           Name="Ephemeral-Distributed-Node" Type="string"
-                           Value="&quot;[INSTALLDIR]Ephemeral-Distributed-Instructor.exe&quot; --node"
+                           Name="Ephemeral-Distributed-Instructor" Type="string"
+                           Value="&quot;[INSTALLDIR]Ephemeral-Distributed-Instructor.exe&quot;"
                            KeyPath="no" />
           </Component>
 
@@ -140,10 +142,10 @@
          but Absent="allow" makes it a real checkbox in the feature tree, and
          `msiexec ADDLOCAL=ApplicationFiles` skips it for a silent install that
          should not serve. -->
-    <Feature Id="NodeAtLogin" Title="Serve this machine to students"
+    <Feature Id="NodeAtLogin" Title="Install &amp; Run on Boot"
              Level="1" Display="2"
              Absent="allow"
-             Description="Start the compute node whenever anyone logs in, so a class can run codeblocks through this machine. Machine-wide, with no Windows service and no SYSTEM task. Remove it later with REMOVE=NodeAtLogin.">
+             Description="Start Ephemeral's tray app whenever anyone logs in to this PC, so its classroom link and Distributed menu are ready. Machine-wide, with no Windows service and no SYSTEM task. Remove it later with REMOVE=NodeAtLogin.">
       <ComponentRef Id="NodeAtLogin" />
     </Feature>
 
