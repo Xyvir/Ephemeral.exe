@@ -351,7 +351,23 @@ def _limits_warning_line() -> str:
 
 
 def _host_memory_mib() -> int | None:
-    """Total host RAM in MiB via /proc/meminfo, or None when unknown."""
+    """
+    Total RAM in MiB of the machine that runs containers, or None when unknown.
+
+    Asks Podman first: on Windows the containers run in the WSL2 machine, whose
+    RAM is what matters and which /proc/meminfo on the tray host does not show.
+    Falls back to /proc/meminfo for native Linux hosts.
+    """
+    try:
+        out = subprocess.check_output(
+            ['podman', 'info', '--format', '{{.Host.MemTotal}}'],
+            stderr=subprocess.DEVNULL,
+            startupinfo=get_startupinfo(),
+            timeout=10,
+        )
+        return int(out.decode().strip()) // (1024 * 1024)
+    except Exception:
+        pass
     try:
         with open("/proc/meminfo", encoding="utf-8") as f:
             for line in f:
@@ -367,9 +383,14 @@ def _container_resource_limits() -> list[str]:
     total_mib = _host_memory_mib()
     small_host = total_mib is not None and total_mib <= 2560
 
+    # Half of RAM, floor 256 MiB, cap 2 GiB ("2g" keeps the historical default).
     memory = os.environ.get("EPHEMERAL_MEMORY_LIMIT")
     if memory is None:
-        memory = f"{max(256, (total_mib // 2) // 64 * 64)}m" if small_host else "2g"
+        if total_mib is None:
+            memory = "2g"
+        else:
+            share = max(256, (total_mib // 2) // 64 * 64)
+            memory = "2g" if share >= 2048 else f"{share}m"
 
     cpus = os.environ.get("EPHEMERAL_CPU_LIMIT") or ("1" if small_host else "2")
     pids = os.environ.get("EPHEMERAL_PIDS_LIMIT") or ("256" if small_host else "512")

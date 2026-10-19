@@ -281,10 +281,24 @@ try:
         ['--memory', '700m', '--cpus', '1.0', '--pids-limit', '128']
 finally:
     executor_mod._host_memory_mib = _saved_host_mib
+    # Clear the overrides this test set, then restore the caller's values.
     for k, v in _saved_limits_env.items():
+        os.environ.pop(k, None)
         if v is not None:
             os.environ[k] = v
 print("PASS: Container resource limits scale to host RAM (small-VPS safe)")
+
+# RAM is read from the Podman machine (WSL2 on Windows), not the tray host.
+_saved_check_output = executor_mod.subprocess.check_output
+try:
+    executor_mod.subprocess.check_output = lambda *a, **k: b"2147483648\n"  # 2 GiB
+    assert executor_mod._host_memory_mib() == 2048
+    assert executor_mod._container_resource_limits()[1] == '1024m'
+    executor_mod.subprocess.check_output = lambda *a, **k: b"17179869184\n"  # 16 GiB
+    assert executor_mod._container_resource_limits()[1] == '2g'
+finally:
+    executor_mod.subprocess.check_output = _saved_check_output
+print("PASS: Host RAM read from podman info; memory = half of RAM, capped at 2g")
 
 # --- Test 28: native image architecture checks --------------------------
 # A foreign-architecture image must not be considered warm. Multi-platform
