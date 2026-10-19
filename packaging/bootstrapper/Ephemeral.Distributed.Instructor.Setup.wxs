@@ -81,7 +81,8 @@
            Vital="no": a machine that already carries a different Podman build
            returns 1638 ("another version is installed"), and rolling the whole
            setup back over that would leave a teacher with nothing and no
-           explanation. The app's first run diagnoses a missing runtime
+           explanation. WiX v3 does not allow an ExitCode on MsiPackage, so 1638
+           is not remapped to success; Vital="no" is what carries setup past it. The app's first run diagnoses a missing runtime
            precisely instead.
 
            Permanent="yes": a teacher may use Podman for other courses; removing
@@ -95,7 +96,6 @@
                   Compressed="yes">
         <MsiProperty Name="MSIINSTALLPERUSER" Value="1" />
         <MsiProperty Name="MACHINE_PROVIDER" Value="wsl" />
-        <ExitCode Value="1638" Behavior="success" />
       </MsiPackage>
 
       <!-- The app. LAUNCHFIRSTRUN=1 opts the post-install launch back in:

@@ -430,7 +430,10 @@ def test_setup_bundle_chains_wsl_then_podman_then_the_app():
     props = {p.get("Name"): p.get("Value") for p in podman.findall("w:MsiProperty", WIX_NS)}
     assert props.get("MSIINSTALLPERUSER") == "1"
     assert props.get("MACHINE_PROVIDER") == "wsl"
-    assert any(e.get("Value") == "1638" for e in podman.findall("w:ExitCode", WIX_NS))
+    # WiX v3 accepts <ExitCode> only on ExePackage, so 1638 cannot be mapped to
+    # success here. Vital="no" above is what keeps setup going if it appears.
+    assert not podman.findall("w:ExitCode", WIX_NS), (
+        "WiX v3 rejects ExitCode on MsiPackage (CNDL0005); keep it off")
 
     # The app opts the post-install launch back in: Burn installs quietly, and
     # the MSI's silent guard would otherwise suppress exactly the classroom
@@ -445,10 +448,13 @@ def test_setup_bundle_chains_wsl_then_podman_then_the_app():
         encoding="utf-8")
     used = set(re.findall(r"\$\(var\.(\w+)\)", wxs))
     assert used, "the authoring should be parameterised"
-    assert "burn.exe" in script and "WixBalExtension.dll" in script, (
-        "a bundle needs burn.exe and the Bal extension, unlike the MSI")
+    # A bundle is compiled and linked like the MSI (candle, then light with the
+    # Bal extension). burn.exe is the engine stub light attaches, not a compiler.
+    assert "candle.exe" in script and "light.exe" in script, (
+        "a bundle is built with candle and light, not burn.exe")
+    assert "WixBalExtension.dll" in script, "a bundle needs the Bal extension"
     for var in sorted(used):
-        assert f'-d "{var}=' in script, f"{var} is read by the bundle but never passed"
+        assert f"-d{var}=" in script, f"{var} is read by the bundle but never passed"
 
 
 def test_msi_launch_is_opt_in_for_the_bundle_but_still_silent_by_default():
