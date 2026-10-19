@@ -2966,6 +2966,27 @@ function timestampedFileName(ext) {
   return `ephemeral-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
 }
 
+// Export name taken from the document's first markdown heading in prose (code
+// fences are skipped). Its first 25 characters with spaces as underscores; a
+// "~" marks a cut-off title. Characters that cannot appear in a filename are
+// dropped. Null when the prose has no heading, so the caller falls back to the
+// timestamped name.
+function exportFileName(markdown) {
+  for (const seg of splitMarkdown(markdown)) {
+    if (seg.type !== "prose") continue;
+    const h = /^#{1,6}[ \t]+(.*\S)/m.exec(seg.text);
+    if (!h) continue;
+    // Windows-reserved characters and control characters are dropped.
+    const title = h[1].replace(/[\x00-\x1f<>:"\/\\|?*]/g, "").trim();
+    if (!title) continue;
+    let name = title.slice(0, 25).replace(/ /g, "_");
+    // Device names (CON, NUL, COM1...) are refused by Windows even with an extension.
+    if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(name)) name = "_" + name;
+    return name + (title.length > 25 ? "~" : "") + ".md";
+  }
+  return null;
+}
+
 // "Share link output" mode: what the output ends with. none = nothing,
 // link = the "Try it here" hyperlink, qr = that link plus a QR code so
 // a printed page can be scanned straight back to the payload.
@@ -3781,7 +3802,7 @@ $("exportCode").addEventListener("click", () => {
   const markdown = liveMarkdown();
   if (!markdown.trim()) return;
   const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
-  triggerDownload(blob, timestampedFileName("md"));
+  triggerDownload(blob, exportFileName(markdown) || timestampedFileName("md"));
 });
 // The ✕ Clear button wipes the editor with a programmatic setValue(""),
 // which browsers never record in the textarea's native undo stack — so
