@@ -555,7 +555,7 @@ class DistributedBackend(Backend):
                 + "\n\nSee About for node status, or start the tray again.",
             )
             return
-        ran, detail = prereq.canary()
+        ran, detail = prereq.ensure_canary()
         if not ran:
             platform.show_terminal_window(
                 "Ephemeral needs a container runtime",
@@ -1533,7 +1533,7 @@ class DistributedBackend(Backend):
                 + (detail or "")[:1500],
             )
             return
-        ran, canary_detail = prereq.canary()
+        ran, canary_detail = prereq.ensure_canary()
         if not ran:
             platform.show_terminal_window(
                 "Ephemeral repair runtime",

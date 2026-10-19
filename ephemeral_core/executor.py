@@ -318,7 +318,26 @@ def _probe_cgroup_limits() -> bool:
     # Only the cgroup-delegation failure modes disable limits; anything
     # else keeps prior behavior.
     markers = ("memory.max", "controller `", "is not available", "cgroup.controllers")
-    return not any(m in err for m in markers)
+    if not any(m in err for m in markers):
+        return True
+    # The limits are the suspect, but a container that fails even with no
+    # limits means cgroups are broken outright: dropping the flags would
+    # change nothing, so say so instead of running jobs that cannot start.
+    bare = subprocess.run(
+        ['podman', 'run', '--rm', '-i', images[0], 'true'],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        startupinfo=startupinfo,
+        timeout=30,
+    )
+    if bare.returncode != 0:
+        raise RuntimeError(
+            "This Podman machine cannot start containers (cgroup delegation "
+            "is broken). Run Distributed -> Repair runtime, then retry. "
+            + (bare.stderr or b"").decode("utf-8", "replace").strip()[:500]
+        )
+    return False  # limits unsupported here; containers run fine without them
 
 
 def _limits_warning_line() -> str:

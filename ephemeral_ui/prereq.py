@@ -306,6 +306,45 @@ def canary(timeout: int = 600) -> tuple[bool, str]:
     return rc == 0, out.strip()
 
 
+def _is_cgroup_delegation_error(detail: str) -> bool:
+    """Whether a failed canary is the WSL2 'controllers not delegated' fault."""
+    d = detail.lower()
+    return "cgroup.controllers" in d or (
+        "controller" in d and "is not available" in d
+    )
+
+
+def repair_cgroup_delegation() -> tuple[bool, str]:
+    """Point the Podman machine at the cgroupfs fallback, idempotently.
+
+    Unprivileged from the tray's point of view: ``podman machine ssh`` runs as
+    the machine's own user, and the sudo here is inside the WSL2 VM, not on the
+    Windows host, so no elevation happens. Affects every container on this
+    machine, which is why it is only run from Repair runtime / first run.
+    """
+    if sys.platform != "win32":
+        return False, "not a WSL2 machine"
+    script = (
+        "printf '[engine]\\ncgroup_manager = \"cgroupfs\"\\n"
+        "cgroup_parent = \"/\"\\n' "
+        "| sudo tee /etc/containers/containers.conf.d/99-ephemeral-cgroups.conf >/dev/null "
+        "&& sudo systemctl restart podman.service podman.socket"
+    )
+    rc, out = run(["podman", "machine", "ssh", script], timeout=120)
+    return rc == 0, out.strip()
+
+
+def ensure_canary(timeout: int = 600) -> tuple[bool, str]:
+    """:func:`canary`, with one self-repair for the WSL2 cgroup delegation fault."""
+    ok, detail = canary(timeout)
+    if ok or sys.platform != "win32" or not _is_cgroup_delegation_error(detail):
+        return ok, detail
+    repaired, msg = repair_cgroup_delegation()
+    if not repaired:
+        return False, f"{detail}\n\ncgroup repair failed: {msg}"
+    return canary(timeout)
+
+
 # --- the installer's elevated half -------------------------------------------
 
 def enable_wsl(features: tuple[str, ...] = WSL_FEATURES) -> int:

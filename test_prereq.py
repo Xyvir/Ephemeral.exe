@@ -60,6 +60,53 @@ def test_console_output_is_decoded_the_way_windows_writes_it():
     assert prereq.classify_wsl_status(0, prereq.decode_console(raw)).ok
 
 
+def test_cgroup_delegation_failure_is_recognised_and_nothing_else():
+    """Only the WSL2 'controllers not delegated' canary failure triggers repair."""
+    fault = (
+        'Error: crun: the requested cgroup controller `memory` is not available: '
+        'OCI runtime error'
+    )
+    assert prereq._is_cgroup_delegation_error(fault)
+    assert prereq._is_cgroup_delegation_error("open cgroup.controllers: no such file")
+    assert not prereq._is_cgroup_delegation_error("Error: image not known")
+    assert not prereq._is_cgroup_delegation_error("")
+
+
+def test_ensure_canary_repairs_cgroup_delegation_once_then_retries():
+    """A delegation fault is repaired on the machine and the canary re-proven.
+
+    The repair is idempotent and unprivileged (``podman machine ssh``), so the
+    tray may call it on every first run; a second failure must be reported with
+    the repair's own output rather than looping.
+    """
+    real = (prereq.canary, prereq.repair_cgroup_delegation, sys.platform)
+    results = iter([(False, "crun: controller `memory` is not available"), (True, "")])
+    repairs = []
+    try:
+        sys.platform = "win32"
+        prereq.canary = lambda timeout=600: next(results)
+        prereq.repair_cgroup_delegation = lambda: (repairs.append(1) or True, "ok")
+        assert prereq.ensure_canary() == (True, "")
+        assert repairs == [1]
+
+        # A repair that fails is reported as such, with the original detail.
+        prereq.canary = lambda timeout=600: (False, "controller `cpu` is not available")
+        prereq.repair_cgroup_delegation = lambda: (False, "ssh refused")
+        ok, detail = prereq.ensure_canary()
+        assert not ok
+        assert "cgroup repair failed: ssh refused" in detail
+        assert "controller `cpu` is not available" in detail
+
+        # Unrelated failures are not 'repaired' at all.
+        repairs.clear()
+        prereq.canary = lambda timeout=600: (False, "Error: image not known")
+        prereq.repair_cgroup_delegation = lambda: (repairs.append(1) or True, "")
+        assert prereq.ensure_canary() == (False, "Error: image not known")
+        assert repairs == []
+    finally:
+        prereq.canary, prereq.repair_cgroup_delegation, sys.platform = real
+
+
 def test_setup_survives_a_windowed_build_with_no_stdout():
     """The shipped exe has no console, so a print is a silent no-op.
 
@@ -436,6 +483,8 @@ def test_setup_bundle_is_built_and_shipped_by_ci():
 
 def main():
     test_console_output_is_decoded_the_way_windows_writes_it()
+    test_cgroup_delegation_failure_is_recognised_and_nothing_else()
+    test_ensure_canary_repairs_cgroup_delegation_once_then_retries()
     test_setup_survives_a_windowed_build_with_no_stdout()
     test_wsl_and_machine_states_are_classified()
     test_canary_uses_the_image_the_node_wants_anyway()
