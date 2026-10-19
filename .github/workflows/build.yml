@@ -336,12 +336,22 @@ jobs:
     - name: Install the full WiX v3 toolset (burn.exe)
       shell: pwsh
       run: |
-        choco install wixtoolset --version=3.14.1.20250415 -y --no-progress
+        # --force: the runner reports this version as already installed, which can
+        # be a partial install without the extensions. Reinstall to get the full one.
+        choco install wixtoolset --version=3.14.1.20250415 -y --force --no-progress
         if ($LASTEXITCODE -ne 0) { throw "choco install wixtoolset failed ($LASTEXITCODE)" }
         $burn = Get-ChildItem "${env:ProgramFiles(x86)}\WiX Toolset*" -Recurse -Filter burn.exe -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $burn) { throw 'burn.exe still missing after installing WiX' }
         $bin = $burn.DirectoryName.Replace('\', '/') -replace '^([A-Za-z]):', '/$1'
-        if (-not (Test-Path (Join-Path $burn.DirectoryName 'WixBalExtension.dll'))) { throw 'WixBalExtension.dll missing from the WiX install' }
+        $balDll = Join-Path $burn.DirectoryName 'WixBalExtension.dll'
+        if (-not (Test-Path $balDll)) {
+          # Some layouts keep extensions in a sibling folder; copy the DLL beside burn.exe.
+          $found = Get-ChildItem "${env:ProgramFiles(x86)}\WiX Toolset*", "${env:ProgramFiles}\WiX Toolset*" -Recurse -Filter WixBalExtension.dll -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($found) { Copy-Item $found.FullName $balDll } else {
+            Get-ChildItem $burn.DirectoryName | ForEach-Object { Write-Host $_.Name }
+            throw 'WixBalExtension.dll is not in this WiX install (see listing above)'
+          }
+        }
         echo "WIX_BIN=$bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         echo "WiX bin: $bin"
 
