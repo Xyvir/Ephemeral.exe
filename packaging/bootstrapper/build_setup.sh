@@ -56,6 +56,11 @@ fi
 if [ -z "${WIX_BIN:-}" ] && command -v burn.exe >/dev/null 2>&1; then
     WIX_BIN="$(dirname "$(command -v burn.exe)")"
 fi
+# build_msi.sh finds the toolset through candle on PATH; the runner's WiX may
+# only be reachable that way, so accept the directory that holds candle.exe.
+if [ -z "${WIX_BIN:-}" ] && command -v candle.exe >/dev/null 2>&1; then
+    WIX_BIN="$(dirname "$(command -v candle.exe)")"
+fi
 if [ -z "${WIX_BIN:-}" ]; then
     echo "burn.exe not found; set WIX_BIN to a WiX v3 bin directory" >&2
     ls -d "/c/Program Files (x86)/WiX Toolset"* "/c/Program Files/WiX Toolset"* 2>/dev/null >&2 || echo "no WiX Toolset install directory found" >&2
