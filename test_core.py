@@ -303,7 +303,15 @@ try:
     assert executor_mod.image_is_compatible("octave")
 
     executor_mod.subprocess.check_call = lambda *args, **kwargs: 0
-    assert executor_mod.check_image_exists("octave")
+    # octave is amd64-only upstream: even a cached arm64 copy is never warm
+    # on an arm64 host because the host must not pull or advertise it.
+    octave_image = executor_mod.LANG_MAP["octave"]["image"]
+    assert octave_image in executor_mod.images_blocked_on_host()
+    assert not executor_mod.check_image_exists(octave_image)
+    assert executor_mod.check_image_exists("amd-image")
+    executor_mod.platform.machine = lambda: "x86_64"
+    assert octave_image not in executor_mod.images_blocked_on_host()
+    executor_mod.platform.machine = lambda: "aarch64"
 
     inventory = [
         {"Architecture": "amd64", "Names": ["amd-image"]},
@@ -316,6 +324,34 @@ finally:
     executor_mod.subprocess.check_call = _saved_check_call
     executor_mod.subprocess.check_output = _saved_check_output
 print("PASS: foreign cached images are excluded from native warm-image routing")
+
+# --- Test 28b: amd64-only images are blocked on arm64 hosts only ----------
+# Every entry must name a real LANG_MAP image (so the table cannot drift from
+# config.py), be blocked on arm64, be allowed on amd64, and never be listed
+# as warm on arm64 even when Podman names it with an explicit :latest tag.
+configured = {cfg["image"] for cfg in executor_mod.LANG_MAP.values() if isinstance(cfg, dict) and cfg.get("image")}
+assert set(executor_mod._NATIVE_ARCH_ONLY_IMAGES) <= configured, "native-arch table names an image missing from LANG_MAP"
+_saved_machine = executor_mod.platform.machine
+_saved_check_output = executor_mod.subprocess.check_output
+try:
+    for image, arch in executor_mod._NATIVE_ARCH_ONLY_IMAGES.items():
+        executor_mod.platform.machine = lambda: "aarch64"
+        blocked_arm = executor_mod.images_blocked_on_host()
+        assert image in blocked_arm or image + ":latest" in blocked_arm, image
+        executor_mod.platform.machine = lambda: "x86_64"
+        blocked_amd = executor_mod.images_blocked_on_host()
+        assert image not in blocked_amd and image + ":latest" not in blocked_amd, image
+
+    executor_mod.platform.machine = lambda: "aarch64"
+    # No Architecture key (older Podman): these names must be stopped by the
+    # blocklist itself, not by the architecture comparison.
+    inventory = [{"Names": ["docker.io/esolang/piet:latest", "docker.io/pandoc/extra:latest"]}]
+    executor_mod.subprocess.check_output = lambda *args, **kwargs: __import__("json").dumps(inventory).encode()
+    assert executor_mod.list_local_images() == []
+finally:
+    executor_mod.platform.machine = _saved_machine
+    executor_mod.subprocess.check_output = _saved_check_output
+print("PASS: amd64-only images are blocked on arm64 hosts and match LANG_MAP")
 
 # --- Test 29: result fences outgrow the payload's own backticks -----------
 # Block output is arbitrary text, and a model reply routinely contains its own

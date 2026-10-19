@@ -66,17 +66,58 @@ def _running_under_wsl2() -> bool:
         return False
 
 
+#: Images published for one architecture only (verified against the registry
+#: Hub tag metadata). Pulling one on any other host fails at manifest
+#: resolution, so the host must never try to pull it nor advertise a cached
+#: copy. Keys must match the image refs in LANG_MAP (config.py); a test pins
+#: that so the two cannot drift apart.
+_NATIVE_ARCH_ONLY_IMAGES: dict[str, str] = {
+    "docker.io/tymills620/octave-forge:latest": "amd64",  # gnuoctave/octave is amd64-only
+    "docker.io/tobix/pywine:latest": "amd64",
+    "docker.io/library/julia:alpine": "amd64",
+    "docker.io/library/clojure:temurin-17-alpine": "amd64",
+    "docker.io/esolang/brainfuck-esotope": "amd64",
+    "docker.io/esolang/piet": "amd64",
+    "docker.io/esolang/05ab1e": "amd64",
+    "docker.io/esolang/cjam": "amd64",
+    "docker.io/esolang/cobol": "amd64",
+    "docker.io/esolang/golfscript": "amd64",
+    "docker.io/esolang/lolcode": "amd64",
+    "mcr.microsoft.com/powershell": "amd64",  # publishes amd64 + 32-bit arm only
+    "docker.io/pandoc/extra": "amd64",
+    "docker.io/hdlc/iverilog": "amd64",
+    "docker.io/elasticdog/tiddlywiki": "amd64",
+}
+
+
+def _image_aliases(image: str) -> set[str]:
+    """An untagged ref also matches Podman's ``:latest`` listing name."""
+    last = image.rsplit("/", 1)[-1]
+    return {image} if ":" in last else {image, image + ":latest"}
+
+
+def _lang_image(lang: str) -> str | None:
+    cfg = LANG_MAP.get(lang)
+    image = cfg.get("image") if isinstance(cfg, dict) else None
+    return image if isinstance(image, str) and image else None
+
+
 def images_blocked_on_host() -> frozenset[str]:
     """Image refs this host must not pull, run, or advertise warm.
 
-    Returns the blocklist for the current platform (empty on native
-    Linux, where every language-map image works).
+    Combines the architecture rule (images published only for another
+    architecture, e.g. octave on arm64) with the platform rule (headless
+    Chromium under WSL2). Empty on native Linux of the matching arch.
     """
-    if not _running_under_wsl2():
-        return frozenset()
-    html_cfg = LANG_MAP.get("html")
-    image = html_cfg.get("image") if isinstance(html_cfg, dict) else None
-    return frozenset({image}) if image else frozenset()
+    blocked: set[str] = set()
+    for image, arch in _NATIVE_ARCH_ONLY_IMAGES.items():
+        if host_arch() != arch:
+            blocked.update(_image_aliases(image))
+    if _running_under_wsl2():
+        image = _lang_image("html")
+        if image:
+            blocked.add(image)
+    return frozenset(blocked)
 
 
 # --- Subprocess Helpers ---
