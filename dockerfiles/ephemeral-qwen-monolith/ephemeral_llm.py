@@ -213,6 +213,7 @@ def chat(
     seed: int | None = None,
     temperature: float | None = None,
     report: bool = True,
+    prose: bool = False,
     **kwargs,
 ) -> str:
     """Send one user message (with an optional system prompt) and return the reply text.
@@ -247,7 +248,8 @@ def chat(
     fingerprint = getattr(response, "system_fingerprint", None) or None
     _remember(prompt, system, model, seed, used_temperature, fingerprint, reply)
     if report:
-        for line in _report_lines(seed, used_temperature, fingerprint, "chat"):
+        call = "prose: chat" if prose else "chat"
+        for line in _report_lines(seed, used_temperature, fingerprint, call):
             print(line)
     return reply
 

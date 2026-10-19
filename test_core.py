@@ -385,14 +385,15 @@ def _llm(content):
 prompt = "Can you write a small python script to calculate the first 10 primes?"
 assert _llm(prompt) == (
     "from ephemeral_llm import chat, client\n"
-    'print(chat("Can you write a small python script to calculate the first 10 primes?"))\n'
+    'print(chat("Can you write a small python script to calculate the first 10 primes?", prose=True))\n'
 ), _llm(prompt)
 
 # Multi-line prose, quotes and newlines arrive intact in one valid literal.
 prose = 'Explain "groupby" in\none sentence.'
 wrapped = _llm(prose)
 assert wrapped.startswith("from ephemeral_llm import chat, client\nprint(chat("), wrapped
-assert json.loads(wrapped.split("print(chat(", 1)[1].rsplit("))\n", 1)[0]) == prose
+assert json.loads(wrapped.split("print(chat(", 1)[1].rsplit(", prose=True))\n", 1)[0]) == prose
+assert wrapped.endswith(", prose=True))\n"), wrapped
 
 # Code keeps running as code, with the names injected.
 code30 = 'df = pd.DataFrame({"n": [1]})\nprint(chat("sum?", max_tokens=8))'
@@ -689,6 +690,20 @@ assert (
     "[ephemeral-llm] chat(prompt, seed=12345, temperature=0.25)"
     in buf34.getvalue()
 ), buf34.getvalue()
+
+# A prose block is labelled as such, so the reader knows it was not run as code.
+buf34 = io.StringIO()
+with redirect_stdout(buf34):
+    llm.chat("hi", seed=99, temperature=0.5, prose=True)
+assert (
+    "[ephemeral-llm] prose: chat(prompt, seed=99, temperature=0.5)"
+    in buf34.getvalue()
+), buf34.getvalue()
+# An ordinary call keeps the plain label.
+buf34 = io.StringIO()
+with redirect_stdout(buf34):
+    llm.chat("hi", seed=99, temperature=0.5)
+assert "prose:" not in buf34.getvalue(), buf34.getvalue()
 
 # report=False (or EPHEMERAL_LLM_REPORT=0) leaves the output to the reply.
 buf34 = io.StringIO()

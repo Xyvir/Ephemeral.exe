@@ -248,7 +248,7 @@ left alone, and wrapped output is valid Python from then on.
     if not reads_as_python(content):
         # json.dumps gives a valid Python literal for any text: quotes,
         # newlines, backslashes and non-ASCII all arrive intact.
-        code = f"print(chat({json.dumps(content.strip())}))\n"
+        code = f"print(chat({json.dumps(content.strip())}, prose=True))\n"
 
     if _LLM_IMPORT_RE.search(code):
         return block if code == content else {**block, "content": code}
