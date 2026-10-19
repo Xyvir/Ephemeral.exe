@@ -44,14 +44,22 @@ for f in "$PODMAN_MSI" "$APP_MSI" "$BUNDLE_DIR/Ephemeral-Distributed-Instructor.
 done
 
 if [ -z "${WIX_BIN:-}" ]; then
-    if [ -x "/c/Program Files (x86)/WiX Toolset v3.14/bin/burn.exe" ]; then
-        WIX_BIN="/c/Program Files (x86)/WiX Toolset v3.14/bin"
-    elif command -v burn.exe >/dev/null 2>&1; then
-        WIX_BIN="$(dirname "$(command -v burn.exe)")"
-    else
-        echo "burn.exe not found; set WIX_BIN to a WiX v3 bin directory" >&2
-        exit 2
-    fi
+    # Same lookup as build_msi.sh: the runner's WiX v3 patch version varies,
+    # so match the install directory by glob rather than one hardcoded path.
+    for candidate in "/c/Program Files (x86)/WiX Toolset"*/bin "/c/Program Files/WiX Toolset"*/bin; do
+        if [ -x "$candidate/burn.exe" ]; then
+            WIX_BIN="$candidate"
+            break
+        fi
+    done
+fi
+if [ -z "${WIX_BIN:-}" ] && command -v burn.exe >/dev/null 2>&1; then
+    WIX_BIN="$(dirname "$(command -v burn.exe)")"
+fi
+if [ -z "${WIX_BIN:-}" ]; then
+    echo "burn.exe not found; set WIX_BIN to a WiX v3 bin directory" >&2
+    ls -d "/c/Program Files (x86)/WiX Toolset"* "/c/Program Files/WiX Toolset"* 2>/dev/null >&2 || echo "no WiX Toolset install directory found" >&2
+    exit 2
 fi
 
 mkdir -p "$(dirname "$OUT")"
