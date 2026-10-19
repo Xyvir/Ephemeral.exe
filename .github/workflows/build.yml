@@ -340,7 +340,7 @@ jobs:
         if ($LASTEXITCODE -ne 0) { throw "choco install wixtoolset failed ($LASTEXITCODE)" }
         $burn = Get-ChildItem "${env:ProgramFiles(x86)}\WiX Toolset*" -Recurse -Filter burn.exe -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $burn) { throw 'burn.exe still missing after installing WiX' }
-        $bin = $burn.DirectoryName -replace '\', '/' -replace '^([A-Za-z]):', '/$1'
+        $bin = $burn.DirectoryName.Replace('\', '/') -replace '^([A-Za-z]):', '/$1'
         if (-not (Test-Path (Join-Path $burn.DirectoryName 'WixBalExtension.dll'))) { throw 'WixBalExtension.dll missing from the WiX install' }
         echo "WIX_BIN=$bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         echo "WiX bin: $bin"
