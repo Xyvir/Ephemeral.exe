@@ -30,7 +30,7 @@ class PeerInfo:
     active_jobs: int = 0           # jobs the peer is currently running
     max_jobs: int | None = None    # peer's concurrency ceiling (None = unknown)
     url: str | None = None         # peer's public HTTP(S) endpoint (bastions)
-    last_seen: float = 0.0         # time.monotonic() of last contact
+    last_seen: float = 0.0         # time.monotonic() of last direct or implied contact
     platform: dict | None = None   # peer's native container platform
 
 
@@ -50,15 +50,11 @@ class PeerTable:
         self._peers: dict[str, PeerInfo] = {}
 
     def prune(self, ttl: float = PEER_TTL_SECONDS) -> int:
-        """Drop peers not DIRECTLY seen within ``ttl`` seconds.
+        """Drop peers not seen (directly or implied) within ``ttl`` seconds.
 
         Returns the number of entries evicted. Called on every merge and
         before every snapshot so stale entries both age out locally and
         stop propagating to other nodes through hello gossip.
-
-        ``last_seen`` is stamped only on direct contact (we dialed the
-        peer or it dialed us). A ``0.0`` last_seen means "never directly
-        seen — only gossiped", and ages out like anything else.
         """
         now = time.monotonic()
         dead = [
@@ -72,11 +68,17 @@ class PeerTable:
 
     def merge(self, infos: Iterable[PeerInfo]) -> int:
         """
-        Merge peer info, keeping the newest ticket/last_seen per node.
+        Merge peer info, keeping the newest ticket per node.
+
+        ``info.last_seen`` is an absolute ``time.monotonic()`` stamp that the
+        caller derives from the age the sender reported (see
+        ``Node._merge_hello``). It is applied as a high-water mark: a new
+        entry takes it as-is, and an existing entry only ever moves forward.
+        Gossip therefore can never make a peer look fresher than the freshest
+        direct contact anyone reported, so a dead peer cannot be re-stamped.
         Returns the number of newly discovered nodes.
         """
         new_count = 0
-        now = time.monotonic()
         for info in infos:
             if not info.node_id:
                 continue
@@ -91,17 +93,7 @@ class PeerTable:
                     max_jobs=info.max_jobs,
                     url=info.url,
                     platform=dict(info.platform) if info.platform else None,
-                    # A NEW entry gets a real TTL window from NOW, even
-                    # when it arrived via gossip (last_seen=0.0). last_seen
-                    # is compared against time.monotonic() — an uptime
-                    # clock — so storing 0.0 means "seen at boot", which
-                    # overflows the TTL on any machine up longer than
-                    # PEER_TTL_SECONDS and prunes the entry in the very
-                    # merge that added it (gossip discovery would never
-                    # learn any peer). Existing entries are never refreshed
-                    # by gossip — the ``if info.last_seen:`` guard below
-                    # preserves that guarantee.
-                    last_seen=info.last_seen or now,
+                    last_seen=info.last_seen,
                 )
                 new_count += 1
             else:
@@ -119,23 +111,28 @@ class PeerTable:
                     existing.platform = dict(info.platform)
                 existing.active_jobs = info.active_jobs
                 existing.max_jobs = info.max_jobs
-                # Gossip (last_seen == 0.0) must NEVER refresh a peer's
-                # last_seen — otherwise a dead peer keeps circulating: every
-                # hello re-stamps its TTL on every node that hears about it.
-                # Only a direct contact may refresh (and never downgrade).
-                if info.last_seen:
-                    existing.last_seen = info.last_seen
+                # High-water mark: never move last_seen backwards, and never
+                # invent freshness. A stale copy from a neighbour carries an
+                # older implied last_seen, so it cannot extend a dead peer's TTL.
+                existing.last_seen = max(existing.last_seen, info.last_seen)
         # Evict stale entries after the merge so a dead peer arriving via
         # gossip can't linger until the next merge call.
         self.prune()
         return new_count
 
     def snapshot(self) -> list[dict]:
-        """Peer entries for embedding in a ``hello`` frame."""
+        """Peer entries for embedding in a ``hello`` frame.
+
+        Each entry carries ``age``: seconds since this node last had contact
+        with the peer. Receivers convert it to their own clock, so no absolute
+        timestamp (which would depend on each machine's uptime) crosses the wire.
+        """
         self.prune()
+        now = time.monotonic()
         return [
             {
                 "node_id": info.node_id,
+                "age": max(0.0, now - info.last_seen),
                 "ticket": info.ticket,
                 "relay": info.relay,
                 "images": sorted(info.images or []),

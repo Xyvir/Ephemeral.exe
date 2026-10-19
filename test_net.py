@@ -1341,18 +1341,10 @@ def test_peer_table_gossip_does_not_refresh_ttl():
         discovery.time.monotonic = real_monotonic
 
 
-def test_peer_table_gossiped_new_peer_survives_merge():
-    """Regression: a brand-new peer arriving via GOSSIP (last_seen=0.0)
-    must survive the very merge that added it, then age out after the TTL.
-
-    last_seen is compared against time.monotonic(), an uptime clock that
-    is thousands of seconds on any real machine. Storing 0.0 for a
-    gossiped peer made ``now - 0.0 > TTL`` true immediately, so every
-    gossip-learned peer was pruned in the same merge that inserted it —
-    discovery could never learn any peer from a hello. New entries now
-    get ``last_seen = now`` so they have a real TTL window to be dialed;
-    only *repeated* gossip (an existing entry) is barred from refreshing.
-    """
+def test_gossip_age_newcomer_and_expiry():
+    """A gossiped newcomer is stamped at now - age: a fresh one is learned
+    and dialable, a one past the TTL is refused on arrival (it is already
+    stale), and a learned one ages out without any direct contact."""
     import ephemeral_net.discovery as discovery
     from ephemeral_net.discovery import PEER_TTL_SECONDS, PeerInfo, PeerTable
 
@@ -1364,28 +1356,78 @@ def test_peer_table_gossiped_new_peer_survives_merge():
     real_monotonic = discovery.time.monotonic
     discovery.time.monotonic = fake_monotonic
     try:
-        # 1. Gossiped newcomer survives the merge that added it.
         t = PeerTable()
-        t.merge([PeerInfo(node_id="gossiped", relay="https://relay.example/", last_seen=0.0)])
-        assert "gossiped" in t.known_peer_ids(), \
-            "a newly gossiped peer must survive the merge that added it"
+        t.merge([PeerInfo(node_id="fresh", relay="https://relay.example/",
+                          last_seen=clock[0] - 30.0)])
+        assert "fresh" in t.known_peer_ids(), "a fresh gossiped peer must be learned"
 
-        # 2. ...but ages out once the TTL passes if never dialed directly.
+        t.merge([PeerInfo(node_id="stale", relay="https://relay.example/",
+                          last_seen=clock[0] - PEER_TTL_SECONDS - 1.0)])
+        assert "stale" not in t.known_peer_ids(), \
+            "an already-stale gossiped peer must not be learned"
+
         clock[0] += PEER_TTL_SECONDS + 60.0
-        t.merge([])  # prune on next merge
-        assert "gossiped" not in t.known_peer_ids(), \
+        t.merge([])
+        assert "fresh" not in t.known_peer_ids(), \
             "a gossiped-only peer must age out after the TTL"
+        print("PASS: gossiped newcomers are learned by age, expire after TTL")
+    finally:
+        discovery.time.monotonic = real_monotonic
 
-        # 3. Repeated gossip (0.0) must not refresh a directly-seen peer.
-        t2 = PeerTable()
-        t2.merge(
-            [PeerInfo(node_id="live", relay="https://relay.example/", last_seen=clock[0])]
-        )
-        clock[0] += PEER_TTL_SECONDS - 30.0  # still within the TTL
-        t2.merge([PeerInfo(node_id="live", relay="https://relay.example/", last_seen=0.0)])
-        assert "live" in t2.known_peer_ids(), \
-            "gossip must never refresh a directly-seen peer"
-        print("PASS: gossiped newcomers survive merge, age out after TTL")
+
+def test_dead_peer_expires_across_gossip_mesh():
+    """Regression: a dead peer held by live neighbours must disappear from
+    every table within the TTL. Before the fix, a neighbour still holding it
+    re-added it to a node that had already pruned it, with a fresh TTL, so
+    the entry circulated forever (the remote swarm was carrying 60+ stale
+    entries against 3 live peers). Drives the real Node._merge_hello on a
+    fake clock: three live nodes exchange hellos every 60 s while a dead
+    peer D is still listed by all of them."""
+    import ephemeral_net.discovery as discovery
+    from ephemeral_net.discovery import PEER_TTL_SECONDS, PeerInfo, PeerTable
+    from ephemeral_net.node import Node
+    from ephemeral_net.protocol import hello_frame
+
+    clock = [5000.0]
+
+    def fake_monotonic() -> float:
+        return clock[0]
+
+    real_monotonic = discovery.time.monotonic
+    discovery.time.monotonic = fake_monotonic
+    try:
+        live = ["a", "b", "c"]
+        tables = {nid: PeerTable() for nid in live + ["d"]}
+        # Everyone last heard D directly at t0 (implied last_seen = now).
+        for nid in live:
+            tables[nid].merge([PeerInfo(node_id="d", relay="r", last_seen=clock[0])])
+
+        def hello(sender: str) -> dict:
+            return hello_frame(sender, None, tables[sender].snapshot())
+
+        def deliver(sender: str, receiver: str) -> None:
+            # Stand-in for Node: _merge_hello only reads self.table.
+            Node._merge_hello(type("N", (), {"table": tables[receiver]})(), hello(sender))
+
+        for _ in range(int(PEER_TTL_SECONDS * 3 / 60)):
+            clock[0] += 60.0
+            for s in live:
+                for r in live:
+                    if s != r:
+                        deliver(s, r)
+            for nid in live:
+                tables[nid].prune()
+
+        for nid in live:
+            assert "d" not in tables[nid].known_peer_ids(), \
+                f"dead peer must expire on {nid} despite gossip"
+            assert set(live) - {nid} <= set(tables[nid].known_peer_ids()), \
+                f"live peers must stay on {nid}"
+
+        # A returning peer re-joins by dialing us directly.
+        deliver("d", "a")
+        assert "d" in tables["a"].known_peer_ids(), "a rejoining peer must be re-learned"
+        print("PASS: dead peer expires across gossip mesh; rejoin works")
     finally:
         discovery.time.monotonic = real_monotonic
 
@@ -2277,7 +2319,8 @@ def main():
     test_job_messages()
     test_peer_table_ttl_eviction()
     test_peer_table_gossip_does_not_refresh_ttl()
-    test_peer_table_gossiped_new_peer_survives_merge()
+    test_gossip_age_newcomer_and_expiry()
+    test_dead_peer_expires_across_gossip_mesh()
     test_genesis_fallback_plan()
     test_relay_spec_parsing()
     test_resolve_genesis_from_url()

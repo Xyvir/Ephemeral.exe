@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 from typing import AsyncIterator, Sequence
 
-from .discovery import PeerInfo, PeerTable
+from .discovery import PEER_TTL_SECONDS, PeerInfo, PeerTable
 from .errors import HandshakeError, JobError, ProtocolError
 from .image_pull import (
     BLOB_CHUNK_SIZE,
@@ -728,12 +728,20 @@ class Node:
         infos = []
         for entry in peer_entries_from_hello(hello):
             # Only the SENDER was directly contacted (we dialed it or it
-            # dialed us) — it alone refreshes last_seen. The sender's
-            # gossiped peers were merely mentioned, so they get last_seen
-            # 0.0 ("never directly seen"): their TTL is NOT refreshed,
-            # letting the PeerTable prune dead peers within PEER_TTL_SECONDS
-            # instead of keeping them alive forever via gossip re-stamping.
+            # dialed us), so it is stamped now. Every other entry is gossip:
+            # it is stamped at now minus the age the sender reported, i.e. the
+            # time the sender last had contact with it. A dead peer's implied
+            # last_seen therefore never moves forward, so it expires everywhere
+            # within PEER_TTL_SECONDS. A gossiped entry with no age (an older
+            # node) is treated as half-stale: it can be learned, not refreshed.
             direct = entry["node_id"] == sender
+            if direct:
+                seen_at = now
+            else:
+                age = entry.get("age")
+                if age is None:
+                    age = PEER_TTL_SECONDS / 2
+                seen_at = now - max(0.0, float(age))
             infos.append(
                 PeerInfo(
                     node_id=entry["node_id"],
@@ -744,7 +752,7 @@ class Node:
                     max_jobs=entry.get("max_jobs"),
                     url=entry.get("url"),
                     platform=entry.get("platform"),
-                    last_seen=now if direct else 0.0,
+                    last_seen=seen_at,
                 )
             )
         self.table.merge(infos)
