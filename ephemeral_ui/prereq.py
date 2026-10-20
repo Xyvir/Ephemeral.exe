@@ -30,6 +30,7 @@ never instead of it; ``test_prereq`` pins that ordering.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -209,6 +210,46 @@ def run(cmd: list[str], timeout: int = 60) -> tuple[int, str]:
         return 1, str(e)
 
 
+def podman_dirs_from_path(value: str) -> list[str]:
+    """The directories in a PATH value that hold ``podman.exe``.
+
+    Expands ``%VARS%`` because a per-user Path is stored unexpanded
+    (``%LOCALAPPDATA%\\...``).
+    """
+    found: list[str] = []
+    for entry in value.split(";"):
+        entry = os.path.expandvars(entry.strip().strip('"'))
+        if entry and os.path.isfile(os.path.join(entry, "podman.exe")) and entry not in found:
+            found.append(entry)
+    return found
+
+
+def _refresh_podman_path() -> None:
+    """Make a Podman installed after this process started visible to it.
+
+    The tray is started by the installer, which inherited its environment before
+    the Podman installer added its per-user PATH entry, so ``shutil.which`` cannot
+    see Podman. Re-read the user's own PATH (HKCU, no elevation) and add any
+    directory holding ``podman.exe``.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            value, _ = winreg.QueryValueEx(key, "Path")
+    except OSError:
+        return
+    current = os.environ.get("PATH", "")
+    known = {p.lower() for p in current.split(";")}
+    for directory in podman_dirs_from_path(str(value)):
+        if directory.lower() not in known:
+            current = f"{current};{directory}" if current else directory
+            known.add(directory.lower())
+    os.environ["PATH"] = current
+
+
 def wsl_status() -> RuntimeState:
     """Whether WSL2 is installed, ready, or needs a restart."""
     if sys.platform != "win32":
@@ -226,6 +267,7 @@ def machine_status() -> RuntimeState:
     readiness is the rootless socket, so the same question is answered there
     instead of reporting a "machine" that can never exist.
     """
+    _refresh_podman_path()
     if not shutil.which("podman"):
         return RuntimeState("no-podman", "the podman command is not installed")
     if sys.platform not in ("win32", "darwin"):

@@ -279,6 +279,34 @@ def test_repair_runtime_creates_the_machine_then_proves_it():
         platform.show_terminal_window = real_window
 
 
+def test_podman_is_found_in_the_user_path_even_when_the_process_predates_it():
+    """The installer starts the tray before Podman's per-user PATH entry exists.
+
+    The tray inherited an environment that lacked ``%LOCALAPPDATA%\\Programs\\Podman``,
+    so ``shutil.which`` reported Podman missing while it was installed. The per-user
+    Path is read from the registry, and it is stored with ``%VARS%`` unexpanded.
+    """
+    import os
+    import tempfile
+
+    root = Path(tempfile.mkdtemp())
+    install = root / "Podman"
+    install.mkdir()
+    (install / "podman.exe").write_bytes(b"")
+    nothing = root / "nothing"
+    nothing.mkdir()
+
+    assert prereq.podman_dirs_from_path(f"{nothing};{install}") == [str(install)]
+    assert prereq.podman_dirs_from_path(f"{nothing}") == []
+
+    os.environ["EPH_TEST_ROOT"] = str(root)
+    try:
+        stored = "%EPH_TEST_ROOT%" + os.sep + "Podman"
+        assert prereq.podman_dirs_from_path(stored) == [str(install)]
+    finally:
+        del os.environ["EPH_TEST_ROOT"]
+
+
 def test_prerequisite_module_never_elevates_itself():
     """Elevation is the installer's, with the user's consent, or nobody's.
 
@@ -495,6 +523,7 @@ def main():
     test_canary_uses_the_image_the_node_wants_anyway()
     test_no_classroom_link_before_a_container_has_run()
     test_repair_runtime_creates_the_machine_then_proves_it()
+    test_podman_is_found_in_the_user_path_even_when_the_process_predates_it()
     test_prerequisite_module_never_elevates_itself()
     test_the_vendor_route_comes_after_wsl_and_never_replaces_it()
     test_the_gui_escape_hatch_opens_the_page_and_keeps_the_url_visible()
