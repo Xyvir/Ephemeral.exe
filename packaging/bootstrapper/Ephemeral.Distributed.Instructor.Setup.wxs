@@ -11,15 +11,15 @@
     2. Podman, which brings the container runtime and its own WSL machine image.
 
   So this bundle chains them and hands the machine to the MSI last. The MSI
-  itself still contains exactly one custom action (the post-install launch) and
-  never provisions a prerequisite on its own — see
-  packaging/msi/Ephemeral.Distributed.Instructor.wxs and test_ui.py, which pin
-  that.
+  does not install the prerequisites itself; it runs the per-user half during
+  the wizard — see packaging/msi/Ephemeral.Distributed.Instructor.wxs and
+  test_ui.py, which pin that.
 
   The per-user half (creating the Podman machine and proving it can run a
-  container) deliberately does NOT happen here: it must run as the teacher, not
-  as the elevated installer, so it belongs to the app's first launch
-  (ephemeral_ui/prereq.py + DistributedBackend._announce_first_run).
+  container) runs inside the MSI's Install step, as the teacher (impersonated),
+  through the setup-machine switch (ephemeral_ui/prereq.py). Installer custom actions
+  run elevated otherwise, which would own the machine as SYSTEM. The first run
+  still re-checks, so a failed setup step is explained rather than silent.
 
   Group policy: this bundle elevates once, at launch, because the user asked to
   install; the app inside never elevates itself, and uninstalling never disables

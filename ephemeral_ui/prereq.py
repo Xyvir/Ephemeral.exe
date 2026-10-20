@@ -550,6 +550,33 @@ def explain(state: RuntimeState) -> tuple[str, str]:
 
 # --- the installer's entry point ---------------------------------------------
 
+def setup_machine() -> int:
+    """``--setup-machine``: the per-user half of setup, run by the installer.
+
+    The MSI runs this as the installing user (impersonated, synchronous), so the
+    Podman machine belongs to the teacher and the wizard waits for it. It is
+    unprivileged: it creates the machine and proves a container runs, which is
+    what the first-run link gate needs. A failure is reported, never raised, so
+    the app stays installed and the tray explains what is missing.
+    """
+    if sys.platform != "win32":
+        say("[setup] no per-user runtime setup on this platform")
+        return OK
+    _refresh_podman_path()
+    ok, message = ensure_machine()
+    say(f"[setup] machine: {message}")
+    if not ok:
+        return FAILED
+    ok, message = canary()
+    if not ok and _is_cgroup_delegation_error(message):
+        repaired, note = repair_cgroup_delegation()
+        say(f"[setup] cgroup repair: {note}")
+        if repaired:
+            ok, message = canary()
+    say(f"[setup] container check: {message}")
+    return OK if ok else FAILED
+
+
 def cli(argv: list[str] | None = None) -> int:
     """``--setup-prereqs``: the half of setup that needs elevation.
 
@@ -566,6 +593,8 @@ def cli(argv: list[str] | None = None) -> int:
         if state.ok:
             return OK
         return REBOOT_REQUIRED if state.stage == "needs-reboot" else FAILED
+    if "--setup-machine" in args:
+        return setup_machine()
     if sys.platform != "win32":
         say("[setup] no Windows prerequisites on this platform")
         return OK

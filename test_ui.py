@@ -618,13 +618,22 @@ def test_msi_is_machine_wide_and_declarative():
     # able to satisfy this.
     markup = re.sub(r"<!--.*?-->", "", wxs, flags=re.S)
     actions = re.findall(r"<CustomAction\b[^>]*>", markup)
-    assert len(actions) == 1, (
-        "this source gets exactly one custom action (the post-install launch); "
+    assert len(actions) == 2, (
+        "this source gets exactly two custom actions: the machine setup that the "
+        "wizard waits for, and the post-install launch; "
         f"found {len(actions)}: {actions}")
+    prepare = next(a for a in actions if 'Id="PrepareInstructorRuntime"' in a)
+    assert ('ExeCommand="&quot;[INSTALLDIR]Ephemeral-Distributed-Instructor.exe&quot;'
+            ' --setup-machine"') in prepare, prepare
+    assert 'Impersonate="yes"' in prepare, (
+        "the Podman machine must belong to the installing user, not SYSTEM")
+    assert 'Return="ignore"' in prepare, (
+        "the wizard waits for the machine; a failure must not roll the app back")
+    assert 'Directory="INSTALLDIR"' in prepare, prepare
     # ...and the built package has exactly one more, WixUIPrintEula, which the
     # WixUI extension contributes because the feature tree shows a licence. It
     # prints the RTF and launches nothing; anything beyond that pair is new.
-    launch = actions[0]
+    launch = next(a for a in actions if 'Id="LaunchInstructorFirstRun"' in a)
     assert 'Id="LaunchInstructorFirstRun"' in launch, launch
     assert 'Directory="INSTALLDIR"' in launch, (
         "a type 34 action needs the install directory as its working directory")
@@ -647,6 +656,9 @@ def test_msi_is_machine_wide_and_declarative():
     assert sequence, "the launch must be sequenced explicitly"
     publish = sequence.group(1)
     assert 'Action="LaunchInstructorFirstRun"' in publish, publish
+    assert 'Action="PrepareInstructorRuntime"' in publish, (
+        "the machine setup must be sequenced into the wizard, before the launch")
+    assert 'After="PrepareInstructorRuntime"' in publish, publish
     assert "InstallFinalize" in publish, (
         "the launch runs after the files are on disk, not while they are")
     for guard in ("NOT Installed", "NOT REMOVE", "UILevel <> 2"):

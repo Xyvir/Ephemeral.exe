@@ -163,6 +163,19 @@
                   Impersonate="yes"
                   Return="asyncNoWait" />
 
+    <!-- The per-user Podman machine, created inside the wizard so Install
+         waits for it. Impersonated, so the machine belongs to the teacher who
+         is watching; synchronous (Return="ignore" waits, and ignores the exit
+         code) so the wizard does not finish until the machine exists or has
+         reported why not. A failure must not roll back the app: the tray's
+         first run explains what is missing. Same guards as the launch below. -->
+    <CustomAction Id="PrepareInstructorRuntime"
+                  Directory="INSTALLDIR"
+                  ExeCommand="&quot;[INSTALLDIR]Ephemeral-Distributed-Instructor.exe&quot; --setup-machine"
+                  Execute="immediate"
+                  Impersonate="yes"
+                  Return="ignore" />
+
     <!-- The setup bundle installs this package quietly (that is how Burn runs
          an MSI), so UILevel is 2 there and the silent guard would suppress the
          launch precisely when a teacher is watching setup finish. The bundle
@@ -174,7 +187,10 @@
          keeps it off uninstall. -->
     <Property Id="LAUNCHFIRSTRUN" Value="0" />
     <InstallExecuteSequence>
-      <Custom Action="LaunchInstructorFirstRun" After="InstallFinalize">
+      <Custom Action="PrepareInstructorRuntime" After="InstallFinalize">
+        <![CDATA[NOT Installed AND NOT REMOVE AND (UILevel <> 2 OR LAUNCHFIRSTRUN = 1)]]>
+      </Custom>
+      <Custom Action="LaunchInstructorFirstRun" After="PrepareInstructorRuntime">
         <![CDATA[NOT Installed AND NOT REMOVE AND (UILevel <> 2 OR LAUNCHFIRSTRUN = 1)]]>
       </Custom>
     </InstallExecuteSequence>
