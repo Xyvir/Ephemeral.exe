@@ -181,7 +181,8 @@ def test_ci_builds_and_ships_the_instructor_bundle():
     workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
     assert "build-exe-distributed-instructor:" in workflow
     assert "packaging/ephemeral-distributed-instructor.spec" in workflow
-    assert "Ephemeral-Distributed-Instructor-win64.zip" in workflow
+    assert "Ephemeral-Distributed-Instructor-win64.zip" not in workflow, (
+        "the instructor build ships only the MSI")
 
     beta_job = workflow.split("build-exe-distributed-instructor:", 1)[1]
     beta_job = beta_job.split("build-linux-appimage:", 1)[0]
@@ -189,7 +190,9 @@ def test_ci_builds_and_ships_the_instructor_bundle():
     assert "--self-check" in beta_job, "the instructor job must smoke-test the bundle"
 
     release = workflow.split("release:", 1)[1]
-    assert "dist/Ephemeral-Distributed-Instructor-win64.zip" in release
+    assert "dist/Ephemeral-Distributed-Instructor.msi" in release
+    assert "dist/Ephemeral-Distributed-Instructor-win64.zip" not in release
+    assert "Ephemeral-Distributed-Instructor-Setup.exe" not in release
     assert "build-exe-distributed-instructor" in release
     print("PASS: CI builds, smoke-tests and releases the instructor bundle")
 
@@ -677,8 +680,6 @@ def test_msi_is_machine_wide_and_declarative():
     assert "/v Ephemeral-Distributed-Instructor /reg:64" in workflow, (
         "the machine-wide Run value is the claim this package makes, so CI has "
         "to check it and not only that files landed")
-    assert "--artifact dist/Ephemeral-Distributed-Instructor.msi" in workflow, (
-        "the MSI's hash must reach the build manifest consumers verify against")
     assert "dist/Ephemeral-Distributed-Instructor.msi" in workflow, (
         "the MSI must be among the release's uploaded files")
     print("PASS: the MSI installs machine-wide, per-machine resources only, declaratively")

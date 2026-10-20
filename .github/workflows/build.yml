@@ -227,24 +227,6 @@ jobs:
         ./dist/Ephemeral-Distributed-Instructor/Ephemeral-Distributed-Instructor.exe --self-check
         echo "instructor self-check passed"
 
-    - name: Package bundle (zip)
-      shell: bash
-      run: |
-        python - <<'PY'
-        import os, zipfile
-        src = "dist/Ephemeral-Distributed-Instructor"
-        out = "dist/Ephemeral-Distributed-Instructor-win64.zip"
-        base = os.path.dirname(src)
-        if not os.path.isfile(os.path.join(src, "Ephemeral-Distributed-Instructor.exe")):
-            raise SystemExit(f"missing built exe in {src}")
-        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
-            for root, _dirs, files in os.walk(src):
-                for name in sorted(files):
-                    path = os.path.join(root, name)
-                    zf.write(path, os.path.relpath(path, base))
-        print("wrote", out, os.path.getsize(out), "bytes")
-        PY
-
     - name: Build machine-wide MSI
       shell: bash
       run: |
@@ -325,146 +307,6 @@ jobs:
         fi
         echo "MSI install + uninstall smoke passed, machine-wide entries included"
 
-    # ── Setup bundle: WSL2 + Podman + the MSI in one download ────────────────
-    # The MSI alone cannot enable WSL2 (elevation + a reboot), so teachers get a
-    # Burn bundle. Podman's installer is pinned by version and embedded, so
-    # setup never depends on a teacher's network — and a rename upstream fails
-    # this job loudly instead of shipping a bundle missing its runtime.
-    # The runner's preinstalled WiX v3 has candle/light/heat but not burn.exe
-    # (the binaries-only layout), and a bundle needs the full toolset. Install
-    # the full package pinned, then export its bin directory to later steps.
-    - name: Install the full WiX v3 toolset (candle, light, Bal extension)
-      shell: pwsh
-      run: |
-        # --force: the runner reports this version as already installed, which can
-        # be a partial install without the extensions. Reinstall to get the full one.
-        choco install wixtoolset --version=3.14.1.20250415 -y --force --no-progress
-        if ($LASTEXITCODE -ne 0) { throw "choco install wixtoolset failed ($LASTEXITCODE)" }
-        # candle/light compile and link the bundle; burn.exe is only the engine stub
-        # that light attaches, so the toolset's bin folder (not bin\x86) is what we need.
-        $burn = Get-ChildItem "${env:ProgramFiles(x86)}\WiX Toolset*" -Recurse -Filter light.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-        if (-not $burn) { throw 'light.exe still missing after installing WiX' }
-        $bin = $burn.DirectoryName.Replace('\', '/') -replace '^([A-Za-z]):', '/$1'
-        if (-not (Test-Path (Join-Path $burn.DirectoryName 'WixBalExtension.dll'))) {
-          Get-ChildItem $burn.DirectoryName | ForEach-Object { Write-Host $_.Name }
-          throw 'WixBalExtension.dll is not in this WiX install (see listing above)'
-        }
-        echo "WIX_BIN=$bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        echo "WiX bin: $bin"
-
-    - name: Download the pinned Podman installer
-      shell: bash
-      run: |
-        PODMAN_VERSION="6.1.4"
-        URL="https://github.com/podman-container-tools/podman/releases/download/v${PODMAN_VERSION}/podman-installer-windows-amd64.msi"
-        echo "downloading $URL"
-        curl -fsSL --retry 3 -o dist/podman-installer-windows-amd64.msi "$URL"
-        # An HTML error page is the usual result of a moved release; name it.
-        magic="$(head -c 8 dist/podman-installer-windows-amd64.msi | od -An -tx1 | tr -d ' \n')"
-        if [ "$magic" != "d0cf11e0a1b11ae1" ]; then
-          echo "the Podman download is not an MSI (magic: $magic)" >&2
-          exit 1
-        fi
-        ls -lh dist/podman-installer-windows-amd64.msi
-
-    - name: Build the setup bundle
-      shell: bash
-      run: |
-        VERSION="$(date +'%y.%-m.%-d')"
-        MSYS2_ARG_CONV_EXCL='*' bash packaging/bootstrapper/build_setup.sh \
-          dist/Ephemeral-Distributed-Instructor \
-          dist/podman-installer-windows-amd64.msi \
-          dist/Ephemeral-Distributed-Instructor.msi \
-          dist/Ephemeral-Distributed-Instructor-Setup.exe \
-          "$VERSION"
-
-    - name: Smoke test - the bundle carries and unpacks every prerequisite
-      shell: bash
-      run: |
-        # `dark -x` is WiX's decompiler: it writes the bundle's attached container
-        # (every Compressed="yes" payload) to disk without installing, elevating or
-        # rebooting. `-layout` is not used: in WiX v3 it fetches external packages
-        # only and writes none of the embedded ones.
-        export MSYS2_ARG_CONV_EXCL='*'
-        SETUP="$PWD/dist/Ephemeral-Distributed-Instructor-Setup.exe"
-        if [ ! -f "$SETUP" ]; then
-          echo "no setup bundle at $SETUP" >&2
-          exit 1
-        fi
-        magic="$(head -c 2 "$SETUP" | od -An -tx1 | tr -d ' \n')"
-        if [ "$magic" != "4d5a" ]; then
-          echo "the setup bundle is not a PE executable (magic: $magic)" >&2
-          exit 1
-        fi
-        echo "bundle: $(du -h "$SETUP" | cut -f1)"
-        DARK=""
-        for candidate in "/c/Program Files (x86)/WiX Toolset"*/bin "/c/Program Files/WiX Toolset"*/bin; do
-          if [ -f "$candidate/dark.exe" ]; then
-            DARK="$candidate/dark.exe"
-            break
-          fi
-        done
-        if [ -z "$DARK" ]; then
-          echo "dark.exe not found in the WiX v3 toolset" >&2
-          exit 1
-        fi
-        rm -rf dist/setup-extract
-        mkdir -p dist/setup-extract
-        "$DARK" -nologo -x "$(cygpath -w "$PWD/dist/setup-extract")" "$(cygpath -w "$SETUP")" || {
-          echo "dark could not extract the bundle's payloads" >&2
-          exit 1
-        }
-        find dist/setup-extract -type f | sed 's/^/  /'
-        # Each package the chain installs must be in the bundle byte-for-byte, and
-        # the exe that enables WSL2 must be a real 64-bit PE image: Windows Package
-        # Cache refuses anything else with "Unsupported 16-Bit Application".
-        python - "$(cygpath -w "$PWD/dist/setup-extract/AttachedContainer")" \
-          dist/Ephemeral-Distributed-Instructor/Ephemeral-Distributed-Instructor.exe \
-          dist/Ephemeral-Distributed-Instructor.msi \
-          dist/podman-installer-windows-amd64.msi <<'PY'
-        import hashlib
-        import pathlib
-        import struct
-        import sys
-
-        root = pathlib.Path(sys.argv[1])
-        sources = [pathlib.Path(p) for p in sys.argv[2:]]
-
-
-        def sha(p):
-            return hashlib.sha256(p.read_bytes()).hexdigest()
-
-
-        def fail(msg):
-            print(f"FAIL: {msg}")
-            sys.exit(1)
-
-
-        extracted = {sha(p): p for p in root.iterdir() if p.is_file()}
-        for src in sources:
-            if not src.is_file():
-                fail(f"source payload missing: {src}")
-            h = sha(src)
-            if h not in extracted:
-                fail(f"{src.name} is not in the bundle byte-for-byte")
-            print(f"ok {src.name} -> {extracted[h].name}")
-
-        exe_src = next(p for p in sources if p.suffix.lower() == ".exe")
-        b = extracted[sha(exe_src)].read_bytes()
-        if len(b) < 64 or b[:2] != b"MZ":
-            fail("WSL2 exe has no MZ header")
-        off = struct.unpack_from("<I", b, 0x3C)[0]
-        if off + 24 > len(b) or b[off:off + 4] != b"PE\0\0":
-            fail(f"WSL2 exe is not a PE image (e_lfanew=0x{off:x})")
-        machine = struct.unpack_from("<H", b, off + 4)[0]
-        if machine != 0x8664:
-            fail(f"WSL2 exe machine is 0x{machine:04x}, not x64 (0x8664)")
-        magic = struct.unpack_from("<H", b, off + 24)[0]
-        if magic != 0x20B:
-            fail(f"WSL2 exe optional-header magic is 0x{magic:04x}, not PE32+ (0x20b)")
-        print("ok WSL2 exe is a 64-bit PE image")
-        PY
-
     - name: Smoke test - the prerequisite entry point answers
       shell: bash
       run: |
@@ -506,29 +348,12 @@ jobs:
           exit 1
         }
 
-    - name: Generate build manifest
-      shell: bash
-      run: |
-        FULL_SHA="${{ github.sha }}"
-        SHORT_SHA="${FULL_SHA:0:7}"
-        VERSION="$(date +'%Y%m%d')-${SHORT_SHA}"
-        python packaging/write_build_manifest.py \
-          --output dist/Ephemeral-Distributed-Instructor-build-manifest.json \
-          --build-version "$VERSION" \
-          --build-command 'pyinstaller --noconfirm packaging/ephemeral-distributed-instructor.spec' \
-          --artifact dist/Ephemeral-Distributed-Instructor-win64.zip \
-          --artifact dist/Ephemeral-Distributed-Instructor.msi \
-          --artifact dist/Ephemeral-Distributed-Instructor-Setup.exe
-
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: Ephemeral-Distributed-Instructor-Windows-onedir
         path: |
-          dist/Ephemeral-Distributed-Instructor-win64.zip
           dist/Ephemeral-Distributed-Instructor.msi
-          dist/Ephemeral-Distributed-Instructor-Setup.exe
-          dist/Ephemeral-Distributed-Instructor-build-manifest.json
 
   # ── Linux AppImages: local + distributed ──────────────────────
   build-linux-appimage:
@@ -748,9 +573,7 @@ jobs:
         tag_name: ${{ env.TAG }}
         name: Release ${{ env.TAG }}
         files: |
-          dist/Ephemeral-Distributed-Instructor-win64.zip
           dist/Ephemeral-Distributed-Instructor.msi
-          dist/Ephemeral-Distributed-Instructor-Setup.exe
           dist/Ephemeral.exe
           dist/Ephemeral-Distributed.exe
           dist/ephemeral-local-x86_64.AppImage
@@ -760,6 +583,5 @@ jobs:
           dist/ephemeral-self-host.tar.gz
           dist/Ephemeral-build-manifest.json
           dist/Ephemeral-Distributed-build-manifest.json
-          dist/Ephemeral-Distributed-Instructor-build-manifest.json
           dist/Ephemeral-Linux-build-manifest.json
         generate_release_notes: true

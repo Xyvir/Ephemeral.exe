@@ -473,15 +473,14 @@ def test_msi_launch_is_opt_in_for_the_bundle_but_still_silent_by_default():
         "the default has to be off, so a plain msiexec /qn stays silent")
 
 
-def test_setup_bundle_is_built_and_shipped_by_ci():
-    """A bundle nobody builds is a design document, not an artefact."""
+def test_instructor_build_ships_only_the_msi():
+    """The instructor build is published as a single .msi, in no other format."""
     workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
-    assert "packaging/bootstrapper/build_setup.sh" in workflow, (
-        "CI must build the setup bundle, not just the MSI inside it")
-    assert "Ephemeral-Distributed-Instructor-Setup.exe" in workflow, (
-        "the artifact teachers download must be the bundle")
-    assert "PODMAN_VERSION" in workflow, (
-        "the Podman payload is pinned by version, so a release is reproducible")
+    assert "packaging/msi/build_msi.sh" in workflow
+    for other in ("Ephemeral-Distributed-Instructor-Setup.exe",
+                  "Ephemeral-Distributed-Instructor-win64.zip",
+                  "Ephemeral-Distributed-Instructor-build-manifest.json"):
+        assert other not in workflow, f"{other} must not be built or published"
     # ...and the checkout that installs and removes the MSI must still run,
     # because that is the half that can be proven on a runner.
     assert "msiexec /i \"$MSI\" /qn" in workflow
@@ -501,7 +500,7 @@ def main():
     test_the_gui_escape_hatch_opens_the_page_and_keeps_the_url_visible()
     test_setup_bundle_chains_wsl_then_podman_then_the_app()
     test_msi_launch_is_opt_in_for_the_bundle_but_still_silent_by_default()
-    test_setup_bundle_is_built_and_shipped_by_ci()
+    test_instructor_build_ships_only_the_msi()
     print("\n=== ALL PREREQUISITE / SETUP TESTS PASSED ===")
 
 
