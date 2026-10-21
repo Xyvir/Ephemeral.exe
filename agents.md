@@ -75,6 +75,8 @@ The unified tray front end (`ephemeral_ui/`) has exactly two user-feedback surfa
 
 Do NOT introduce a third surface, and don't toast error output — route it through `show_terminal_window`.
 
+**Exception — instructor setup dialogs (tkinter).** The instructor build's first-run setup uses stdlib tkinter dialogs (`ephemeral_ui/setup_dialogs.py`, launched by `ephemeral_ui/setup_gui.py`): the create-or-join seed question, and, when creating a new private swarm, a pre-hydration picker (per-image download sizes, free space, checkboxes). The tray never imports tkinter; each dialog runs in a child process (`main_distributed_instructor.py --setup-dialog KIND IN OUT`) and returns its answer as JSON. If tkinter is absent or the child fails, the existing console prompts are used. No extra pip dependency is needed; the instructor spec bundles Tcl/Tk through PyInstaller. Progress after the pull stays in the terminal window.
+
 #### Prerequisites (WSL2 + Podman) and the Setup Bundle
 
 A fresh Windows PC can run nothing until two machine-level things exist: WSL2 (an optional Windows feature needing elevation and, on first enablement, a reboot) and Podman (whose Windows installer is per-user). The missing piece used to be a README instruction; now setup owns it.

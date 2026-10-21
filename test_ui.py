@@ -407,15 +407,23 @@ def test_instructor_first_launch_offers_create_or_join():
             prereq.status = lambda: prereq.RuntimeState("ready")
             prereq.canary = lambda *a, **k: (True, "")
 
+            picks: list = []
+
             def launch(answer):
                 backend = InstructorBackend()
                 backend._ensure_cluster = lambda: None      # no node in a unit test
                 backend.current_student_url = lambda: link
                 backend._announce_private = lambda *a, **k: None
+                # The image picker opens a real Tk dialog; only the create-new
+                # branch reaches it, and that is asserted below.
+                backend._pick_first_run_images = lambda icon: picks.append(answer)
                 backend._prompt_user_for_seed = (
                     lambda current="", prompt=None: answer
                 )
+                picks.clear()
                 backend._first_launch_setup(None)
+                assert bool(picks) == (answer == ""), (
+                    "only CREATE offers the pre-hydration picker")
                 assert (state / PRIVATE_DEFAULT_MARKER).exists(), (
                     "the launch must record the choice, or it will ask again")
                 return backend
@@ -779,7 +787,57 @@ def test_msi_harvest_postprocessor_covers_every_directory():
     print("PASS: every harvested directory gets a RemoveFolder, idempotently")
 
 
+def test_setup_gui_is_gui_free_and_falls_back_without_a_dialog():
+    """The tray never loads a GUI toolkit, and a failed dialog reads as 'no GUI'."""
+    from ephemeral_ui import setup_gui
+
+    tree = ast.parse(pathlib.Path(setup_gui.__file__).read_text(encoding="utf-8"))
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+    assert "tkinter" not in imported, "the launcher must not load tkinter in the tray"
+
+    real_argv = setup_gui._child_argv
+    try:
+        # A child that exits non-zero (no tkinter, a crash) is "no GUI".
+        setup_gui._child_argv = lambda: [sys.executable, "-c", "import sys; sys.exit(2)"]
+        assert setup_gui.ask_seed("prompt") is None
+        assert setup_gui.ask_images(["x:1"], 0, "", None) is None
+
+        # A child that writes a cancelled answer is also "no answer".
+        setup_gui._child_argv = lambda: [
+            sys.executable, "-c",
+            "import json,sys; open(sys.argv[-1],'w').write(json.dumps({'cancelled': True}))",
+        ]
+        assert setup_gui.ask_seed("prompt") is None
+
+        # A child that writes an answer is passed through unchanged.
+        setup_gui._child_argv = lambda: [
+            sys.executable, "-c",
+            "import json,sys; open(sys.argv[-1],'w').write(json.dumps({'answer': 'abc'}))",
+        ]
+        assert setup_gui.ask_seed("prompt") == "abc"
+    finally:
+        setup_gui._child_argv = real_argv
+    print("PASS: setup dialogs are GUI-free in the tray and fall back to no answer")
+
+
+def test_instructor_entry_dispatches_setup_dialog_before_the_tray():
+    """The dialog child must never import the tray (and so never reach pystray)."""
+    src = (ROOT / "main_distributed_instructor.py").read_text(encoding="utf-8")
+    dispatch = src.index('"--setup-dialog" in sys.argv')
+    tray_import = src.index("from ephemeral_ui.app import run")
+    assert dispatch < tray_import, (
+        "--setup-dialog must be dispatched before the tray is imported")
+    print("PASS: --setup-dialog dispatches before the tray is imported")
+
+
 def main():
+    test_setup_gui_is_gui_free_and_falls_back_without_a_dialog()
+    test_instructor_entry_dispatches_setup_dialog_before_the_tray()
     test_onedir_bundles_are_never_copied_out_of_their_folder()
     test_distributed_menu_has_no_background_node()
     test_instructor_bundle_is_not_a_self_extractor()

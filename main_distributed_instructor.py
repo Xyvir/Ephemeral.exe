@@ -14,12 +14,20 @@ from __future__ import annotations
 
 import sys
 
-from ephemeral_ui.app import run
-
 
 if __name__ == "__main__":
     if "--setup-prereqs" in sys.argv:
         from ephemeral_ui import prereq
 
         raise SystemExit(prereq.cli())
+    if "--setup-dialog" in sys.argv:
+        # Child process for the tkinter setup dialogs (see ephemeral_ui.setup_gui).
+        # Dispatched before the tray is imported, so no tray code loads here.
+        from ephemeral_ui import setup_gui
+
+        idx = sys.argv.index("--setup-dialog")
+        raise SystemExit(setup_gui.child_main(sys.argv[idx + 1:]))
+
+    from ephemeral_ui.app import run
+
     run("instructor")

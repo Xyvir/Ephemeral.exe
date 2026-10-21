@@ -299,12 +299,15 @@ def test_podman_is_found_in_the_user_path_even_when_the_process_predates_it():
     assert prereq.podman_dirs_from_path(f"{nothing};{install}") == [str(install)]
     assert prereq.podman_dirs_from_path(f"{nothing}") == []
 
-    os.environ["EPH_TEST_ROOT"] = str(root)
-    try:
-        stored = "%EPH_TEST_ROOT%" + os.sep + "Podman"
-        assert prereq.podman_dirs_from_path(stored) == [str(install)]
-    finally:
-        del os.environ["EPH_TEST_ROOT"]
+    # Only Windows expands %VAR% (os.path.expandvars is POSIX $VAR elsewhere),
+    # and the lookup only runs on Windows, so the stored-Path case is pinned there.
+    if sys.platform == "win32":
+        os.environ["EPH_TEST_ROOT"] = str(root)
+        try:
+            stored = "%EPH_TEST_ROOT%" + os.sep + "Podman"
+            assert prereq.podman_dirs_from_path(stored) == [str(install)]
+        finally:
+            del os.environ["EPH_TEST_ROOT"]
 
 
 def test_prerequisite_module_never_elevates_itself():

@@ -66,7 +66,7 @@ from ephemeral_net.swarm import (
     write_private_seed,
 )
 
-from ephemeral_ui import platform, prereq
+from ephemeral_ui import platform, prereq, setup_gui
 from ephemeral_ui.backends.base import Backend
 
 
@@ -525,6 +525,40 @@ class DistributedBackend(Backend):
         write_private_seed(seed or None)
         self._record_choice()
         self._redial_with_seed()
+        if seed == "":
+            # A new private swarm: this machine is the anchor, so ask which
+            # language images its students will use before the link goes out.
+            self._pick_first_run_images(icon)
+
+    def _pick_first_run_images(self, icon) -> None:
+        """Pre-hydrate the images the teacher picks in the setup dialog.
+
+        Skipped quietly when tkinter is unavailable (the tray menu's "Pre-hydrate
+        All Images" still works). Choosing nothing pulls nothing.
+        """
+        if not setup_gui.available():
+            return
+        from ephemeral_core.executor import images_blocked_on_host
+
+        images = mapped_images()
+        blocked = images_blocked_on_host()
+        if blocked:
+            images = [i for i in images if i not in blocked]
+        free, drive = self._hydration_free_space()
+        cap = self._vm_disk_cap_gb()
+        result = setup_gui.ask_images(images, free, drive, cap)
+        if not result or not result["images"]:
+            return
+        chosen = result["images"]
+        total = result.get("total_bytes")
+        est_gb = total / 2**30 if total else _HYDRATE_MAX_EST_GB
+        warn = bool(free) and (total or 0) * 2 > free
+        icon.notify(
+            f"Pre-hydration started for {len(chosen)} image(s); "
+            "already-cached ones are skipped.",
+            title="Ephemeral Pre-hydrate",
+        )
+        self._spawn_hydration_console(chosen, est_gb, free, drive, warn, cap)
 
     def _announce_first_run(self, icon) -> None:
         """Present the classroom link after the install that launched us.
@@ -647,6 +681,10 @@ class DistributedBackend(Backend):
         )
         if current_seed:
             prompt += f"\n\nCurrent seed: {current_seed}"
+        if setup_gui.available():
+            # Tk dialog first. None here means cancelled or failed, which the
+            # callers already treat as "no console" (take the default).
+            return setup_gui.ask_seed(prompt)
         if sys.platform != "win32":
             return _prompt_user_for_seed_linux(prompt)
         fd_out, path_out = tempfile.mkstemp(suffix=".txt")
