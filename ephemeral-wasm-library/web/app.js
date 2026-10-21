@@ -731,7 +731,7 @@ function updateLangStatus() {
     // one, neutral for seed/file blocks. No validity icon — the per-block
     // run status (spinner/check/triangle/x) is what lives inside the pill
     // while a run is in flight, matched back to the fence via data-idx.
-    const ok = SUPPORTED_LANGUAGES.has(f.lang);
+    const ok = languageOffered(f.lang);
     const isFile = !ok && f.lang.includes(".");
     // A seedfile pill folds its payload away (and back): a megabyte of base64
     // is unreadable inline, but the fence itself still has to be visible.
@@ -797,7 +797,9 @@ function updateLangStatus() {
               ? "seedfile (folded) — click to show its contents"
               : "seedfile — click to fold its contents away"
             : "seedfile — empty (nothing to stage)"
-          : "not in the language map — this block will be rejected",
+          : SUPPORTED_LANGUAGES.has(f.lang)
+            ? "not warm on this private swarm — no node here has its image"
+            : "not in the language map — this block will be rejected",
       ...notes,
     ].join("\n");
     if (seedConsumers[i] >= 0) {
@@ -929,7 +931,7 @@ function highlightCodeHeaders() {
           // Mirror the language pills: blue for a supported language, orange
           // for an unknown one (seed/file info-strings stay neutral).
           const lang = part.toLowerCase();
-          if (SUPPORTED_LANGUAGES.has(lang)) t.classList.add("valid");
+          if (languageOffered(lang)) t.classList.add("valid");
           else if (!lang.includes(".")) t.classList.add("invalid");
           first = false;
         }
@@ -1002,6 +1004,7 @@ function setDetail(text) {
 // and states plainly that jobs run on its members' machines unencrypted.
 function setMode(privateMode, swarmName) {
   modePrivate = privateMode;
+  refreshOfferedLanguages();
   const noteEl = $("runNote");
   if (privateMode) {
     noteEl.className = "run-note private";
@@ -1656,6 +1659,35 @@ function imageMatches(image, lang) {
   return langs.some((x) => x.toLowerCase() === l);
 }
 
+// Private swarm: offer only the languages some reachable node has warm, so a
+// student's UI never invites a fetch of an image the professor did not make
+// available. Public mode offers every supported language, as before. This is
+// a UX gate, not a security boundary.
+function languageOffered(lang) {
+  if (!SUPPORTED_LANGUAGES.has(lang)) return false;
+  if (!modePrivate) return true;
+  return [...peers.values()].some((p) => (p.images || []).some((img) => imageMatches(img, lang)));
+}
+
+// Keep the (i) list and the language pills in step with the offered set. It
+// rebuilds only when that set changes: updateLangStatus() re-creates the pill
+// row that run status is painted onto, so it must not run on every peer event.
+let offeredSig = null;
+function refreshOfferedLanguages() {
+  const sig = (modePrivate ? "private:" : "public:") + CANONICAL_LANGUAGES.filter(languageOffered).join(",");
+  if (sig === offeredSig) return;
+  offeredSig = sig;
+  if (langHelpPill) {
+    langHelpPill.querySelector(".lang-help-title").textContent =
+      modePrivate ? "Available on this private swarm" : "Supported languages";
+    for (const span of langHelpPill.querySelectorAll(".lang-help-item")) {
+      span.style.display = languageOffered(span.dataset.lang) ? "" : "none";
+    }
+  }
+  updateLangStatus();
+  highlightCodeHeaders();
+}
+
 // Short, human-readable name for a warm-image pill in the cluster list:
 // strip the docker.io registry, the library/ namespace, and the noise
 // `:latest` tag — keep tags that actually differ (alpine, slim, act-22.04).
@@ -1686,6 +1718,7 @@ function pickTarget(doc) {
 }
 
 function renderCluster() {
+  refreshOfferedLanguages();
   const list = $("clusterList");
   list.textContent = "";
   if (!peers.size) {
@@ -3421,13 +3454,15 @@ function langHelpPillEl() {
   pop.hidden = true;
   const title = document.createElement("div");
   title.className = "lang-help-title";
-  title.textContent = "Supported languages";
+  title.textContent = modePrivate ? "Available on this private swarm" : "Supported languages";
   pop.appendChild(title);
   const list = document.createElement("div");
   list.className = "lang-help-list";
   for (const l of CANONICAL_LANGUAGES) {
     const span = document.createElement("span");
     span.className = "lang-help-item";
+    span.dataset.lang = l;
+    span.style.display = languageOffered(l) ? "" : "none";
     span.setAttribute("role", "button");
     span.setAttribute("tabindex", "0");
     // Tooltip: what the language IS (one sentence), then what clicking does.
