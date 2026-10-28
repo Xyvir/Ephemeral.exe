@@ -160,6 +160,16 @@ exec sqlite3 -bail -box -header "$DB"
     'pandoc-pdf': {'image': 'docker.io/pandoc/extra', 'entrypoint': '', 'cmd': ['sh', '-c', 'cat > /tmp/input.md && pandoc /tmp/input.md -o /output/converted.pdf']},
     'pandoc-docx': {'image': 'docker.io/pandoc/extra', 'entrypoint': '', 'cmd': ['sh', '-c', 'cat > /tmp/input.md && pandoc /tmp/input.md -o /output/converted.docx']},
 
+    # --- Mermaid Diagram Rendering ---
+    # Mermaid definitions render directly to an inline-previewable PNG artifact.
+    # Clear the image entrypoint so the shared wrapper can invoke mmdc itself.
+    'mermaid': {
+        'image': 'ghcr.io/mermaid-js/mermaid-cli/mermaid-cli:latest',
+        'entrypoint': '',
+        'user': '0',
+        'cmd': ['sh', '-c', 'cat > /tmp/diagram.mmd && mmdc -p /puppeteer-config.json -i /tmp/diagram.mmd -o /output/diagram.png']
+    },
+
     # --- HTML / SVG Rendering (headless Chrome screenshot) ---
     # Colab-style %%html magic: the block body is rendered with a headless
     # Chromium and captured to /output/render.png, which streams back as an
@@ -198,7 +208,7 @@ exec sqlite3 -bail -box -header "$DB"
     'tw': 'tiddlywiki', 'tw5': 'tiddlywiki', 'wiki': 'tiddlywiki',
     'tex': 'latex', 'pdflatex': 'latex',
     'md': 'pandoc', 'markdown': 'pandoc',
-    'htm': 'html', 'svg': 'html',
+    'htm': 'html', 'svg': 'html', 'mm': 'mermaid',
     'runner': 'gh-runner', 'ubuntu-latest': 'gh-runner',
     'sqlite': 'sql', 'sqlite3': 'sql',
     'lint-action': 'actionlint',

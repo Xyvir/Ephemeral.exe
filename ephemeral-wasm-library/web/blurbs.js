@@ -31,6 +31,7 @@ export const LANG_BLURBS = {
   "llm": "A small local model (Qwen2.5-0.5B) plus a scientific Python data stack, served entirely inside one offline container.",
   "lolcode": "A playful language written in internet-cat speak that still teaches parsing and control flow.",
   "lua": "A tiny embeddable scripting language used inside games and applications for custom behaviour.",
+  "mermaid": "A text-based diagram language that renders flowcharts and other diagrams to a PNG artifact.",
   "nim": "A compiled language with Python-like syntax that aims for C-level speed.",
   "node": "JavaScript running outside the browser, powering servers, command-line tools and build scripts.",
   "ocaml": "A functional language with strong static types and a reputation for reliable, fast compilers.",

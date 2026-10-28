@@ -52,8 +52,10 @@ export const SUPPORTED_LANGUAGES = new Set([
   "markdown",
   "matlab",
   "md",
+  "mermaid",
   "mjs",
   "ml",
+  "mm",
   "nim",
   "nimrod",
   "node",
@@ -125,6 +127,7 @@ export const CANONICAL_LANGUAGES = [
   "llm",
   "lolcode",
   "lua",
+  "mermaid",
   "nim",
   "node",
   "ocaml",
@@ -237,6 +240,9 @@ export const ALIAS_MAP = {
   "html": [
     "htm",
     "svg"
+  ],
+  "mermaid": [
+    "mm"
   ],
   "gh-runner": [
     "runner",
@@ -502,6 +508,12 @@ export const IMAGE_LANGUAGES = {
   ],
   "docker.io/tymills620/octave-forge:latest": [
     "octave"
+  ],
+  "ghcr.io/mermaid-js/mermaid-cli/mermaid-cli": [
+    "mermaid"
+  ],
+  "ghcr.io/mermaid-js/mermaid-cli/mermaid-cli:latest": [
+    "mermaid"
   ],
   "mcr.microsoft.com/powershell": [
     "pwsh"

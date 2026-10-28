@@ -189,6 +189,21 @@ assert "docker.io/library/gcc:latest" in imgs
 assert "docker.io/keinos/sqlite3:latest" in imgs
 assert LANG_MAP["sqlite"] == "sql" and LANG_MAP["sqlite3"] == "sql"
 assert LANG_MAP["sql"]["cmd"][0] == "sh"
+# Mermaid definitions render as PNG artifacts; `mm` is the short alias.
+mermaid_cfg = resolve_runtime_config("mermaid")
+assert mermaid_cfg["image"] == "ghcr.io/mermaid-js/mermaid-cli/mermaid-cli:latest"
+assert mermaid_cfg["entrypoint"] == ""
+assert mermaid_cfg["user"] == "0"
+assert mermaid_cfg["cmd"] == ["sh", "-c", "cat > /tmp/diagram.mmd && mmdc -p /puppeteer-config.json -i /tmp/diagram.mmd -o /output/diagram.png"]
+assert LANG_MAP["mm"] == "mermaid"
+assert resolve_runtime_config("mm") == mermaid_cfg
+assert mermaid_cfg["image"] in imgs
+from unittest.mock import patch
+from ephemeral_core.executor import _build_podman_cmd
+with patch("ephemeral_core.executor.podman_supports_cgroup_limits", return_value=False):
+    mermaid_podman_cmd = _build_podman_cmd(mermaid_cfg, "/tmp/output")
+assert mermaid_podman_cmd[mermaid_podman_cmd.index("--user") + 1] == "0"
+assert mermaid_podman_cmd[-2:] == [mermaid_cfg["image"], "sh"]
 
 from ephemeral_net.sandbox import default_image_allowlist
 

@@ -271,6 +271,14 @@ Reply with exactly: bare prompt works
 ````
 
 ````
+```mm
+graph TD
+  A[Markdown] --> B[Mermaid renderer]
+  B --> C[diagram.png artifact]
+```
+````
+
+````
 ```llm
 import pandas as pd
 

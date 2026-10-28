@@ -210,8 +210,18 @@ MCP is deliberately absent from the public bastion and public distributed mode. 
 ### Supported Languages
 
 05ab1e, Bash, Brainfuck, C, C++, CJam, Clojure, Common Lisp, Crystal, Elixir, Fortran, FreeBASIC,
-Go, GolfScript, Haskell, Java, Julia, Local LLM, Lolcode, Lua, Nim, Node.js, OCaml, Octave, Perl,
-PHP, Piet, PowerShell, Prolog, Python, R, Ruby, Rust, Science Python, SQLite, Verilog.
+Go, GolfScript, Haskell, Java, Julia, Local LLM, Lolcode, Lua, Mermaid, Nim, Node.js, OCaml, Octave,
+Perl, PHP, Piet, PowerShell, Prolog, Python, R, Ruby, Rust, Science Python, SQLite, Verilog.
+
+> **Mermaid diagrams** — use a `mermaid` fence (or the short alias `mm`) to render a diagram as a PNG artifact. For example:
+>
+> ```mermaid
+> graph TD
+>   A[Markdown] --> B[Mermaid CLI]
+>   B --> C[diagram.png]
+> ```
+>
+> Mermaid renders in an isolated container with networking disabled, and the resulting image is returned through the normal artifact flow.
 
 > **SQLite = SQL for teaching** — `sql`, `sqlite`, and `sqlite3` blocks run in a ~10 MB container. Seed a lesson's dummy data as JSON blocks in the same document and each file becomes a queryable table named after it (`students.json` → `students`), so a student can start with `SELECT * FROM students;` on the first line. Blocks that run together share one database (no `chain` flag — chaining starts a fresh container per run), so `CREATE TABLE` in the first block is visible in the second. JSON seeds must be a top-level array of objects (or a single object).
 

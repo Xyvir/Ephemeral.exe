@@ -34,6 +34,21 @@ The `instructor` mode is the classroom build. It selects `InstructorBackend`, wh
 
 The first interactive launch offers create-or-join exactly once, so a teacher can put two instructor machines in one classroom swarm for redundancy: the prompt accepts the other machine's student link, a bare ticket, or `node_id@relay`, through `ephemeral_net.swarm.parse_seed_input` (a link carrying no `#seed=` is refused rather than stored as a seed nothing can parse). Two invariants keep that honest and `test_ui.py` pins both: applying `default_private` records nothing, so the prompt still gets its chance on a headless-vs-interactive start, and the recorded choice — written by the prompt or by the toggle, never by the default — is what stops the default from reimposing itself over an explicit OFF.
 
+### Adding a Language Container or Declaration
+
+A new language is not complete when it is added to `ephemeral_core/config.py` alone. Check and update every applicable surface:
+
+- `ephemeral_core/config.py`: add the canonical `LANG_MAP` entry, any short aliases, and any required render/artifact command. Keep image behavior compatible with the executor wrapper (which appends `sh`), preserve default network isolation, and write generated files under `/output`.
+- `ephemeral_core/executor.py`: add platform/architecture restrictions when needed; update container-command handling only when the config requires an additional supported option.
+- `test_core.py` and related focused tests: pin canonical/alias resolution, the image and command, expected artifacts, security-sensitive options, and the receiver image allowlist/hydration invariant.
+- `scripts/export_web_languages.py` output: regenerate `ephemeral-wasm-library/web/languages.js`; do not hand-edit its generated contents. Verify canonical names, aliases and image-to-language mapping.
+- Web help UI: add a runnable example in `ephemeral-wasm-library/web/snippets.js` and a beginner-friendly description in `ephemeral-wasm-library/web/blurbs.js`. Ensure the language appears in the info pane and the snippet follows the actual invocation/artifact contract.
+- Documentation and demonstrations: update `README.md`, `ephemeral_test_suite.md`, and any relevant web/client examples so users can discover and try the language.
+- Container distribution: if this project owns the image, add/update its Dockerfile and `.github/workflows/publish-images.yml` matrix/build rules; if upstream, confirm the image reference, entrypoint, architecture support and CLI invocation. Keep the image present in `mapped_images()` so distributed receiver allowlists and hydration stay synchronized.
+- Packaging and platform behavior: check whether the image needs an architecture block or host-specific block (for example, WSL2 Chromium), and keep restrictions/comments/tests synchronized.
+
+For artifact-producing declarations, verify the expected file is created in `/output` and that the standard artifact path returns it. A renderer can have no stdout and still be successful when it produces its declared artifact.
+
 ### Core API
 
 ```python

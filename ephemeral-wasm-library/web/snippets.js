@@ -166,6 +166,14 @@ export const LANG_SNIPPETS = {
     "lua",
     'print("Markdown: Lua " .. _VERSION .. " | Math Check: " .. (8 + 8) .. " - OK")'
   ),
+  mermaid: fence(
+    "mermaid",
+    [
+      "graph TD",
+      "  A[Markdown] --> B[Mermaid renderer]",
+      "  B --> C[diagram.png artifact]",
+    ].join("\n")
+  ),
   nim: fence(
     "nim",
     'echo "Markdown: Nim ", NimVersion, " | Math Check: ", 20 + 5, " - OK"'

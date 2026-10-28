@@ -667,6 +667,8 @@ def _build_podman_cmd(
 
     if 'entrypoint' in config:
         podman_cmd.extend(['--entrypoint', config['entrypoint']])
+    if 'user' in config:
+        podman_cmd.extend(['--user', str(config['user'])])
 
     podman_cmd.append(config['image'])
     podman_cmd.extend(['sh'])
