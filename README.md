@@ -213,6 +213,8 @@ MCP is deliberately absent from the public bastion and public distributed mode. 
 Go, GolfScript, Haskell, Java, Julia, Local LLM, Lolcode, Lua, Mermaid, Nim, Node.js, OCaml, Octave,
 Perl, PHP, Piet, PowerShell, Prolog, Python, R, Ruby, Rust, Science Python, SQLite, Verilog.
 
+Bare **file extensions** are language declarations too: `py`, `rb`, `rs`, `hs`, `jl`, `cxx`, `tex`, `mmd`, `v` and the rest of `FILE_EXTENSIONS` in `ephemeral_core/config.py`. An editor that knows only a filename's suffix can emit `report.tex` as a `tex` fence and let Ephemeral choose the image and command — no probing of what is supported. Because the header is bare, it never reads as a seed file: `data.rb` is still a seed named `data.rb`.
+
 > **Mermaid diagrams** — use a `mermaid` fence (or the short alias `mm`) to render a diagram as a PNG artifact. For example:
 >
 > ```mermaid

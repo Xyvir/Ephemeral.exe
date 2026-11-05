@@ -228,6 +228,33 @@ assert LANG_MAP["qwen"] == "llm" and LANG_MAP["local-llm"] == "llm"
 assert resolve_runtime_config("qwen")["image"] == llm_cfg["image"]
 print("PASS: local-LLM monolith wiring")
 
+# --- Test 22c: bare file extensions resolve as language declarations ---
+# An editor that knows only a filename's suffix can serialize `report.tex` as a
+# `tex` fence without probing Ephemeral's language list. Extensions are declared
+# without a dot, so they can never be read as a seed filename, whose header
+# always carries one (`data.csv`).
+from ephemeral_core.config import FILE_EXTENSIONS
+
+assert FILE_EXTENSIONS["py"] == "python" and FILE_EXTENSIONS["tex"] == "latex"
+assert FILE_EXTENSIONS["rb"] == "ruby" and FILE_EXTENSIONS["rs"] == "rust"
+# `.pl` is Perl to editors, so Prolog is addressed by name or `swipl` only.
+assert FILE_EXTENSIONS["pl"] == "perl" and LANG_MAP["swipl"] == "prolog"
+assert "pl" not in {k for k, v in LANG_MAP.items() if isinstance(v, str) and v == "prolog"}
+# `.cc` is C++ by suffix convention; the C++ image also runs C-style code.
+assert FILE_EXTENSIONS["cc"] == "cpp" and LANG_MAP["c"]
+for ext, lang in FILE_EXTENSIONS.items():
+    assert isinstance(LANG_MAP.get(lang), dict), f"{ext} -> {lang} is not a canonical language"
+    assert LANG_MAP[ext] == lang
+    ext_cfg = resolve_runtime_config(ext)
+    assert ext_cfg["image"] == LANG_MAP[lang]["image"], f"{ext} must resolve to {lang}"
+    assert ext_cfg["cmd"] == LANG_MAP[lang]["cmd"], f"{ext} must reuse {lang}'s command"
+# The dotted form stays a seed file; only the bare form is a declaration.
+seed_blocks = parse_codeblocks("```data.rb\nputs 1\n```")
+assert seed_blocks[0]["type"] == "seed" and seed_blocks[0]["name"] == "data.rb"
+assert parse_codeblocks("```rb\nputs 1\n```")[0]["type"] == "code"
+assert parse_codeblocks("```tex\nx\n```")[0]["config"]["image"] == "docker.io/pandoc/extra"
+print(f"PASS: file extensions resolve as languages ({len(FILE_EXTENSIONS)} aliases)")
+
 # --- Test 23: Chaining is OFF by default ---
 md23 = "```python\nprint(1)\n```"
 blocks23 = parse_codeblocks(md23)

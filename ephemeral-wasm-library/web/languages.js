@@ -23,6 +23,7 @@ export const SUPPORTED_LANGUAGES = new Set([
   "cpp",
   "cr",
   "crystal",
+  "cxx",
   "elixir",
   "ex",
   "exs",
@@ -35,10 +36,12 @@ export const SUPPORTED_LANGUAGES = new Set([
   "golang",
   "golfscript",
   "haskell",
+  "hs",
   "htm",
   "html",
   "java",
   "javascript",
+  "jl",
   "js",
   "julia",
   "latex",
@@ -56,6 +59,7 @@ export const SUPPORTED_LANGUAGES = new Set([
   "mjs",
   "ml",
   "mm",
+  "mmd",
   "nim",
   "nimrod",
   "node",
@@ -82,6 +86,8 @@ export const SUPPORTED_LANGUAGES = new Set([
   "pywine",
   "qwen",
   "r",
+  "rb",
+  "rs",
   "ruby",
   "runner",
   "rust",
@@ -98,6 +104,7 @@ export const SUPPORTED_LANGUAGES = new Set([
   "tw",
   "tw5",
   "ubuntu-latest",
+  "v",
   "verilog",
   "wiki"
 ]);
@@ -152,9 +159,6 @@ export const CANONICAL_LANGUAGES = [
 ];
 
 export const ALIAS_MAP = {
-  "python": [
-    "py"
-  ],
   "node": [
     "cjs",
     "javascript",
@@ -162,9 +166,6 @@ export const ALIAS_MAP = {
     "mjs",
     "npm",
     "npx"
-  ],
-  "bash": [
-    "sh"
   ],
   "science": [
     "numpy",
@@ -182,37 +183,18 @@ export const ALIAS_MAP = {
   "go": [
     "golang"
   ],
-  "c": [
-    "cc"
-  ],
   "cpp": [
-    "c++"
-  ],
-  "fortran": [
-    "f90",
-    "f95"
+    "c++",
+    "cc",
+    "cxx"
   ],
   "lisp": [
     "cl",
     "common-lisp",
     "sbcl"
   ],
-  "clojure": [
-    "clj"
-  ],
-  "elixir": [
-    "ex",
-    "exs"
-  ],
-  "ocaml": [
-    "ml"
-  ],
   "prolog": [
-    "pl",
     "swipl"
-  ],
-  "crystal": [
-    "cr"
   ],
   "nim": [
     "nimrod"
@@ -237,12 +219,9 @@ export const ALIAS_MAP = {
     "markdown",
     "md"
   ],
-  "html": [
-    "htm",
-    "svg"
-  ],
   "mermaid": [
-    "mm"
+    "mm",
+    "mmd"
   ],
   "gh-runner": [
     "runner",
@@ -259,6 +238,51 @@ export const ALIAS_MAP = {
     "local-llm",
     "localmodel",
     "qwen"
+  ],
+  "python": [
+    "py"
+  ],
+  "bash": [
+    "sh"
+  ],
+  "ruby": [
+    "rb"
+  ],
+  "perl": [
+    "pl"
+  ],
+  "julia": [
+    "jl"
+  ],
+  "elixir": [
+    "ex",
+    "exs"
+  ],
+  "clojure": [
+    "clj"
+  ],
+  "ocaml": [
+    "ml"
+  ],
+  "crystal": [
+    "cr"
+  ],
+  "haskell": [
+    "hs"
+  ],
+  "rust": [
+    "rs"
+  ],
+  "fortran": [
+    "f90",
+    "f95"
+  ],
+  "verilog": [
+    "v"
+  ],
+  "html": [
+    "htm",
+    "svg"
   ]
 };
 

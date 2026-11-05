@@ -33,6 +33,53 @@ DEFAULT_TIMEOUT = 300
 # exactly like `unsafe`: a remote job is always capped, whatever it asks for.
 NO_TIMEOUT_FLAGS = {'notimeout', 'no-timeout'}
 
+# Bare file extensions that double as language declarations.
+#
+# Editor interop is the whole point: a tool that only knows a filename's
+# suffix (`report.tex`, `main.rs`) can serialize the block as `tex` / `rs` and
+# Ephemeral resolves the image and command itself — no language probing and no
+# suffix-to-language table on the editor's side.
+#
+# A bare extension can never be confused with a seed filename: seed detection
+# in `parser.parse_codeblocks` requires the first header token to contain a dot
+# (`data.csv`), so `csv` is a language declaration while `data.csv` is a file.
+# `pl` is Perl here — `.pl` is Perl to most editors, so Prolog keeps only its
+# name and `swipl`. `cc` follows the C++ suffix convention rather than the Unix
+# C compiler name; g++ accepts plain C-style code, so vanilla C still runs.
+# `m` is left out entirely (`.m` is MATLAB, Objective-C and more). This dict is
+# the single place bare extensions are declared; the alias list further down
+# keeps the other short names.
+FILE_EXTENSIONS = {
+    # --- Interpreted ---
+    'py': 'python',
+    'js': 'node', 'mjs': 'node', 'cjs': 'node',
+    'sh': 'bash',
+    'rb': 'ruby',
+    'pl': 'perl',
+    'jl': 'julia',
+    'ex': 'elixir', 'exs': 'elixir',
+    'clj': 'clojure',
+    'ml': 'ocaml',
+    'cr': 'crystal',
+    'hs': 'haskell',
+
+    # --- Compiled & systems ---
+    'rs': 'rust',
+    'cc': 'cpp', 'cxx': 'cpp',
+    'f90': 'fortran', 'f95': 'fortran',
+    'v': 'verilog',
+    'cob': 'cobol',
+
+    # --- Shells ---
+    'ps1': 'pwsh',
+
+    # --- Documents, data & rendering ---
+    'tex': 'latex',
+    'md': 'pandoc',
+    'htm': 'html', 'svg': 'html',
+    'mmd': 'mermaid',
+}
+
 # Map languages to the 'Clean Slate' Image on Docker Hub
 LANG_MAP = {
     # --- Standard Interpreted ---
@@ -191,28 +238,28 @@ exec sqlite3 -bail -box -header "$DB"
     'pwsh':    {'image': 'mcr.microsoft.com/powershell', 'cmd': ['pwsh', '-NoProfile', '-NonInteractive', '-Command', '-']},
     
     # --- Aliases ---
-    'py': 'python', 'js': 'node', 'javascript': 'node', 'npm': 'node', 'npx': 'node', 'cjs': 'node', 'mjs': 'node', 'sh': 'bash',
+    'javascript': 'node', 'npm': 'node', 'npx': 'node',
     'numpy': 'science', 'pandas': 'science',
     'matlab': 'octave',
-    'powershell': 'pwsh', 'ps1': 'pwsh', 'cmd': 'pwsh', 'batch': 'pwsh',
+    'powershell': 'pwsh', 'cmd': 'pwsh', 'batch': 'pwsh',
     'R': 'r',
-    'golang': 'go', 'cc': 'c', 'c++': 'cpp',
-    'f90': 'fortran', 'f95': 'fortran',
+    'golang': 'go', 'c++': 'cpp',
     'sbcl': 'lisp', 'cl': 'lisp', 'common-lisp': 'lisp',
-    'clj': 'clojure', 'ex': 'elixir', 'exs': 'elixir',
-    'ml': 'ocaml',
-    'swipl': 'prolog', 'pl': 'prolog',
-    'cr': 'crystal', 'nimrod': 'nim',
+    'swipl': 'prolog',
+    'nimrod': 'nim',
     'brainfuck': 'bf', 'spl': 'shakespeare', '><>': 'fish',
-    'cob': 'cobol', 'gnucobol': 'cobol',
+    'gnucobol': 'cobol',
     'tw': 'tiddlywiki', 'tw5': 'tiddlywiki', 'wiki': 'tiddlywiki',
-    'tex': 'latex', 'pdflatex': 'latex',
-    'md': 'pandoc', 'markdown': 'pandoc',
-    'htm': 'html', 'svg': 'html', 'mm': 'mermaid',
+    'pdflatex': 'latex',
+    'markdown': 'pandoc',
+    'mm': 'mermaid',
     'runner': 'gh-runner', 'ubuntu-latest': 'gh-runner',
     'sqlite': 'sql', 'sqlite3': 'sql',
     'lint-action': 'actionlint',
-    'local-llm': 'llm', 'localmodel': 'llm', 'qwen': 'llm'
+    'local-llm': 'llm', 'localmodel': 'llm', 'qwen': 'llm',
+
+    # --- Bare file extensions (see FILE_EXTENSIONS above) ---
+    **FILE_EXTENSIONS,
 }
 
 # Add esolangs dynamically
