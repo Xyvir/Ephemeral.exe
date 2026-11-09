@@ -114,7 +114,20 @@ LANG_MAP = {
     # --- Science & Data ---
     'science': {'image': 'docker.io/continuumio/anaconda3', 'cmd': ['python', '-']},
 
-    'octave':  {'image': 'docker.io/tymills620/octave-forge:latest', 'cmd': ['octave', '--no-gui', '--quiet']},
+    # Octave throws its figures away before any atexit handler runs, so a plot
+    # only exists while the block itself is running: the payload is sourced and
+    # the image's __ephemeral_save_figures () hook then writes whatever is still
+    # open to /output as figure-N.png. Sourcing also means a block that errors
+    # keeps its own message, line numbers and exit status (the hook saves first,
+    # then the error is rethrown) — so `rlocus (G)` returns a plot artifact with
+    # no print () call, which is the MATLAB-parity contract in the README.
+    'octave':  {
+        'image': 'docker.io/tymills620/octave-forge:latest',
+        'cmd': ['sh', '-c',
+                'exec octave --no-gui --quiet --eval \'try; source ("/dev/stdin"); '
+                'catch err; __ephemeral_save_figures (); rethrow (err); end; '
+                '__ephemeral_save_figures ();\''],
+    },
     'r':       {'image': 'docker.io/library/r-base:latest',           'cmd': ['R', '--vanilla', '--slave', '-f', '/dev/stdin']},
     'julia':   {'image': 'docker.io/library/julia:alpine',            'cmd': ['julia']},
 

@@ -409,6 +409,41 @@ finally:
     executor_mod.subprocess.check_output = _saved_check_output
 print("PASS: amd64-only images are blocked on arm64 hosts and match LANG_MAP")
 
+# --- Test 28c: Octave image ships the MATLAB parity it advertises ---------
+# These live in the image and in the octave command, so nothing else in the
+# suite can notice their removal: the control package has no pzplot at all,
+# and Octave throws figures away before atexit runs, so a plot only exists
+# while the block itself is running. Both were measured on Octave 11.3.0.
+from pathlib import Path as _Path
+_OCT_ROOT = _Path(__file__).resolve().parent
+_OCT_DF = (_OCT_ROOT / "dockerfiles" / "ephemeral-octave-forge.dockerfile").read_text(encoding="utf-8")
+_OCT_SHIM = (_OCT_ROOT / "dockerfiles" / "octave" / "pzplot.m").read_text(encoding="utf-8")
+_OCT_HOOK = (_OCT_ROOT / "dockerfiles" / "octave" / "__ephemeral_save_figures.m").read_text(encoding="utf-8")
+_OCT_CMD = executor_mod.LANG_MAP["octave"]["cmd"]
+assert "pkg install -forge control" in _OCT_DF
+# Site-wide startup, not ~/.octaverc: loading must not depend on HOME.
+assert "/usr/share/octave/site/m/startup/octaverc" in _OCT_DF
+assert ">> /root/.octaverc" not in _OCT_DF  # the load lives in the site startup file
+assert "pkg load control" in _OCT_DF and "pkg load signal" in _OCT_DF
+assert '"defaultfigurevisible", "off"' in _OCT_DF
+# No atexit call and no pinned toolkit: the former never sees a figure, and
+# the latter would put gnuplot's warning in blocks that never plot.
+assert 'atexit ("' not in _OCT_DF and 'graphics_toolkit ("' not in _OCT_DF
+# Both .m files must land on the site path, or the shim and hook never
+# resolve by name.
+assert "site/m/pzplot.m" in _OCT_DF and "site/m/__ephemeral_save_figures.m" in _OCT_DF
+assert "pzmap (varargin{:})" in _OCT_SHIM and "varargout{1:nargout}" in _OCT_SHIM
+assert '"/output"' in _OCT_HOOK and "figure-%d.png" in _OCT_HOOK
+# An explicit print () wins: the hook may not overwrite a file it wrote.
+assert 'exist (target, "file")' in _OCT_HOOK
+# The command must source the payload (the figure still exists then) and
+# save before exiting, keeping the block's own error and exit status.
+assert _OCT_CMD[:2] == ["sh", "-c"], _OCT_CMD
+assert 'source ("/dev/stdin")' in _OCT_CMD[2], _OCT_CMD
+assert "__ephemeral_save_figures ()" in _OCT_CMD[2], _OCT_CMD
+assert "rethrow (err)" in _OCT_CMD[2], _OCT_CMD
+print("PASS: Octave image provides pzplot and saves figures to /output")
+
 # --- Test 29: result fences outgrow the payload's own backticks -----------
 # Block output is arbitrary text, and a model reply routinely contains its own
 # ``` fences. A fixed three-backtick wrapper ends at the first of those, so the
@@ -866,4 +901,4 @@ with tempfile.TemporaryDirectory() as tmp34:
     assert buf34.getvalue() == "", buf34.getvalue()
 print("PASS: reported seed/temperature make a reply reproducible")
 
-print("\n=== ALL 34 TESTS PASSED ===")
+print("\n=== ALL 35 TESTS PASSED ===")

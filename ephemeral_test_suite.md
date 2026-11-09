@@ -179,6 +179,15 @@ Printf.printf "Markdown: OCaml | Math Check: %d - OK\n" (30 + 10);;
 printf("Markdown: Octave %s | Math Check: %d - OK\n", version(), 24 + 6);
 ```
 ````
+````
+```octave
+# Artifact check: control/signal are preloaded, and a figure left open when
+# the block ends comes back as a PNG artifact — no print() call needed.
+G = tf(1, [1 2 1]);
+rlocus(G);
+pzplot(G);
+```
+````
 
 ````
 ```perl
