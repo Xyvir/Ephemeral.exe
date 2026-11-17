@@ -1,78 +1,35 @@
 {
-  "updated": "2026-11-17T01:46:13Z",
+  "updated": "2026-11-17T15:45:25Z",
   "relay": "https://use1-1.relay.n0.iroh.link.",
   "max_nodes": 50,
   "nodes": [
     {
       "node_id": "fc86016385bd3c9ebe898644888a73a417a97cc5f5326ed97f2ddd3cb0c2ec1c",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybaaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfi76xpadaeakyf2qahv3yaybadakqaax5o6ag",
+      "ticket": "endpointad6imaldqw6tzhv6rgdejcekoosbpkl4yx2te3wzp4w52pfqylwbybiaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqasvhfi7ybdidaeaevjzkh6u76aybacwbouabvh7qgaiaycuaaf5j74bq",
       "images": [
         "docker.io/library/alpine:latest",
         "docker.io/tymills620/octave-forge:latest"
       ],
       "url": null,
       "probe": "ok",
-      "probe_at": "2026-11-17T01:46:13Z",
+      "probe_at": "2026-11-17T15:45:25Z",
       "probe_detail": "ok",
-      "probe_ms": 3948,
-      "rtt_ms": 1011
-    },
-    {
-      "node_id": "1051a986e62752b55f9d557a12ef9ab13886c5d4f6613263e7b525b3b11c6bd3",
-      "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointaaifdkmg4ytvfnk7tvkxuexptkytrbwf2t3gcmtd462slm5rdrv5gayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacqaab6ohzicaeakhqdbmxr6kaq",
-      "images": [
-        "docker.io/catthehacker/ubuntu:act-22.04",
-        "docker.io/chromedp/headless-shell:138.0.7204.169",
-        "docker.io/chromedp/headless-shell:latest",
-        "docker.io/clfoundation/sbcl:slim",
-        "docker.io/continuumio/anaconda3:latest",
-        "docker.io/crystallang/crystal:latest",
-        "docker.io/keinos/sqlite3:latest",
-        "docker.io/library/alpine:latest",
-        "docker.io/library/debian:bookworm-slim",
-        "docker.io/library/eclipse-temurin:21-jdk-alpine",
-        "docker.io/library/elixir:alpine",
-        "docker.io/library/gcc:latest",
-        "docker.io/library/golang:alpine",
-        "docker.io/library/haskell:slim",
-        "docker.io/library/node:18-alpine",
-        "docker.io/library/perl:slim",
-        "docker.io/library/php:alpine",
-        "docker.io/library/python:3.12-slim",
-        "docker.io/library/r-base:latest",
-        "docker.io/library/ruby:alpine",
-        "docker.io/library/rust:alpine",
-        "docker.io/library/swipl:latest",
-        "docker.io/nickblah/lua:5.4-alpine",
-        "docker.io/nimlang/nim:alpine",
-        "docker.io/ocaml/opam:latest",
-        "docker.io/rhysd/actionlint:latest",
-        "docker.io/tymills620/ephemeral-python-uv:latest",
-        "docker.io/tymills620/ephemeral-qwen-monolith:latest",
-        "ghcr.io/ggml-org/llama.cpp:server",
-        "mcr.microsoft.com/playwright:v1.63.0-jammy"
-      ],
-      "url": null,
-      "probe": "ok",
-      "probe_at": "2026-11-17T01:46:13Z",
-      "probe_detail": "ok",
-      "probe_ms": 2619,
-      "rtt_ms": 13425
+      "probe_ms": 2172,
+      "rtt_ms": 995
     }
   ],
   "bastions": [
     {
       "node_id": "ed7106bced606bede735b4c9b215052855f9747e8cb56629759ae672ce29b9c8",
       "relay": "https://use1-1.relay.n0.iroh.link./",
-      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacv3httjdlacaeajqn5v56i2yaq",
+      "ticket": "endpointadwxcbv45vqgx3phgw2mtmqvauufl6lup2glkzrjownom4wofg44qayaenuhi5dqom5c6l3vonstcljrfzzgk3dbpexg4mbonfzg62bonruw42zof4aqacuqq2o67aycaeajqn5v5hxygaq",
       "images": [],
       "url": "https://ephemeralexe-production.up.railway.app",
       "probe": "ok",
-      "probe_at": "2026-11-17T01:46:13Z",
+      "probe_at": "2026-11-17T15:45:25Z",
       "probe_detail": "HTTP 200",
-      "probe_ms": 128
+      "probe_ms": 144
     }
   ]
 }
